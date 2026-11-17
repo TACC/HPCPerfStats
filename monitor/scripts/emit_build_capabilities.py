@@ -29,6 +29,7 @@ _RE_IB_MAD_DLOPEN = re.compile(r"-DMONITOR_IB_MAD_DLOPEN\b")
 _RE_OPA_MAD_DLOPEN = re.compile(r"-DMONITOR_OPA_MAD_DLOPEN\b")
 _RE_LIKWID_OVERLAY = re.compile(r"-DMONITOR_CPU_LIKWID_OVERLAY\b")
 _RE_SHARED_NODE = re.compile(r"-DMONITOR_SHARED_NODE_MULTI_JID\b")
+_RE_SENTINEL_CATALOG_VERSION = re.compile(r"#define\s+STATS_SENTINEL_CATALOG_VERSION\s+(\d+)")
 
 
 def _read_text(path: Path) -> str:
@@ -112,6 +113,14 @@ def _normalize_arch(host_cpu: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", cpu)
 
 
+def sentinel_catalog_version(src_dir: Path = MONITOR / "src") -> int:
+    """STATS_SENTINEL_CATALOG_VERSION from src/stats_sentinel.h; the slug token is sent<N> (sent1)."""
+    m = _RE_SENTINEL_CATALOG_VERSION.search(_read_text(src_dir / "stats_sentinel.h"))
+    if m is None:
+        raise SystemExit("emit_build_capabilities: STATS_SENTINEL_CATALOG_VERSION not found")
+    return int(m.group(1))
+
+
 def build_capability_slug(
     *,
     arch: str,
@@ -122,6 +131,7 @@ def build_capability_slug(
     tier: str,
     ib_mad_dlopen: bool = False,
     opa_mad_dlopen: bool = False,
+    sentinel_version: int = 1,
 ) -> str:
     parts: list[str] = [arch, f"ver{version}"]
     if debug:
@@ -150,6 +160,7 @@ def build_capability_slug(
         parts.append(cpu_backend)
     elif "HARDWARE" in features:
         parts.append("none")
+    parts.append(f"sent{sentinel_version}")
     parts.append(tier)
     slug = "-".join(parts)
     if len(slug) > 180:
@@ -248,6 +259,7 @@ def emit_capabilities(build_dir: Path, tier: str) -> dict:
     host_cpu = _host_cpu(build_dir)
     arch = _normalize_arch(host_cpu)
     intel_gpu = "INTEL_GPU" in features
+    sentinel_version = sentinel_catalog_version()
 
     slug = build_capability_slug(
         arch=arch,
@@ -258,6 +270,7 @@ def emit_capabilities(build_dir: Path, tier: str) -> dict:
         tier=tier,
         ib_mad_dlopen=ib_mad_dlopen,
         opa_mad_dlopen=opa_mad_dlopen,
+        sentinel_version=sentinel_version,
     )
 
     fleet = _fleet_stampede3(
@@ -303,6 +316,7 @@ def emit_capabilities(build_dir: Path, tier: str) -> dict:
             "papi_hybrid": likwid_overlay,  # alias for older shm validators
             "slow_tier": tier,
         },
+        "sentinel_catalog_version": sentinel_version,
         "compile_features": sorted(features),
         "build_dir": str(build_dir.resolve()),
         "generated_at": datetime.now(timezone.utc).isoformat(),

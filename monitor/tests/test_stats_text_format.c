@@ -18,7 +18,7 @@ static void append_mark_helper(char **m, const char *fmt, ...)
   va_end(ap);
 }
 
-/* Build a struct stats for `type` with the given values; mark all present. */
+/* Build a struct stats for `type` with the given values, every key in state OK. */
 static struct stats *make_test_stats(struct stats_type *type, const char *dev,
                                      const unsigned long long *vals)
 {
@@ -29,11 +29,11 @@ static struct stats *make_test_stats(struct stats_type *type, const char *dev,
   assert(s != NULL);
   s->s_type = type;
   s->s_val = malloc(n * sizeof(*s->s_val));
-  s->s_val_present = malloc(n);
-  assert(s->s_val != NULL && s->s_val_present != NULL);
+  s->s_val_state = malloc(n);
+  assert(s->s_val != NULL && s->s_val_state != NULL);
   for (k = 0; k < n; k++) {
     s->s_val[k] = vals[k];
-    s->s_val_present[k] = 1;
+    s->s_val_state[k] = STATS_SENTINEL_OK;
   }
   strcpy(s->s_dev, dev);
   return s;
@@ -42,7 +42,7 @@ static struct stats *make_test_stats(struct stats_type *type, const char *dev,
 static void free_test_stats(struct stats *s)
 {
   free(s->s_val);
-  free(s->s_val_present);
+  free(s->s_val_state);
   free(s);
 }
 
@@ -74,6 +74,40 @@ static void test_snprintf_stats_row_sparse_tiers(void)
   assert(stats_format_snprintf_stats_row(NULL, sizeof(buf), &type, s) == -1);
   assert(stats_format_snprintf_stats_row(buf, sizeof(buf), NULL, s) == -1);
   assert(stats_format_snprintf_stats_row(buf, sizeof(buf), &type, NULL) == -1);
+
+  free_test_stats(s);
+  schema_destroy(&type.st_schema);
+}
+
+/* Sentinel codes replace s_val in the row; the knob off restores the raw values, and a
+ * truncated buffer still reports the full length needed. */
+static void test_snprintf_stats_row_sentinels(void)
+{
+  struct stats_type type;
+  const unsigned long long vals[3] = {7, 8, 9};
+  struct stats *s;
+  char buf[64];
+  char tiny[18];
+
+  memset(&type, 0, sizeof(type));
+  snprintf(type.st_name, sizeof(type.st_name), "%s", "host_tt");
+  assert(schema_init(&type.st_schema, "a,E b,E c,E") == 0);
+  s = make_test_stats(&type, "dev0", vals);
+  s->s_val_state[0] = STATS_SENTINEL_COUNTER_RESET;
+  s->s_val_state[2] = STATS_SENTINEL_NOT_PRESENT;
+
+  assert(stats_format_value_sentinels() == 1);
+  assert(stats_format_value_sentinel(s, 0) == STATS_SENTINEL_COUNTER_RESET);
+  assert(stats_format_value_sentinel(s, 1) == 0);
+  assert(stats_format_snprintf_stats_row(buf, sizeof(buf), &type, s) > 0);
+  assert(strcmp(buf, "host_tt dev0 -11 8 -2") == 0);
+  assert(stats_format_snprintf_stats_row(tiny, sizeof(tiny), &type, s) >= (int)sizeof(tiny));
+
+  stats_format_set_value_sentinels(0);
+  assert(stats_format_value_sentinel(s, 0) == 0);
+  assert(stats_format_snprintf_stats_row(buf, sizeof(buf), &type, s) > 0);
+  assert(strcmp(buf, "host_tt dev0 7 8 9") == 0);
+  stats_format_set_value_sentinels(1);
 
   free_test_stats(s);
   schema_destroy(&type.st_schema);
@@ -181,6 +215,7 @@ int main(void)
 
   test_sparse_rows();
   test_snprintf_stats_row_sparse_tiers();
+  test_snprintf_stats_row_sentinels();
   test_schema_line_with_slow_suffix();
 
   printf("test_stats_text_format passed\n");

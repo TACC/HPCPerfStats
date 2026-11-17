@@ -1122,7 +1122,7 @@ build_foreign_monitor() {
     mapfile -t cfg_args < '${cfg_file}'
     '${MONITOR_DIR}/configure' --host='${target}' \"\${cfg_args[@]}\"
     make -j'${JOBS}'
-    make check LOG_COMPILER='${qemu_exe}'
+    make check LOG_COMPILER='sh ${MONITOR_DIR}/scripts/lib/log_compiler_exec.sh ${qemu_exe}'
   "
 }
 

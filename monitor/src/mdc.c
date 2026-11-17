@@ -1,4 +1,5 @@
 /* lustre_mdc - Lustre metadata client stats from /proc/fs/lustre/mdc. */
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,48 +46,66 @@ static const char *mdc_map_key(const char *key)
   return NULL;
 }
 
-static void mdc_apply_stats_line(struct stats *stats, const char *key, const char *rest)
+#define X(k, o, d) #k
+static const char *const mdc_keys[] = {KEYS};
+#undef X
+#define MDC_NKEYS (sizeof(mdc_keys) / sizeof(mdc_keys[0]))
+
+static size_t mdc_key_index(const char *key)
+{
+  size_t i = 0;
+
+  while (i < MDC_NKEYS && strcmp(mdc_keys[i], key) != 0)
+    i++;
+  return i;
+}
+
+/* Applies one stats line to `life`, the lifetime counters of one MDC indexed like mdc_keys. */
+static void mdc_apply_stats_line(unsigned long long *life, const char *key, const char *rest)
 {
   unsigned long long count = 0;
   unsigned long long sum = 0;
   const char *mapped;
   int n;
 
-  if (stats == NULL || key == NULL || rest == NULL)
-    return;
-
   n = lustre_parse_samples_count(rest, &count, &sum);
   if (n == 0)
     return;
 
   if (strcmp(key, "req_waittime") == 0) {
-    stats_set(stats, "reqs", count);
-    stats_set(stats, "wait", sum);
+    life[mdc_key_index("reqs")] = count;
+    life[mdc_key_index("wait")] = sum;
     return;
   }
 
   mapped = mdc_map_key(key);
   if (mapped != NULL)
-    stats_set(stats, mapped, count);
+    life[mdc_key_index(mapped)] = count;
   else
-    stats_inc(stats, "reqs", count);
+    life[mdc_key_index("reqs")] += count;
 }
 
-static void mdc_collect_fs(struct stats *stats, const char *d_name)
+void lustre_mdc_collect_obd(struct stats *stats, const char *dir, const char *d_name)
 {
+  unsigned long long life[MDC_NKEYS] = {0};
   char *path = NULL;
   FILE *file = NULL;
   char file_buf[4096];
   char *line_buf = NULL;
   size_t line_buf_size = 0;
 
-  if (stats == NULL || d_name == NULL)
+  if (stats == NULL || dir == NULL || d_name == NULL)
     return;
 
-  if (lustre_fopen_obd_named(MDC_DIR_PATH, d_name, mdc_stats_names,
+  if (lustre_fopen_obd_named(dir, d_name, mdc_stats_names,
                              sizeof(mdc_stats_names) / sizeof(mdc_stats_names[0]), &path,
-                             &file) < 0)
+                             &file) < 0) {
+    enum stats_sentinel code = stats_sentinel_for_errno(errno);
+
+    for (size_t i = 0; i < MDC_NKEYS; i++)
+      stats_set_missing(stats, mdc_keys[i], code);
     return;
+  }
 
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
   while (getline(&line_buf, &line_buf_size, file) >= 0) {
@@ -95,12 +114,15 @@ static void mdc_collect_fs(struct stats *stats, const char *d_name)
 
     if (key == NULL || line == NULL)
       continue;
-    mdc_apply_stats_line(stats, key, line);
+    mdc_apply_stats_line(life, key, line);
   }
 
   free(line_buf);
   fclose(file);
   free(path);
+  /* Lustre lists only non-zero counters, so an omitted key contributes 0. */
+  for (size_t i = 0; i < MDC_NKEYS; i++)
+    stats_accumulate(stats, mdc_keys[i], life[i]);
 }
 
 static void mdc_each(const char *base, const char *name, void *ctx)
@@ -123,7 +145,7 @@ static void mdc_each(const char *base, const char *name, void *ctx)
   if (stats == NULL)
     return;
 
-  mdc_collect_fs(stats, name);
+  lustre_mdc_collect_obd(stats, MDC_DIR_PATH, name);
 }
 
 static void mdc_collect(struct stats_type *type)

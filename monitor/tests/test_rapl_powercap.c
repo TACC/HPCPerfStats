@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -96,7 +97,33 @@ static void test_collect_fixture(void)
   assert(has_core == 0 && has_dram == 0);
 
   assert(rapl_powercap_collect_socket_mj_under(root, 9, &pkg_mj, &core_mj, &dram_mj, &has_pkg,
-                                               &has_core, &has_dram, &pp1_mj, &has_pp1, 0) < 0);
+                                               &has_core, &has_dram, &pp1_mj, &has_pp1, 0) == -EIO);
+
+  /* Generic failure: package 1 energy_uj gone -> -EIO (READ_FAILED), never -1 (== -EPERM). */
+  {
+    char p[320];
+    snprintf(p, sizeof(p), "%s/energy_uj", pkg1);
+    assert(unlink(p) == 0);
+    assert(rapl_powercap_collect_socket_mj_under(root, 1, &pkg_mj, &core_mj, &dram_mj, &has_pkg,
+                                                 &has_core, &has_dram, &pp1_mj, &has_pp1,
+                                                 0) == -EIO);
+  }
+
+  /* Root-only energy_uj (mode 0400 root since the PLATYPUS mitigation): every domain of package 0
+   * denied -> -EACCES. root bypasses the mode, so only a non-root run can see the denial. */
+  if (geteuid() != 0) {
+    const char *zones[] = {pkg0, pkg0_core, pkg0_dram};
+    char p[320];
+
+    for (size_t i = 0; i < sizeof(zones) / sizeof(zones[0]); i++) {
+      snprintf(p, sizeof(p), "%s/energy_uj", zones[i]);
+      assert(chmod(p, 0) == 0);
+    }
+    assert(rapl_powercap_collect_socket_mj_under(root, 0, &pkg_mj, &core_mj, &dram_mj, &has_pkg,
+                                                 &has_core, &has_dram, &pp1_mj, &has_pp1,
+                                                 0) == -EACCES);
+    assert(has_pkg == 0 && has_core == 0 && has_dram == 0);
+  }
 
   /* Cleanup best-effort */
   {

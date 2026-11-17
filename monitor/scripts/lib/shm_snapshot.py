@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from .daemon_conf import DaemonTiming, WaitBounds, wait_bounds_from_timing
 from .payload_parse import sample_header_timestamp
@@ -16,6 +17,8 @@ class SnapshotPair:
     ts_b: float
     body_a: str
     body_b: str
+    # Captures between a and b, in order (fixtures with t2...); cross-sample bridges span them.
+    bodies_mid: tuple[str, ...] = ()
 
 
 def read_shm_sample(path: Path) -> tuple[float | None, str, float]:
@@ -52,16 +55,25 @@ def capture_pair(
     *,
     timing: DaemonTiming,
     bounds: WaitBounds | None = None,
+    between: Callable[[str], None] | None = None,
 ) -> SnapshotPair:
+    """Two consecutive captures of ``kind``. ``between(body_a)`` runs after capture A while the
+    file still holds it (retried when a sample lands during the call)."""
     if bounds is None:
         bounds = wait_bounds_from_timing(timing)
     path = shm_dir / kind
     if not path.is_file():
         raise FileNotFoundError(f"missing shm file: {path}")
 
-    ts_a, body_a, _ = read_shm_sample(path)
-    if ts_a is None:
-        raise ValueError(f"{path}: no sample header timestamp")
+    for _attempt in range(3):
+        ts_a, body_a, _ = read_shm_sample(path)
+        if ts_a is None:
+            raise ValueError(f"{path}: no sample header timestamp")
+        if between is None:
+            break
+        between(body_a)
+        if read_shm_sample(path)[0] == ts_a:
+            break
 
     timeout = bounds.fast_timeout_sec if kind == "fast" else bounds.full_timeout_sec
     ts_b, body_b = wait_for_timestamp_advance(
@@ -85,12 +97,16 @@ def save_snapshot_pair(
 
 
 def load_fixture_pair(fixture_dir: Path, kind: str) -> SnapshotPair:
-    t0 = fixture_dir / "t0" / kind
-    t1 = fixture_dir / "t1" / kind
-    if not t0.is_file() or not t1.is_file():
+    paths = []
+    while (fixture_dir / f"t{len(paths)}" / kind).is_file():
+        paths.append(fixture_dir / f"t{len(paths)}" / kind)
+    if len(paths) < 2:
         raise FileNotFoundError(f"fixture missing t0/t1 {kind} under {fixture_dir}")
-    ts_a, body_a, _ = read_shm_sample(t0)
-    ts_b, body_b, _ = read_shm_sample(t1)
+    ts_a, body_a, _ = read_shm_sample(paths[0])
+    ts_b, body_b, _ = read_shm_sample(paths[-1])
     if ts_a is None or ts_b is None:
         raise ValueError(f"fixture {kind}: missing header timestamp")
-    return SnapshotPair(kind=kind, ts_a=ts_a, ts_b=ts_b, body_a=body_a, body_b=body_b)
+    mid = tuple(read_shm_sample(p)[1] for p in paths[1:-1])
+    return SnapshotPair(
+        kind=kind, ts_a=ts_a, ts_b=ts_b, body_a=body_a, body_b=body_b, bodies_mid=mid
+    )

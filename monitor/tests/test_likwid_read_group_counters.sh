@@ -33,7 +33,7 @@ grep -qE 'perfmon_setupCounters[[:space:]]*\([[:space:]]*g_group' "${pmc}" \
   || { echo "FAIL: ${pmc} prepare_collect must call perfmon_setupCounters(g_group) on x86" >&2; exit 1; }
 # x86 prepare_collect must start after setup; aarch64/ARM branch skips re-arm (Grace E window).
 awk '
-  /int likwid_pmc_adapter_prepare_collect/,/^int likwid_pmc_adapter_read_cpu/ {
+  /likwid_pmc_adapter_prepare_collect\(void\)/,/^int likwid_pmc_adapter_read_cpu/ {
     if ($0 ~ /perfmon_setupCounters[[:space:]]*\([[:space:]]*g_group/) saw_setup = 1
     if (saw_setup && $0 ~ /perfmon_startCounters[[:space:]]*\(/) saw_start = 1
     if ($0 ~ /__aarch64__/) saw_arm_skip = 1

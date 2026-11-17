@@ -22,4 +22,8 @@
       X(gpu_mem_total_bytes, "E,W=64,U=B", "Estimated cumulative GPU memory total bytes"),         \
       X(gpu_count, "", "Number of GPU device rows for this type (stub uses 1)")
 
+struct stats;
+/* No AMD GPU metric reader is built: every metric key is NOT_BUILT, the row only counts the GPU. */
+void amd_gpu_publish_not_built(struct stats *stats);
+
 #endif

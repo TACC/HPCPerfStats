@@ -105,20 +105,21 @@ void ib_mad_ext_decode_counters(struct stats *stats, uint8_t *mad_buf)
 #undef X
 }
 
-static void ib_mad_ext_query_lid_port(struct stats *stats, char *hca, int lid, int port)
+static int ib_mad_ext_query_lid_port(struct stats *stats, char *hca, int lid, int port)
 {
   struct ibmad_port *mad_port = NULL;
   int mgmt_class = IB_PERFORMANCE_CLASS;
   ib_portid_t portid = {.lid = lid};
   uint8_t mad_buf[1024];
   int timeout = 0;
+  int rc = -1;
 #ifndef DEBUG
   int saved_stderr = -1;
   int null_fd = -1;
 #endif
 
   if (stats == NULL || hca == NULL)
-    return;
+    return -1;
 
 #ifndef DEBUG
   monitor_stderr_quiet_begin(&saved_stderr, &null_fd);
@@ -132,7 +133,8 @@ static void ib_mad_ext_query_lid_port(struct stats *stats, char *hca, int lid, i
   }
 
   memset(mad_buf, 0, sizeof(mad_buf));
-  if (pma_query_via(mad_buf, &portid, port, timeout, IB_GSI_PORT_COUNTERS_EXT, mad_port) == NULL) {
+  if (STATS_FAULT("mad_query", hca, &errno) ||
+      pma_query_via(mad_buf, &portid, port, timeout, IB_GSI_PORT_COUNTERS_EXT, mad_port) == NULL) {
     g_ib_mad_ext_fail_streak++;
     ib_mad_report_fail("cannot query performance counters: %m\n");
     goto out;
@@ -140,6 +142,7 @@ static void ib_mad_ext_query_lid_port(struct stats *stats, char *hca, int lid, i
   g_ib_mad_ext_fail_streak = 0;
   ib_mad_note_success();
   ib_mad_ext_decode_counters(stats, mad_buf);
+  rc = 0;
 
 out:
   if (mad_port != NULL)
@@ -147,25 +150,26 @@ out:
 #ifndef DEBUG
   monitor_stderr_quiet_end(&saved_stderr, &null_fd);
 #endif
+  return rc;
 }
 
-void ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
+int ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
 {
   char path[80];
   unsigned int lid = 0;
 
   if (stats == NULL || hca == NULL)
-    return;
+    return -1;
 
   snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%i/lid", hca, port);
   if (pscanf(path, "%x", &lid) != 1) {
     g_ib_mad_ext_fail_streak++;
     ib_mad_report_fail("cannot read lid of IB HCA `%s' port %d: %m\n", hca, port);
-    return;
+    return -1;
   }
 
   TRACE("IB HCA %s, port %d, lid %x\n", hca, port, lid);
-  ib_mad_ext_query_lid_port(stats, (char *)hca, (int)lid, port);
+  return ib_mad_ext_query_lid_port(stats, (char *)hca, (int)lid, port);
 }
 
 static int ib_mad_sw_query_switch_counters(struct ibmad_port *mad_port, int mad_timeout,
@@ -229,7 +233,7 @@ void ib_mad_sw_publish_tx_rx_swap(struct stats *stats, uint64_t sw_rx_bytes, uin
   stats_set(stats, "sw_tx_packets", sw_rx_packets);
 }
 
-void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
+int ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
 {
   struct ibmad_port *mad_port = NULL;
   int mad_timeout = 15;
@@ -241,13 +245,14 @@ void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
   uint64_t sw_rx_packets = 0;
   uint64_t sw_tx_bytes = 0;
   uint64_t sw_tx_packets = 0;
+  int rc = -1;
 #ifndef DEBUG
   int saved_stderr = -1;
   int null_fd = -1;
 #endif
 
   if (stats == NULL || hca == NULL)
-    return;
+    return -1;
 
 #ifndef DEBUG
   monitor_stderr_quiet_begin(&saved_stderr, &null_fd);
@@ -260,7 +265,8 @@ void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
     goto out;
   }
 
-  if (ib_mad_sw_query_switch_counters(mad_port, mad_timeout, &sw_rx_bytes, &sw_rx_packets,
+  if (STATS_FAULT("mad_query", hca, &errno) ||
+      ib_mad_sw_query_switch_counters(mad_port, mad_timeout, &sw_rx_bytes, &sw_rx_packets,
                                       &sw_tx_bytes, &sw_tx_packets) != 0) {
     g_ib_mad_sw_fail_streak++;
     goto out;
@@ -272,6 +278,7 @@ void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
         sw_rx_packets, sw_tx_bytes, sw_tx_packets);
 
   ib_mad_sw_publish_tx_rx_swap(stats, sw_rx_bytes, sw_rx_packets, sw_tx_bytes, sw_tx_packets);
+  rc = 0;
 
 out:
   if (mad_port != NULL)
@@ -279,6 +286,7 @@ out:
 #ifndef DEBUG
   monitor_stderr_quiet_end(&saved_stderr, &null_fd);
 #endif
+  return rc;
 }
 
 void ib_mad_test_reset_backoff(void)

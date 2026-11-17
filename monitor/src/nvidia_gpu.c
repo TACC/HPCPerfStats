@@ -71,92 +71,12 @@ static void nvidia_gpu_io_link_accumulate(unsigned int gid, const dcgm_data_t *r
 static int list_field_values(unsigned int gpu_id, dcgmFieldValue_v1 *values, int num_values,
                              void *userdata)
 {
-  int i;
   dcgm_data_t *data = (dcgm_data_t *)userdata;
 
   if (gpu_id >= DCGM_MAX_NUM_DEVICES)
     return -1;
-  for (i = 0; i < num_values; i++) {
-    if (values[i].status != DCGM_ST_OK)
-      continue;
-    switch (values[i].fieldId) {
-    case DCGM_FI_DEV_GPU_TEMP:
-      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].temperature);
-      break;
-    case DCGM_FI_DEV_POWER_USAGE:
-      nvidia_gpu_dcgm_field_watts(&values[i], &data[gpu_id].power_usage);
-      break;
-    case DCGM_FI_DEV_GPU_UTIL:
-      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].gpu_util);
-      break;
-    case DCGM_FI_DEV_MEM_COPY_UTIL:
-      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].mem_util);
-      break;
-    case DCGM_FI_DEV_FB_TOTAL:
-      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].fb_total_mb);
-      break;
-    case DCGM_FI_DEV_FB_USED:
-      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].fb_used_mb);
-      break;
-    case DCGM_FI_DEV_FB_FREE:
-      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].fb_free_mb);
-      break;
-    case DCGM_FI_DEV_SM_CLOCK:
-      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].sm_clock);
-      break;
-    case DCGM_FI_DEV_PCIE_REPLAY_COUNTER:
-      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].pcie_replay_counter);
-      break;
-    case DCGM_FI_PROF_DRAM_ACTIVE:
-      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].dram_active);
-      break;
-    case DCGM_FI_PROF_SM_ACTIVE:
-      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].sm_active);
-      break;
-    case DCGM_FI_PROF_SM_OCCUPANCY:
-      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].sm_occupancy);
-      break;
-    case DCGM_FI_PROF_PIPE_FP64_ACTIVE:
-      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].fp64_active);
-      break;
-    case DCGM_FI_PROF_PIPE_FP32_ACTIVE:
-      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].fp32_active);
-      break;
-    case DCGM_FI_PROF_PIPE_FP16_ACTIVE:
-      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].fp16_active);
-      break;
-    case DCGM_FI_PROF_PIPE_TENSOR_ACTIVE:
-      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].tensor_active);
-      break;
-    case DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE:
-      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].tensor_imma_active);
-      break;
-    case DCGM_FI_PROF_PIPE_TENSOR_HMMA_ACTIVE:
-      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].tensor_hmma_active);
-      break;
-    case DCGM_FI_PROF_PIPE_TENSOR_DFMA_ACTIVE:
-      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].tensor_dfma_active);
-      break;
-    case DCGM_FI_DEV_CLOCK_THROTTLE_REASONS:
-      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64,
-                                            &data[gpu_id].clocks_event_reasons);
-      break;
-    case DCGM_FI_PROF_PCIE_TX_BYTES:
-      nvidia_gpu_dcgm_field_u64(&values[i], &data[gpu_id].prof_pcie_tx_bytes);
-      break;
-    case DCGM_FI_PROF_PCIE_RX_BYTES:
-      nvidia_gpu_dcgm_field_u64(&values[i], &data[gpu_id].prof_pcie_rx_bytes);
-      break;
-    case DCGM_FI_PROF_NVLINK_TX_BYTES:
-      nvidia_gpu_dcgm_field_u64(&values[i], &data[gpu_id].prof_nvlink_tx_bytes);
-      break;
-    case DCGM_FI_PROF_NVLINK_RX_BYTES:
-      nvidia_gpu_dcgm_field_u64(&values[i], &data[gpu_id].prof_nvlink_rx_bytes);
-      break;
-    default:
-      break;
-    }
-  }
+  for (int i = 0; i < num_values; i++)
+    nvidia_gpu_dcgm_field_apply(&data[gpu_id], &values[i]);
   return 0;
 }
 
@@ -231,6 +151,8 @@ static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row, u
   stats_set(stats, "gpu_mem_total_bytes", g_gpu_est_mem_total_bytes[gid]);
   stats_set(stats, "gpu_io_link_total_bytes", g_gpu_io_link_total_bytes[gid]);
   stats_set(stats, "gpu_count", (unsigned long long)(gpu_count < 0 ? 0 : gpu_count));
+  for (int k = 0; k < row->nmiss; k++)
+    stats_set_missing(stats, row->miss[k].key, (enum stats_sentinel)row->miss[k].code);
   return 0;
 }
 
@@ -326,8 +248,10 @@ static void nvidia_gpu_collect(struct stats_type *type)
     goto out;
   }
 
-  rc = dcgmGetLatestValues(g_nvidia_gpu_runtime_handle, g_nvidia_gpu_runtime_group,
-                           g_nvidia_gpu_runtime_field_group, &list_field_values, dcgm_data);
+  rc = STATS_FAULT("dcgm_fetch", NULL, &errno)
+           ? DCGM_ST_GENERIC_ERROR
+           : dcgmGetLatestValues(g_nvidia_gpu_runtime_handle, g_nvidia_gpu_runtime_group,
+                                 g_nvidia_gpu_runtime_field_group, &list_field_values, dcgm_data);
   if (rc != DCGM_ST_OK) {
     fail_stage = NVIDIA_GPU_FAIL_FETCH;
     ERROR("DCGM fetch latest values failed: %s\n", nvidia_gpu_dcgm_err(rc));
@@ -357,6 +281,9 @@ static void nvidia_gpu_collect(struct stats_type *type)
   }
 
 out:
+  /* Rows from earlier cycles were not refreshed: the whole device fetch failed. */
+  if (fail_stage != NVIDIA_GPU_FAIL_NONE)
+    stats_type_set_missing_all(type, STATS_SENTINEL_BACKEND_ERROR);
   if (fail_stage != NVIDIA_GPU_FAIL_NONE)
     g_nvidia_gpu_warmup_done = 0;
   if (fail_stage > NVIDIA_GPU_FAIL_NONE && fail_stage < NVIDIA_GPU_FAIL_STAGE_NR)

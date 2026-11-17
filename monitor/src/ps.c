@@ -35,7 +35,8 @@ static int ps_stat_line_cb(char *line, void *ctx)
 
 static void ps_collect_proc_stat(struct stats *stats)
 {
-  procfile_for_each_line("/proc/stat", ps_stat_line_cb, stats);
+  if (procfile_for_each_line("/proc/stat", ps_stat_line_cb, stats) < 0)
+    stats_set_missing_all(stats, STATS_SENTINEL_READ_FAILED);
 }
 
 static void ps_collect_loadavg(struct stats *stats)
@@ -50,6 +51,7 @@ static void ps_collect_loadavg(struct stats *stats)
   if (pscanf(path, "%llu.%llu %llu.%llu %llu.%llu %llu/%llu", &load[0][0], &load[0][1], &load[1][0],
              &load[1][1], &load[2][0], &load[2][1], &nr_running, &nr_threads) != 8) {
     TRACE("ps: short or malformed `%s'\n", path);
+    stats_set_missing_all(stats, STATS_SENTINEL_READ_FAILED);
     return;
   }
 

@@ -115,7 +115,8 @@ int dcgm_gpu_dyn_load(void)
   const char *override;
   size_t i;
 
-  if (g_dcgm_loaded)
+  /* Test hooks stand in for the whole library. */
+  if (g_dcgm_loaded || g_test_hooks_active)
     return 0;
 
   g_dcgm_last_error[0] = '\0';

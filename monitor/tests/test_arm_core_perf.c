@@ -4,6 +4,7 @@
  * and inst_retired (0x08); the seven FP / SVE INT events come from the MIDR raw-code table.
  * Regression for the 2026-11-13 "always zero" finding: the Grace FP keys were never programmed. */
 #include <assert.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -189,6 +190,74 @@ static void test_one_event_failing_leaves_others(void)
   fake_perf_reset();
 }
 
+/* Value sentinels: an open errno maps to its code (EACCES PERMISSION_DENIED, EBUSY PMU_BUSY,
+ * ENOENT/EINVAL NOT_PRESENT), an unnamed event is NOT_PRESENT, a failed read is READ_FAILED, and a
+ * lifetime never decreases across a failed read, a re-seed or an unscheduled interval. */
+static void test_event_sentinel_codes(void)
+{
+  struct arm_core_perf_cfg c;
+  struct arm_core_counts m;
+  unsigned long long life_before;
+  int cyc, ins;
+
+  make_tree("0x00000000410fd4f0\n");
+  fake_perf_reset();
+  fake_perf_fail_errno(0x8018, -1, EACCES); /* FP_SP_SPEC */
+  c = cfg();
+  assert(arm_core_perf_begin(1, &c) == 0);
+  cyc = fake_perf_find(CORE_TYPE, 0x11, 0);
+  ins = fake_perf_find(CORE_TYPE, 0x08, 0);
+  assert(cyc >= 0 && ins >= 0);
+  arm_core_perf_collect_cpu(0, &m); /* empty pipes: every open event READ_FAILED */
+  assert(m.code[ARM_CORE_FP_SP] == STATS_SENTINEL_PERMISSION_DENIED && !m.have[ARM_CORE_FP_SP]);
+  assert(m.code[ARM_CORE_CYC] == STATS_SENTINEL_READ_FAILED);
+  fake_perf_push(cyc, 0, 0, 0);
+  fake_perf_push(ins, 0, 0, 0);
+  arm_core_perf_collect_cpu(0, &m); /* seed */
+  assert(m.code[ARM_CORE_CYC] == STATS_SENTINEL_OK && m.code[ARM_CORE_INS] == STATS_SENTINEL_OK);
+  fake_perf_push(cyc, 100, 1000, 500); /* partial multiplexing: scaled, no sentinel */
+  fake_perf_push(ins, 100, 1000, 0);   /* never scheduled */
+  arm_core_perf_collect_cpu(0, &m);
+  assert(m.code[ARM_CORE_CYC] == STATS_SENTINEL_OK && m.life[ARM_CORE_CYC] == 200ULL);
+  assert(m.code[ARM_CORE_INS] == STATS_SENTINEL_NOT_SCHEDULED && m.life[ARM_CORE_INS] == 0ULL);
+  life_before = m.life[ARM_CORE_CYC];
+  fake_perf_push(cyc, 10, 2000, 1000); /* counter went backwards: re-seed */
+  arm_core_perf_collect_cpu(0, &m);
+  assert(m.code[ARM_CORE_CYC] == STATS_SENTINEL_COUNTER_RESET);
+  assert(m.life[ARM_CORE_CYC] == life_before);
+  arm_core_perf_collect_cpu(0, &m); /* failed read keeps prev */
+  assert(m.code[ARM_CORE_CYC] == STATS_SENTINEL_READ_FAILED && m.life[ARM_CORE_CYC] == life_before);
+  fake_perf_push(cyc, 110, 4000, 2000); /* spans the failed tick: 100 x 2000 / 1000 */
+  arm_core_perf_collect_cpu(0, &m);
+  assert(m.code[ARM_CORE_CYC] == STATS_SENTINEL_OK && m.life[ARM_CORE_CYC] == life_before + 200ULL);
+  arm_core_perf_cleanup();
+  fake_perf_reset();
+
+  fake_perf_fail_errno(0x8018, -1, EBUSY);
+  assert(arm_core_perf_begin(1, &c) == 0);
+  arm_core_perf_collect_cpu(0, &m);
+  assert(m.code[ARM_CORE_FP_SP] == STATS_SENTINEL_PMU_BUSY);
+  arm_core_perf_cleanup();
+  fake_perf_reset();
+
+  fake_perf_fail_errno(0x8018, -1, EINVAL);
+  assert(arm_core_perf_begin(1, &c) == 0);
+  arm_core_perf_collect_cpu(0, &m);
+  assert(m.code[ARM_CORE_FP_SP] == STATS_SENTINEL_NOT_PRESENT);
+  arm_core_perf_cleanup();
+  fake_perf_reset();
+
+  /* Unknown MIDR: the table events are unnamed, so NOT_PRESENT; out-of-range CPU likewise. */
+  make_tree("0x00000000deadbeef\n");
+  assert(arm_core_perf_begin(1, &c) == 0);
+  arm_core_perf_collect_cpu(0, &m);
+  assert(m.code[ARM_CORE_FP_DP] == STATS_SENTINEL_NOT_PRESENT);
+  arm_core_perf_collect_cpu(3, &m);
+  assert(m.code[ARM_CORE_CYC] == STATS_SENTINEL_NOT_PRESENT);
+  arm_core_perf_cleanup();
+  fake_perf_reset();
+}
+
 /* Seeds every open counter, then pushes one tick of 1000 ns enabled: the cycle event (0x11, on
  * the dedicated cycle counter) runs @p cyc_run ns, every other event @p gen_run ns. */
 static void push_sharing_tick(uint64_t cyc_run, uint64_t gen_run)
@@ -358,6 +427,7 @@ int main(void)
   test_resolve_neoverse_v2_table();
   test_resolve_unknown_midr_only_named_events();
   test_begin_collect_scaled_lifetimes();
+  test_event_sentinel_codes();
   test_one_event_failing_leaves_others();
   test_sharing_own_oversubscription_only();
   test_sharing_outside_holder();

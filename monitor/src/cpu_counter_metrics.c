@@ -198,6 +198,9 @@ static void arm_collect_cpu(struct stats *stats, int i, int proc_stat_ok, long l
     arm_core_perf_collect_cpu(i, &counts);
     publish_arm_measured_stats(stats, &counts);
   }
+  /* What the arm backend did not set is not on this CPU: x86 PMC keys, or every measured key
+   * when no core PMU opened. */
+  stats_set_missing_all(stats, STATS_SENTINEL_NOT_PRESENT);
 }
 #endif
 
@@ -237,11 +240,10 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
     g_arm_stat_seeded = 1;
   }
 #else
-  int skip_pmc_reads = 0;
-
   /* Re-program core LIKWID group once per tick after DF/RAPL setupCounters. */
-  if (cpu_counter_metrics_likwid_ready() && likwid_pmc_adapter_prepare_collect() != 0)
-    skip_pmc_reads = 1;
+  enum stats_sentinel prepare = cpu_counter_metrics_likwid_ready()
+                                    ? likwid_pmc_adapter_prepare_collect()
+                                    : STATS_SENTINEL_BACKEND_ERROR;
 
   for (i = 0; i < nr_cpus; i++) {
     char cpu[80];
@@ -251,9 +253,11 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
     if (stats == NULL)
       continue;
     /* LIKWID-only: no MSR fallback when setup failed or read_cpu fails. */
-    if (!skip_pmc_reads && cpu_counter_metrics_likwid_ready()) {
+    if (prepare == STATS_SENTINEL_OK) {
       uint64_t ctls[8] = {0};
       (void)likwid_pmc_adapter_read_cpu(stats, i, ctls, 8, 8);
+    } else {
+      stats_set_missing_all(stats, prepare);
     }
   }
 #endif

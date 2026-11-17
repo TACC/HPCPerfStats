@@ -13,6 +13,23 @@
 
 static struct stats_type g_type;
 static int g_collect_calls;
+static int g_reset_calls;
+static int g_reset_calls_at_collect;
+static int g_prune_calls;
+static int g_collect_calls_at_prune;
+
+void stats_type_mark_not_updated(struct stats_type *type)
+{
+  assert(type == &g_type);
+  g_reset_calls++;
+}
+
+void stats_type_prune_untouched(struct stats_type *type)
+{
+  assert(type == &g_type);
+  g_prune_calls++;
+  g_collect_calls_at_prune = g_collect_calls;
+}
 
 void cpu_stats_invalidate_file_caches(void) {}
 void net_stats_invalidate_iface_cache(void) {}
@@ -72,6 +89,7 @@ struct stats_type *stats_type_get(const char *name)
 static void stub_collect(struct stats_type *type)
 {
   (void)type;
+  g_reset_calls_at_collect = g_reset_calls;
   g_collect_calls++;
 }
 
@@ -93,6 +111,10 @@ static void setup_type(const char *schema_def)
 {
   memset(&g_type, 0, sizeof(g_type));
   g_collect_calls = 0;
+  g_reset_calls = 0;
+  g_reset_calls_at_collect = 0;
+  g_prune_calls = 0;
+  g_collect_calls_at_prune = 0;
   snprintf(g_type.st_name, sizeof(g_type.st_name), "%s", "host_tt");
   assert(schema_init(&g_type.st_schema, schema_def) == 0);
   collect_tier_apply_to_type(&g_type);
@@ -116,6 +138,28 @@ static void test_collect_cycle_runs_collect_and_finalize(void)
   assert(stats_runtime_collect_cycle(NULL, &finalize_calls, &sink, 0) == 0);
   assert(g_collect_calls == 1);
   assert(finalize_calls == 1);
+  teardown_type();
+}
+
+/* Every collected type is reset to NOT_UPDATED once per cycle, before any collect runs. */
+static void test_collect_cycle_resets_states_before_collect(void)
+{
+  setup_type("a,E");
+  stats_runtime_collect_enabled_metrics(0);
+  assert(g_reset_calls == 1);
+  assert(g_reset_calls_at_collect == 1);
+  /* Each collected type is offered for pruning right after its collect. */
+  assert(g_prune_calls == 1);
+  assert(g_collect_calls_at_prune == 1);
+
+  g_type.st_selected = 0;
+  stats_runtime_collect_enabled_metrics(1);
+  assert(g_reset_calls == 1);
+  assert(g_collect_calls == 1);
+
+  g_type.st_enabled = 0;
+  stats_runtime_collect_enabled_metrics(0);
+  assert(g_reset_calls == 1);
   teardown_type();
 }
 
@@ -150,6 +194,7 @@ int main(void)
 {
   test_collect_cycle_runs_collect_and_finalize();
   test_collect_cycle_propagates_finalize_error();
+  test_collect_cycle_resets_states_before_collect();
   test_schema_key_active_this_phase();
   printf("test_stats_runtime_collect passed\n");
   return 0;

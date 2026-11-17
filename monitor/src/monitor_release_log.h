@@ -1,6 +1,8 @@
 #ifndef MONITOR_RELEASE_LOG_H
 #define MONITOR_RELEASE_LOG_H
 
+#include <stddef.h>
+
 /*
  * Pure helpers for release (!DEBUG) logging policy: first-failure latches,
  * named failure counters for hourly rollup, and stderr quieting around noisy
@@ -57,6 +59,14 @@ void monitor_release_fail_get_counts(unsigned long *ring_resend, unsigned long *
 
 /*! Reset counters and latches (unit tests only). */
 void monitor_release_fail_reset_for_test(void);
+
+/*! Count one emitted value sentinel token `-code` (catalog code; 0 and unknown are ignored). */
+void monitor_release_sentinel_note(unsigned int code);
+
+/*! Format the per-code sentinel tokens emitted since the previous call as
+ *  "sentinels: SLUG=n ..." (non-zero codes only; "sentinels: none" when there were none).
+ *  Returns the untruncated length, or -1 for an empty buffer. */
+int monitor_release_sentinel_summary(char *buf, size_t len);
 
 /*! Redirect stderr to /dev/null (LIKWID-style). Sets *saved_fd / *null_fd to -1 on failure. */
 void monitor_stderr_quiet_begin(int *saved_fd, int *null_fd);

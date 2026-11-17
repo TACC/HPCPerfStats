@@ -25,6 +25,8 @@ from lib.listend_contract import (  # noqa: E402
 from lib.row_validate import (  # noqa: E402
     st_name_looks_like_driver,
     token_is_uint,
+    token_is_value,
+    token_sentinel_code,
     validate_metric_row,
     validate_sample_payload,
 )
@@ -73,7 +75,115 @@ class RowValidateTests(unittest.TestCase):
         bad = body.replace("host_net eth0 @full 10 11 12", "host_net eth0 @full 10 x 12")
         with self.assertRaises(ValueError) as ctx:
             validate_sample_payload(bad, schema, require_tier=True, allowed_tier="@full")
-        self.assertIn("non-numeric", str(ctx.exception))
+        self.assertIn("neither unsigned nor a catalog sentinel", str(ctx.exception))
+
+    def test_token_is_value_accepts_catalog_sentinels_only(self) -> None:
+        for n in range(1, 12):
+            self.assertTrue(token_is_value(f"-{n}"), n)
+            self.assertEqual(token_sentinel_code(f"-{n}"), n)
+        self.assertTrue(token_is_value("0"))
+        self.assertTrue(token_is_value("18446744073709551615"))
+        for bad in ("-99", "-12", "-0", "-03", "-", "", "+3", "-3x", "3.0"):
+            self.assertFalse(token_is_value(bad), bad)
+        self.assertIsNone(token_sentinel_code("7"))
+
+    def test_metric_row_sentinel_accepted_out_of_catalog_rejected(self) -> None:
+        schema = _schema_by_type(_load_manifest())
+        validate_metric_row(
+            "host_net eth0 @full 10 -3 -10", schema, require_tier=True, allowed_tier="@full"
+        )
+        with self.assertRaises(ValueError):
+            validate_metric_row(
+                "host_net eth0 @full 10 -99 12", schema, require_tier=True, allowed_tier="@full"
+            )
+
+    def test_value_accessors_split_values_from_sentinels(self) -> None:
+        from lib.payload_parse import metric_sentinel_at_key, metric_value_at_key
+
+        names = ["rx_bytes", "tx_bytes", "collisions"]
+        values = ["10", "-3", "x"]
+        self.assertEqual(metric_value_at_key(values, names, "rx_bytes"), 10)
+        self.assertIsNone(metric_value_at_key(values, names, "tx_bytes"))
+        self.assertEqual(metric_sentinel_at_key(values, names, "tx_bytes"), 3)
+        self.assertIsNone(metric_sentinel_at_key(values, names, "rx_bytes"))
+        self.assertIsNone(metric_value_at_key(values, names, "collisions"))
+        self.assertIsNone(metric_value_at_key(values, names, "absent"))
+
+
+class SentinelCatalogTests(unittest.TestCase):
+    def test_catalog_matches_c_header(self) -> None:
+        import re
+
+        from lib.sentinel_catalog import CATALOG_VERSION, SENTINEL_SLUGS
+
+        text = (MONITOR / "src" / "stats_sentinel.h").read_text(encoding="utf-8")
+        entries = re.findall(r"^\s*X\((\d+), (\w+),", text, re.M)
+        self.assertEqual({int(n): slug for n, slug in entries}, SENTINEL_SLUGS)
+        self.assertEqual(sorted(SENTINEL_SLUGS), list(range(1, len(SENTINEL_SLUGS) + 1)))
+        self.assertIn(f"STATS_SENTINEL_CATALOG_VERSION {CATALOG_VERSION}", text)
+
+    def test_bridgeable_codes_match_consumer_catalog(self) -> None:
+        import re
+
+        from lib.sentinel_catalog import BRIDGEABLE_CODES
+
+        self.assertEqual(BRIDGEABLE_CODES, frozenset({1, 3, 7, 8, 9}))
+        consumer = MONITOR.parent / "hpcperfstats" / "lib" / "monitor_sentinel.py"
+        if not consumer.is_file():
+            self.skipTest("consumer catalog not in this checkout")
+        rows = re.findall(
+            r'SentinelCode\(\s*-(\d+),\s*"\w+",\s*"[^"]*",\s*(True|False)',
+            consumer.read_text(encoding="utf-8"),
+        )
+        self.assertTrue(rows)
+        self.assertEqual(
+            frozenset(int(n) for n, bridge in rows if bridge == "True"), BRIDGEABLE_CODES
+        )
+
+    def test_banner_version(self) -> None:
+        from lib.sentinel_catalog import sentinels_banner_version
+
+        self.assertEqual(sentinels_banner_version("$build x\n$sentinels 1\n!t a"), 1)
+        self.assertIsNone(sentinels_banner_version("$build x\n!t a"))
+        self.assertIsNone(sentinels_banner_version(None))
+
+
+class SentinelLayerTests(unittest.TestCase):
+    def _layer(self, schema_body: str, full_body: str):
+        from lib.sentinel_validate import check_sentinel_banner
+
+        schema = _schema_by_type(_load_manifest())
+        return check_sentinel_banner(schema_body, {"full": (full_body, True, "@full")}, schema)
+
+    def test_knob0_capture_reports_skip_not_pass(self) -> None:
+        schema_body = (SYNTHETIC / "schema").read_text(encoding="utf-8")
+        full = (SYNTHETIC / "full").read_text(encoding="utf-8")
+        notes, warnings, errors, banner = self._layer(schema_body, full)
+        self.assertIsNone(banner)
+        self.assertFalse(errors or warnings)
+        self.assertTrue(any(n.startswith("SKIP sentinel layers") for n in notes), notes)
+        self.assertFalse(any(n.startswith("PASS sentinel") for n in notes), notes)
+
+    def test_sentinel_token_without_banner_fails(self) -> None:
+        schema_body = (SYNTHETIC / "schema").read_text(encoding="utf-8")
+        full = (SYNTHETIC / "full").read_text(encoding="utf-8").replace(
+            "host_net eth0 @full 10 11 12", "host_net eth0 @full 10 -3 12"
+        )
+        _, _, errors, _ = self._layer(schema_body, full)
+        self.assertTrue(any("without a $sentinels banner" in e for e in errors), errors)
+
+    def test_banner_counts_per_code(self) -> None:
+        schema_body = (SYNTHETIC / "schema").read_text(encoding="utf-8").replace(
+            "$uptime 1000\n", "$uptime 1000\n$sentinels 1\n"
+        )
+        full = (SYNTHETIC / "full").read_text(encoding="utf-8").replace(
+            "host_net eth0 @full 10 11 12", "host_net eth0 @full -10 -3 -3"
+        )
+        notes, _, errors, banner = self._layer(schema_body, full)
+        self.assertEqual(banner, 1)
+        self.assertFalse(errors)
+        self.assertIn("PASS sentinel banner v1", notes)
+        self.assertIn("NOTE sentinel full: NOT_BUILT=1 READ_FAILED=2", notes)
 
     def test_synthetic_fixture_passes(self) -> None:
         manifest = _load_manifest()
@@ -1650,6 +1760,441 @@ class PapiShmValidateTests(unittest.TestCase):
         self.assertFalse(any("arm_est_flops" in w for w in warnings))
 
 
+class CrossSampleSentinelTests(unittest.TestCase):
+    _SCHEMA = {
+        "host_net": ["rx_bytes,E,U=B", "tx_bytes,E,U=B"],
+        "host_cpu_hw": ["instr_retired,E"],
+    }
+
+    def _manifest(self, slug: str) -> dict:
+        return {
+            "capability_slug": slug,
+            "enable_slow_tier": False,
+            "types": {t: {"schema_keys": k} for t, k in self._SCHEMA.items()},
+        }
+
+    @staticmethod
+    def _body(ts: float, rx: str, instr: str = "5") -> str:
+        return f"{ts:.6f} job1 h1\nhost_net eth0 {rx} 7\nhost_cpu_hw 0 {instr}\n"
+
+    def _run(self, series, *, slug="x86_64-ver3.1-hw-likwid-sent1-slowtier0", banner=1, cpu=False):
+        from lib.cross_sample_validate import run_cross_sample_checks
+        from lib.daemon_conf import DaemonTiming
+        from lib.shm_snapshot import SnapshotPair
+
+        bodies = [
+            self._body(1000.0 + 30 * i, "9" if cpu else v, v if cpu else "5")
+            for i, v in enumerate(series)
+        ]
+        pair = SnapshotPair(
+            kind="full",
+            ts_a=1000.0,
+            ts_b=1000.0 + 30 * (len(series) - 1),
+            body_a=bodies[0],
+            body_b=bodies[-1],
+            bodies_mid=tuple(bodies[1:-1]),
+        )
+        return run_cross_sample_checks(
+            self._manifest(slug),
+            self._SCHEMA,
+            timing=DaemonTiming(30.0, 60.0, 300.0, False),
+            fast_pair=None,
+            full_pair=pair,
+            strict=False,
+            active_conf_note="test",
+            sentinel_banner=banner,
+        )
+
+    def test_chain_breaking_transition_is_exempt(self) -> None:
+        notes, warnings, errors = self._run(["100", "-2", "50"])
+        self.assertFalse(errors)
+        self.assertFalse(any("decreased" in w for w in warnings), warnings)
+        self.assertTrue(any("NOT_PRESENT=1" in n and "chain-break 1" in n for n in notes), notes)
+
+    def test_bridgeable_decrease_fails(self) -> None:
+        _, _, errors = self._run(["100", "-3", "90"])
+        self.assertTrue(any(e.startswith("FAIL cross_sample bridge host_net/eth0 rx_bytes") for e in errors), errors)
+
+    def test_bridgeable_advance_passes(self) -> None:
+        notes, _, errors = self._run(["100", "-1", "-9", "150"])
+        self.assertFalse(errors)
+        self.assertTrue(any("BACKOFF=1 NOT_UPDATED=1" in n and "bridged 1" in n for n in notes), notes)
+
+    def test_mixed_gap_with_one_chain_breaker_is_exempt(self) -> None:
+        _, _, errors = self._run(["100", "-3", "-11", "90"])
+        self.assertFalse(errors)
+
+    def test_plain_decrease_still_warns(self) -> None:
+        _, warnings, errors = self._run(["100", "90"])
+        self.assertFalse(errors)
+        self.assertTrue(any("decreased 100 -> 90" in w for w in warnings), warnings)
+
+    def test_likwid_host_cpu_hw_bridge_is_informational(self) -> None:
+        notes, _, errors = self._run(["100", "-3", "90"], cpu=True)
+        self.assertFalse(errors)
+        self.assertTrue(any("bridge unproven" in n for n in notes), notes)
+        _, _, errors = self._run(["100", "-3", "90"], cpu=True, slug="x86_64-ver3.2-hw-x86perf-sent1")
+        self.assertTrue(any("host_cpu_hw/0 instr_retired" in e for e in errors), errors)
+
+    def test_knob0_reports_skip_and_tokens_fail(self) -> None:
+        notes, _, errors = self._run(["100", "150"], banner=None)
+        self.assertFalse(errors)
+        self.assertIn("SKIP cross_sample full sentinel bridge (emit_value_sentinels 0)", notes)
+        self.assertFalse(any("PASS" in n and "sentinel" in n for n in notes), notes)
+        _, _, errors = self._run(["100", "-3", "150"], banner=None)
+        self.assertTrue(any("without a $sentinels banner" in e for e in errors), errors)
+
+    def test_fixture_loader_reads_intermediate_captures(self) -> None:
+        from lib.shm_snapshot import load_fixture_pair
+
+        with tempfile.TemporaryDirectory() as td:
+            for i, rx in enumerate(("1", "-3", "2")):
+                (Path(td) / f"t{i}").mkdir()
+                (Path(td) / f"t{i}" / "full").write_text(self._body(1000.0 + i, rx), encoding="utf-8")
+            pair = load_fixture_pair(Path(td), "full")
+        self.assertEqual(len(pair.bodies_mid), 1)
+        self.assertIn(" -3 ", pair.bodies_mid[0])
+        self.assertEqual(pair.ts_b, 1002.0)
+
+
+class SentinelManifestLayerTests(unittest.TestCase):
+    _SCHEMA = {
+        "host_net": ["rx_bytes,E,U=B", "tx_bytes,E,U=B"],
+        "host_vm": ["pgfault,E", "thp_split,E"],
+        "host_ib": ["port_rcv_data,E,W=32", "sw_rx_bytes,E"],
+        "amd_gpu": ["gpu_util"],
+    }
+
+    @staticmethod
+    def _body(*rows: str, ts: float = 1000.0) -> str:
+        return f"{ts:.6f} job1 h1\n" + "".join(r + "\n" for r in rows)
+
+    def _manifest(self, slug: str) -> dict:
+        from lib.sentinel_validate import allowed_sentinels
+
+        allowed, expect = allowed_sentinels(slug, self._SCHEMA)
+        return {"allowed_sentinels": allowed, "expect_not_built": expect}
+
+    def _allow(self, body: str, slug="x86_64-ver3.1-hw-likwid-sent1", strict=True, manifest=None):
+        from lib.sentinel_validate import check_allowed_sentinels
+
+        return check_allowed_sentinels(
+            manifest if manifest is not None else self._manifest(slug),
+            {"full": (body, False, None)},
+            self._SCHEMA,
+            strict=strict,
+        )
+
+    def test_allowed_sentinels_follow_the_build(self) -> None:
+        from lib.sentinel_validate import allowed_sentinels
+
+        allowed, expect = allowed_sentinels("x86_64-ver3.1-hw-likwid-sent1", ["host_ib", "amd_gpu", "host_net"])
+        self.assertIn(10, allowed["host_ib"]["*"])
+        self.assertEqual(expect, {"host_ib": ["sw_*"], "amd_gpu": ["*"]})
+        self.assertEqual(allowed["host_net"]["*"], [1, 2])
+        allowed, expect = allowed_sentinels("x86_64-ver3.1-hw-ibdyn-likwid-sent1", ["host_ib"])
+        self.assertNotIn(10, allowed["host_ib"]["*"])
+        self.assertEqual(expect, {})
+
+    def test_unexpected_code_fails_strict_and_warns_otherwise(self) -> None:
+        body = self._body("host_net eth0 -3 -2", "host_ib mlx5_0.1 -1 -10")
+        _, warnings, errors = self._allow(body)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("host_net/eth0 rx_bytes: READ_FAILED", errors[0])
+        _, warnings, errors = self._allow(body, strict=False)
+        self.assertFalse(errors)
+        self.assertTrue(warnings[0].startswith("WARN sentinel allowlist"))
+
+    def test_not_built_with_mad_in_slug_fails(self) -> None:
+        body = self._body("host_ib mlx5_0.1 7 -10")
+        _, _, errors = self._allow(body, slug="x86_64-ver3.1-hw-ibdyn-likwid-sent1")
+        self.assertTrue(any("sw_rx_bytes: NOT_BUILT" in e for e in errors), errors)
+
+    def test_expected_not_built_key_emitting_a_value_fails(self) -> None:
+        notes, _, errors = self._allow(self._body("host_ib mlx5_0.1 7 -10", "amd_gpu 0 -10"))
+        self.assertFalse(errors)
+        self.assertIn("PASS sentinel allowlist", notes)
+        _, _, errors = self._allow(self._body("host_ib mlx5_0.1 7 42", "amd_gpu 0 5"))
+        self.assertEqual(len(errors), 2, errors)
+        self.assertTrue(all("cannot read" in e for e in errors))
+
+    def test_manifest_without_allowlist_skips(self) -> None:
+        notes, warnings, errors = self._allow(self._body("host_net eth0 -3 -2"), manifest={})
+        self.assertFalse(errors or warnings)
+        self.assertTrue(notes[0].startswith("SKIP sentinel allowlist"))
+
+    def test_not_present_probe_against_host_sources(self) -> None:
+        from lib.sentinel_validate import check_not_present_probes
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "proc").mkdir()
+            (root / "proc" / "vmstat").write_text("pgfault 10\n", encoding="utf-8")
+            port = root / "sys" / "class" / "infiniband" / "mlx5_0" / "ports" / "1" / "counters"
+            port.mkdir(parents=True)
+            (port / "port_rcv_data").write_text("5\n", encoding="utf-8")
+            body = self._body("host_vm - -2 -2", "host_ib mlx5_0.1 -2 -2")
+            notes, errors = check_not_present_probes(
+                {"full": (body, False, None)}, self._SCHEMA, proc_root=root / "proc", sys_root=root / "sys"
+            )
+        self.assertEqual(len(errors), 2, errors)
+        self.assertTrue(any("host_vm/- pgfault" in e for e in errors))
+        self.assertTrue(any("host_ib/mlx5_0.1 port_rcv_data" in e for e in errors))
+
+    @staticmethod
+    def _power_meter(root: Path, idx: int, label: str, uw: int) -> None:
+        d = root / "class" / "hwmon" / f"hwmon{idx}"
+        d.mkdir(parents=True)
+        (d / "power1_oem_info").write_text(label + "\n", encoding="utf-8")
+        (d / "power1_average").write_text(f"{uw}\n", encoding="utf-8")
+
+    def test_not_present_probe_opa_hwmon_and_dcgm_skip(self) -> None:
+        from lib.sentinel_validate import check_not_present_probes
+
+        schema = {
+            "host_opa": ["port_xmit_pkts,E", "port_rcv_data,E"],
+            "host_power_socket": ["cpu_power_w", "socket_power_w"],
+            "nvidia_gpu": ["gpu_util"],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            sys_root = Path(td) / "sys"
+            counters = sys_root / "class" / "infiniband" / "hfi1_0" / "ports" / "1" / "counters"
+            counters.mkdir(parents=True)
+            (counters / "port_xmit_packets").write_text("4\n", encoding="utf-8")
+            self._power_meter(sys_root, 0, "Grace Power Socket 0", 250000000)
+            body = self._body("host_opa hfi1_0/1 -2 -2", "host_power_socket 0 -2 -2", "nvidia_gpu 0 -2")
+            notes, errors = check_not_present_probes(
+                {"full": (body, False, None)}, schema, proc_root=Path(td) / "proc", sys_root=sys_root
+            )
+        # Present sources (OPA *_packets file, Grace meter) FAIL; absent ones pass.
+        self.assertEqual(len(errors), 2, errors)
+        self.assertTrue(any("host_opa/hfi1_0/1 port_xmit_pkts" in e for e in errors))
+        self.assertTrue(any("host_power_socket/0 socket_power_w" in e for e in errors))
+        self.assertIn("SKIP sentinel probe nvidia_gpu (no DCGM field probe)", notes)
+
+    def test_persistent_not_updated_names_the_site(self) -> None:
+        from lib.sentinel_validate import check_persistent_not_updated, load_provenance
+
+        a = self._body("host_net eth0 -1 5")
+        b = self._body("host_net eth0 -1 -1", ts=1030.0)
+        c = self._body("host_net eth0 7 -1", ts=1060.0)
+        with tempfile.TemporaryDirectory() as td:
+            prov_path = Path(td) / "sentinels"
+            prov_path.write_text(
+                "host_net eth0 rx_bytes 1 NOT_UPDATED 0 net.c:120 1000 1030 2\nshort line\n",
+                encoding="utf-8",
+            )
+            prov = load_provenance(prov_path)
+        self.assertEqual(prov, {("host_net", "eth0", "rx_bytes"): "net.c:120"})
+        errors = check_persistent_not_updated([a, b, c], self._SCHEMA, require_tier=False, allowed_tier=None, provenance=prov)
+        self.assertEqual(len(errors), 2, errors)
+        self.assertIn("host_net/eth0 rx_bytes (collector host_net, net.c:120)", errors[0])
+        self.assertIn("tx_bytes (collector host_net, site unknown)", errors[1])
+        self.assertFalse(check_persistent_not_updated([a, c], self._SCHEMA, require_tier=False, allowed_tier=None, provenance={}))
+        self.assertEqual(load_provenance(Path("/nonexistent/sentinels")), {})
+
+    def test_build_manifest_carries_allowlist(self) -> None:
+        import build_message_expectations as bme
+
+        caps = json.loads((SYNTHETIC / "monitor-build-capabilities.json").read_text(encoding="utf-8"))
+        doc = bme.build_manifest(caps, shm_dir=SYNTHETIC, enable_slow_tier=True)
+        self.assertIn("host_net", doc["allowed_sentinels"])
+        self.assertEqual(doc["allowed_sentinels"]["host_net"]["*"], [1, 2])
+        self.assertIn("expect_not_built", doc)
+
+
+class IndependentReadTests(unittest.TestCase):
+    _SCHEMA = {"host_cpu": ["user,E", "idle,E"], "host_ib": ["port_rcv_data,E,W=32"]}
+
+    @staticmethod
+    def _body(ts: float, user: int, idle: int, ib: int) -> str:
+        return f"{ts:.6f} j h\nhost_cpu 0 {user} {idle}\nhost_ib mlx5_0.1 {ib}\n"
+
+    def _check(self, live, *, a=(90, 50, 10), b=(110, 60, 20), t_read=1010.0):
+        from lib.independent_read import check_independent_reads
+
+        return check_independent_reads(
+            self._SCHEMA, self._body(1000.0, *a), self._body(1030.0, *b), 1030.0, t_read, live,
+            require_tier=False, allowed_tier=None,
+        )
+
+    def test_live_read_inside_emitted_window_passes(self) -> None:
+        notes, errors = self._check({("host_cpu", "0", "user"): 100, ("host_ib", "mlx5_0.1", "port_rcv_data"): 15})
+        self.assertFalse(errors)
+        self.assertIn("PASS independent_read (2 keys)", notes)
+
+    def test_read_outside_window_fails(self) -> None:
+        _, errors = self._check({("host_cpu", "0", "user"): 200})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("host_cpu/0 user: live 200 outside emitted [90, 110]", errors[0])
+
+    def test_flat_zero_with_nonzero_source_fails(self) -> None:
+        _, errors = self._check({("host_cpu", "0", "idle"): 40}, a=(90, 0, 10), b=(110, 0, 20))
+        self.assertTrue(any("live 40 outside emitted [0, 0]" in e for e in errors), errors)
+
+    def test_width_wrap_is_not_a_failure(self) -> None:
+        top = (1 << 32) - 5
+        _, errors = self._check({("host_ib", "mlx5_0.1", "port_rcv_data"): (1 << 32) - 1}, a=(90, 50, top), b=(110, 60, 3))
+        self.assertFalse(errors)
+
+    def test_read_after_sample_b_is_inconclusive(self) -> None:
+        notes, errors = self._check({("host_cpu", "0", "user"): 500}, t_read=1031.0)
+        self.assertFalse(errors)
+        self.assertTrue(notes[0].startswith("NOTE independent_read"))
+        notes, errors = self._check({})
+        self.assertTrue(notes[0].startswith("SKIP independent_read"))
+
+    def test_sources_read_from_proc_and_sysfs(self) -> None:
+        from lib.independent_read import read_independent_sources
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "proc").mkdir()
+            (root / "proc" / "stat").write_text(
+                "cpu 1 2 3 4 5 6 7\ncpu0 11 12 13 14 15 16 17 0 0 0\nintr 5\n", encoding="utf-8"
+            )
+            c = root / "sys" / "class" / "infiniband" / "mlx5_0" / "ports" / "1" / "counters"
+            c.mkdir(parents=True)
+            (c / "port_rcv_data").write_text("77\n", encoding="utf-8")
+            _, live = read_independent_sources(
+                self._SCHEMA, self._body(1.0, 1, 1, 1), require_tier=False, allowed_tier=None,
+                proc_root=root / "proc", sys_root=root / "sys",
+            )
+        self.assertEqual(live[("host_cpu", "0", "user")], 11)
+        self.assertEqual(live[("host_cpu", "0", "softirq")], 17)
+        self.assertNotIn(("host_cpu", "", "user"), live)
+        self.assertEqual(live[("host_ib", "mlx5_0.1", "port_rcv_data")], 77)
+
+    _GAUGE_SCHEMA = {
+        "host_opa": ["port_xmit_data,E,W=64"],
+        "host_block": ["rd_ios,e", "rd_merges,e", "rd_sectors,E,U=512B"],
+        "host_mem": ["mem_total,U=KB", "mem_free,U=KB"],
+        "host_power_socket": ["cpu_power_w", "socket_power_w"],
+    }
+
+    def _check_rows(self, rows_a: str, rows_b: str, live, t_read=1010.0):
+        from lib.independent_read import check_independent_reads
+
+        return check_independent_reads(
+            self._GAUGE_SCHEMA, f"1000.0 j h\n{rows_a}", f"1030.0 j h\n{rows_b}", 1030.0, t_read, live,
+            require_tier=False, allowed_tier=None,
+        )
+
+    def test_opa_and_block_counters_bracket(self) -> None:
+        live = {("host_opa", "hfi1_0/1", "port_xmit_data"): 15, ("host_block", "sda", "rd_sectors"): 70}
+        notes, errors = self._check_rows("host_opa hfi1_0/1 10\nhost_block sda 1 0 50\n",
+                                         "host_opa hfi1_0/1 20\nhost_block sda 2 0 90\n", live)
+        self.assertFalse(errors)
+        _, errors = self._check_rows("host_opa hfi1_0/1 10\nhost_block sda 1 0 50\n",
+                                     "host_opa hfi1_0/1 12\nhost_block sda 2 0 60\n", live)
+        self.assertEqual(len(errors), 2, errors)
+
+    def test_gauges_fail_only_on_flat_zero_with_live_source(self) -> None:
+        live = {("host_mem", "0", "mem_total"): 8000000, ("host_power_socket", "0", "socket_power_w"): 250,
+                ("host_block", "sda", "rd_ios"): 9}
+        notes, errors = self._check_rows("host_mem 0 7999000 100\nhost_power_socket 0 90 240\nhost_block sda 3 0 1\n",
+                                         "host_mem 0 7999000 100\nhost_power_socket 0 90 260\nhost_block sda 4 0 1\n", live)
+        self.assertFalse(errors)
+        self.assertIn("PASS independent_read (3 keys)", notes)
+        _, errors = self._check_rows("host_mem 0 0 100\nhost_power_socket 0 90 0\nhost_block sda 3 0 1\n",
+                                     "host_mem 0 0 100\nhost_power_socket 0 90 0\nhost_block sda 4 0 1\n", live)
+        self.assertEqual(len(errors), 2, errors)
+        self.assertTrue(any("host_mem/0 mem_total: emitted 0 in both captures, source reads 8000000" in e for e in errors))
+        self.assertTrue(any("host_power_socket/0 socket_power_w" in e for e in errors))
+
+    def test_new_sources_read_from_sysfs(self) -> None:
+        from lib.independent_read import read_independent_sources
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            port = root / "class" / "infiniband" / "hfi1_0" / "ports" / "1"
+            (port / "hw_counters").mkdir(parents=True)
+            (port / "hw_counters" / "TxWords").write_text("1001\n", encoding="utf-8")
+            (root / "block" / "sda").mkdir(parents=True)
+            (root / "block" / "sda" / "stat").write_text("5 6 70 8 9 10 11 12 0 14 15\n", encoding="utf-8")
+            node = root / "devices" / "system" / "node" / "node0"
+            node.mkdir(parents=True)
+            (node / "meminfo").write_text("Node 0 MemTotal:  8000000 kB\nNode 0 MemFree:   100 kB\n", encoding="utf-8")
+            hw = root / "class" / "hwmon" / "hwmon0"
+            hw.mkdir(parents=True)
+            (hw / "power1_oem_info").write_text("CPU Power Socket 0\n", encoding="utf-8")
+            (hw / "power1_average").write_text("99600000\n", encoding="utf-8")
+            body = "1.0 j h\nhost_opa hfi1_0/1 1\nhost_block sda 1 1 1\nhost_mem 0 1 1\nhost_power_socket 0 1 1\n"
+            _, live = read_independent_sources(
+                self._GAUGE_SCHEMA, body, require_tier=False, allowed_tier=None,
+                proc_root=root / "proc", sys_root=root,
+            )
+        self.assertEqual(live[("host_opa", "hfi1_0/1", "port_xmit_data")], 1001)
+        self.assertEqual(live[("host_block", "sda", "rd_sectors")], 70)
+        self.assertEqual(live[("host_block", "sda", "time_in_queue")], 15)
+        self.assertEqual(live[("host_mem", "0", "mem_total")], 8000000)
+        self.assertEqual(live[("host_power_socket", "0", "cpu_power_w")], 100)
+
+    def test_capture_pair_runs_between_on_a_stable_capture(self) -> None:
+        import threading
+
+        from lib.daemon_conf import DaemonTiming
+        from lib.shm_snapshot import capture_pair
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "full"
+            path.write_text(self._body(1000.0, 1, 1, 1), encoding="utf-8")
+            seen: list[str] = []
+
+            def between(body: str) -> None:
+                seen.append(body)
+                if len(seen) == 1:  # a sample lands during the first call: it must be retried
+                    path.write_text(self._body(1030.0, 2, 2, 2), encoding="utf-8")
+
+            later = threading.Timer(0.3, lambda: path.write_text(self._body(1060.0, 3, 3, 3), encoding="utf-8"))
+            later.start()
+            pair = capture_pair(Path(td), "full", timing=DaemonTiming(30.0, 60.0, 300.0, False), between=between)
+            later.join()
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(pair.ts_a, 1030.0)
+        self.assertEqual(pair.ts_b, 1060.0)
+
+
+class FaultInjectSitesTests(unittest.TestCase):
+    def _sites(self, lines, types, ci):
+        import fault_inject_check as fic
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "sentinel_sites"
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            with patch.object(fic, "CI_COVERED_FILES", frozenset(ci)):
+                return fic.check_sites(path, {"types": {t: {} for t in types}})
+
+    def test_ci_covered_file_is_a_note(self) -> None:
+        notes, errors = self._sites(["net.c:139 0", "ps.c:54 2"], ["host_net"], {"net.c"})
+        self.assertFalse(errors)
+        self.assertEqual(notes, ["NOTE fault_inject site net.c:139 never fired (covered by CI matrix)"])
+
+    def test_inactive_collector_is_a_note_and_active_one_fails(self) -> None:
+        notes, errors = self._sites(["net.c:139 0"], ["host_ps"], set())
+        self.assertFalse(errors)
+        self.assertIn("collector host_net not active", notes[0])
+        _, errors = self._sites(["net.c:139 0"], ["host_net"], set())
+        self.assertEqual(errors, ["FAIL fault_inject site net.c:139 never fired"])
+
+    def test_unknown_file_fails_and_missing_file_fails(self) -> None:
+        _, errors = self._sites(["hps_new.c:3 0"], ["host_ps"], set())
+        self.assertEqual(errors, ["FAIL fault_inject site hps_new.c:3 never fired"])
+        import fault_inject_check as fic
+
+        _, errors = fic.check_sites(Path("/nonexistent/sentinel_sites"), {"types": {}})
+        self.assertTrue(errors[0].startswith("FAIL fault_inject: no sentinel_sites"))
+
+    def test_ci_list_matches_makefile(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        import check_fault_ci_files as c
+
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(c.main(), 0)
+
+
 class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
     def test_slug_tokens_dyn_intel(self) -> None:
         features = {"HARDWARE", "INFINIBAND", "OPA", "INTEL_GPU", "GPU"}
@@ -1669,6 +2214,23 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
         self.assertIn("-ib-", f"-{slug}-")
         self.assertIn("-opa-", f"-{slug}-")
         self.assertIn("-nvgpu-", f"-{slug}-")
+
+    def test_slug_carries_sentinel_catalog_token(self) -> None:
+        version = ebc.sentinel_catalog_version()
+        self.assertGreaterEqual(version, 1)
+        slug = ebc.build_capability_slug(
+            arch="x86_64",
+            version="1.0",
+            debug=False,
+            features={"HARDWARE"},
+            cpu_backend="likwid",
+            tier="slowtier1",
+            sentinel_version=version,
+        )
+        self.assertTrue(slug.endswith(f"-likwid-sent{version}-slowtier1"), slug)
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(SystemExit):
+                ebc.sentinel_catalog_version(Path(td))
 
     def test_write_header_matches_slug(self) -> None:
         slug = "x86_64-ver3.0-debug-hw-slowtier1"

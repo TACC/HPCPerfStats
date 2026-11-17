@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
-from .row_validate import split_fields, validate_metric_row
+from .row_validate import split_fields, token_is_uint, token_sentinel_code, validate_metric_row
 
 
 @dataclass(frozen=True)
@@ -62,16 +62,27 @@ def metric_value_at_key(
     key_names: list[str],
     key: str,
 ) -> int | None:
+    """Emitted value of ``key``; None when absent or a sentinel (see metric_sentinel_at_key)."""
+    tok = _token_at_key(row_values, key_names, key)
+    return int(tok) if tok is not None and token_is_uint(tok) else None
+
+
+def metric_sentinel_at_key(
+    row_values: list[str],
+    key_names: list[str],
+    key: str,
+) -> int | None:
+    """Catalog code n when ``key`` was emitted as the sentinel ``-n``, else None."""
+    tok = _token_at_key(row_values, key_names, key)
+    return token_sentinel_code(tok) if tok is not None else None
+
+
+def _token_at_key(row_values: list[str], key_names: list[str], key: str) -> str | None:
     try:
         idx = key_names.index(key)
     except ValueError:
         return None
-    if idx >= len(row_values):
-        return None
-    try:
-        return int(row_values[idx])
-    except ValueError:
-        return None
+    return row_values[idx] if idx < len(row_values) else None
 
 
 def sample_header_timestamp(body: str) -> float | None:

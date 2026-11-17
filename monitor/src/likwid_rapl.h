@@ -18,6 +18,8 @@ int likwid_rapl_is_supported_processor(void);
 #define LIKWID_RAPL_PATH_AMD 2
 int likwid_rapl_collect_path(void);
 
+/* 0 when at least one domain was read; otherwise -EACCES / -EPERM when powercap energy_uj was
+ * denied, else -EIO (map with stats_sentinel_for_errno). */
 int likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id, unsigned long long *pkg_mj,
                                   unsigned long long *core_mj, unsigned long long *dram_mj,
                                   int *has_pkg, int *has_core, int *has_dram,

@@ -2,11 +2,16 @@
 #include "monitor_release_log.h"
 
 #include <fcntl.h>
-#include <stddef.h>
+#include <stdio.h>
 #include <unistd.h>
+
+#include "stats_sentinel.h"
 
 static unsigned long g_rel_fail_counts[MONITOR_REL_FAIL_COUNT];
 static int g_rel_fail_latched[MONITOR_REL_FAIL_COUNT];
+/* Indexed by catalog code; [0] unused. */
+static unsigned long g_rel_sentinel_counts[STATS_SENTINEL_COUNT + 1];
+static unsigned long g_rel_sentinel_reported[STATS_SENTINEL_COUNT + 1];
 
 int monitor_release_log_should_emit(int *latched, int first_only)
 {
@@ -82,6 +87,39 @@ void monitor_release_fail_reset_for_test(void)
     g_rel_fail_counts[i] = 0;
     g_rel_fail_latched[i] = 0;
   }
+  for (i = 0; i <= STATS_SENTINEL_COUNT; i++) {
+    g_rel_sentinel_counts[i] = 0;
+    g_rel_sentinel_reported[i] = 0;
+  }
+}
+
+void monitor_release_sentinel_note(unsigned int code)
+{
+  if (code >= 1 && code <= STATS_SENTINEL_COUNT)
+    g_rel_sentinel_counts[code]++;
+}
+
+int monitor_release_sentinel_summary(char *buf, size_t len)
+{
+  size_t used = 0;
+  int any = 0;
+
+  if (buf == NULL || len == 0)
+    return -1;
+  used = (size_t)snprintf(buf, len, "sentinels:");
+  for (unsigned int code = 1; code <= STATS_SENTINEL_COUNT; code++) {
+    unsigned long delta = g_rel_sentinel_counts[code] - g_rel_sentinel_reported[code];
+
+    g_rel_sentinel_reported[code] = g_rel_sentinel_counts[code];
+    if (delta == 0)
+      continue;
+    any = 1;
+    if (used < len)
+      used += (size_t)snprintf(buf + used, len - used, " %s=%lu", stats_sentinel_slug(code), delta);
+  }
+  if (!any && used < len)
+    used += (size_t)snprintf(buf + used, len - used, " none");
+  return (int)used;
 }
 
 void monitor_stderr_quiet_begin(int *saved_fd, int *null_fd)

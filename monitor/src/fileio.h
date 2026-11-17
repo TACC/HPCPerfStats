@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <unistd.h>
 
+#include "stats_sentinel_debug.h"
+
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
 #endif
@@ -13,9 +15,15 @@
 /* Avoid fopen(3) on paths: open(2) with O_CLOEXEC, then fdopen for stdio parsing. */
 static inline FILE *file_fopen_read(const char *path)
 {
-  int fd = open(path, O_RDONLY | O_CLOEXEC);
+  int fd;
   FILE *fp;
+  int fault_err = 0;
 
+  if (STATS_FAULT("open", path, &fault_err)) {
+    errno = fault_err;
+    return NULL;
+  }
+  fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0)
     return NULL;
   fp = fdopen(fd, "r");

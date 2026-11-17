@@ -30,6 +30,7 @@ double sample_freq_slow = 600;
 double send_freq = 300;
 double buffer_hours = 6.0;
 int enable_slow_tier = 1;
+int emit_value_sentinels = 1;
 char *collection_profile = NULL;
 char *disable_types = NULL;
 char *intel_gpu_backend = NULL;
@@ -85,6 +86,7 @@ void test_monitor_cli_reset_globals(void)
   send_freq = 300;
   buffer_hours = 6.0;
   enable_slow_tier = 1;
+  emit_value_sentinels = 1;
   collection_profile = NULL;
   disable_types = NULL;
   max_buffer_size = 0;

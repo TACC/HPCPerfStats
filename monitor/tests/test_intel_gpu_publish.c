@@ -8,6 +8,7 @@
 #include "intel_gpu_xpum_helpers.h"
 #include "intel_gpu_xpumcli.h"
 #include "stats.h"
+#include "test_stats_missing_stub.h"
 #include "test_stats_stub.h"
 #include "xpum_gpu_dyn.h"
 
@@ -383,12 +384,16 @@ static void test_mem_temp_publish(void)
   unsigned long long val;
 
   reset_test_state();
+  test_stats_missing_reset();
   g_rt_scenario = RT_SCENARIO_MEM_TEMP;
   intel_gpu_stats_type.st_enabled = 1;
   intel_gpu_stats_type.st_collect(&intel_gpu_stats_type);
   assert(g_stats_fetch_calls == 0);
   assert(test_stats_stub_find(&g_stub, "power_usage", &val) && val == 290ULL);
   assert(test_stats_stub_find(&g_stub, "temperature", &val) && val == 29ULL);
+  /* A metric XPUM did not return is NOT_PRESENT, never a published 0. */
+  assert(!test_stats_stub_find(&g_stub, "gpu_pcie_rx_bytes", &val));
+  assert(test_stats_missing_code("gpu_pcie_rx_bytes") == STATS_SENTINEL_NOT_PRESENT);
 }
 
 static void test_helper_package_power_sum_tiles(void)
@@ -434,6 +439,19 @@ static void test_device_avg_vs_tile_sum_collect(void)
   assert(test_stats_stub_find(&g_stub, "power_usage", &val) && val == 294ULL);
 }
 
+/* The xpumcli publisher marks the cumulative link keys NOT_BUILT and anything unreported. */
+static void test_xpumcli_publish_marks(void)
+{
+  struct intel_gpu_xpumcli_sample s;
+
+  memset(&s, 0, sizeof(s));
+  test_stats_missing_reset();
+  intel_gpu_xpumcli_publish_sample(&g_dummy_stats, &s, 1);
+  assert(test_stats_missing_code("gpu_pcie_rx_bytes") == STATS_SENTINEL_NOT_BUILT);
+  assert(test_stats_missing_code("gpu_xe_link_tx_bytes") == STATS_SENTINEL_NOT_BUILT);
+  assert(test_stats_missing_code(TEST_STATS_MISSING_ALL_KEY) == STATS_SENTINEL_NOT_PRESENT);
+}
+
 int main(void)
 {
   test_stats_stub_bind(&g_stub);
@@ -446,6 +464,7 @@ int main(void)
   test_tile_power_sum_collect();
   test_device_avg_vs_tile_sum_collect();
   test_default_xpumcli_skips_xpumInit();
+  test_xpumcli_publish_marks();
   test_stats_stub_unbind();
   printf("test_intel_gpu_publish passed\n");
   return 0;

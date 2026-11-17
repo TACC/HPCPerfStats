@@ -155,11 +155,15 @@ static void proc_collect(struct stats_type *type)
   int cooldown_sec = proc_env_int_or_default("HPCPERFSTATS_PROC_COOLDOWN_SEC", 120);
   int warn_sec = proc_env_int_or_default("HPCPERFSTATS_PROC_WARN_SEC", 10);
 
-  if (proc_collect_skip_active())
+  if (proc_collect_skip_active()) {
+    stats_type_set_missing_all(type, STATS_SENTINEL_BACKOFF);
     return;
+  }
 
-  n = scandir("/proc", &namelist, proc_filter_pid, 0);
+  n = STATS_FAULT("scandir", "/proc", &errno) ? -1
+                                              : scandir("/proc", &namelist, proc_filter_pid, 0);
   if (n < 0) {
+    stats_type_set_missing_all(type, stats_sentinel_for_errno(errno));
     g_proc_collect_failures++;
     g_proc_collect_skip_until = time(NULL) + cooldown_sec;
     ERROR("Not enough memory.\n");
@@ -185,6 +189,8 @@ static void proc_collect(struct stats_type *type)
 struct stats_type proc_stats_type = {
     .st_name = "host_proc",
     .st_collect = &proc_collect,
+    /* A row is one process: drop it once the process is gone. */
+    .st_prune_untouched = 1,
 #define X SCHEMA_DEF
     .st_schema_def = JOIN(KEYS),
 #undef X

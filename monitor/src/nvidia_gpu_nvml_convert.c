@@ -20,16 +20,18 @@ int nvidia_gpu_nvml_pct_to_ratio(double pct, double *out)
   return 0;
 }
 
-uint64_t nvidia_gpu_nvml_mib_per_s_to_bytes(double mib_per_s)
+int nvidia_gpu_nvml_mib_per_s_to_bytes(double mib_per_s, uint64_t *out)
 {
   double b;
 
-  if (!isfinite(mib_per_s) || mib_per_s <= 0.0)
-    return 0;
+  if (out == NULL || !isfinite(mib_per_s) || mib_per_s < 0.0)
+    return -1;
   b = mib_per_s * NVIDIA_GPU_NVML_MIB;
   if (b >= 18446744073709549568.0) /* largest double below 2^64 */
-    return UINT64_MAX;
-  return (uint64_t)(b + 0.5);
+    *out = UINT64_MAX;
+  else
+    *out = (uint64_t)(b + 0.5);
+  return 0;
 }
 
 double nvidia_gpu_nvml_mw_to_w(unsigned int mw)

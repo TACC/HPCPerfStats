@@ -1,6 +1,7 @@
 /* ACPI power meter index for host_power_socket (see arm_power_hwmon.h). Portable sysfs code:
  * built on every arch; x86 nodes simply have no "<Name> Power Socket <N>" meters. */
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +10,7 @@
 
 #include "arm_power_hwmon.h"
 #include "monitor_log.h"
+#include "stats.h"
 
 #define ARM_POWER_PATH_MAX 512
 #define ARM_POWER_LABEL_MAX 128
@@ -167,29 +169,39 @@ int arm_power_hwmon_find(const struct arm_power_hwmon *h, int kind, int sock)
   return -1;
 }
 
-double arm_power_hwmon_read_w(struct arm_power_hwmon *h, int slot)
+enum stats_sentinel arm_power_hwmon_read(struct arm_power_hwmon *h, int slot, double *w)
 {
   char buf[32];
   ssize_t n;
   long long uw = -1;
+  enum stats_sentinel code = STATS_SENTINEL_READ_FAILED;
 
-  if (h == NULL || slot < 0 || slot >= h->n)
-    return 0.0;
-  n = pread(h->m[slot].fd, buf, sizeof(buf) - 1, 0);
-  if (n > 0) {
+  if (w != NULL)
+    *w = 0.0;
+  if (h == NULL || w == NULL || slot < 0 || slot >= h->n)
+    return STATS_SENTINEL_NOT_PRESENT;
+  errno = 0;
+  n = STATS_FAULT("hwmon_read", g_arm_power_names[h->m[slot].kind], &errno)
+          ? -1
+          : pread(h->m[slot].fd, buf, sizeof(buf) - 1, 0);
+  if (n < 0)
+    code = stats_sentinel_for_errno(errno);
+  else if (n > 0) {
     buf[n] = '\0';
     if (sscanf(buf, "%lld", &uw) != 1)
       uw = -1;
   }
   if (uw < 0) {
     if (!h->m[slot].read_warned) {
-      monitor_log_warn("host_power_socket: %s Power Socket %d read failed; publishing 0\n",
-                       g_arm_power_names[h->m[slot].kind], h->m[slot].sock);
+      monitor_log_warn("host_power_socket: %s Power Socket %d read failed; key emits %s\n",
+                       g_arm_power_names[h->m[slot].kind], h->m[slot].sock,
+                       stats_sentinel_slug(code));
       h->m[slot].read_warned = 1;
     }
-    return 0.0;
+    return code;
   }
-  return (double)uw / 1e6;
+  *w = (double)uw / 1e6;
+  return STATS_SENTINEL_OK;
 }
 
 void arm_power_hwmon_close(struct arm_power_hwmon *h)

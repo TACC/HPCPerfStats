@@ -9,6 +9,7 @@
 #include "monitor_daemon.h"
 #include "monitor_log.h"
 #include "monitor_options.h"
+#include "stats_sentinel_debug.h"
 #ifdef MONITOR_SHARED_NODE_MULTI_JID
 #include "job_shared_emit.h"
 
@@ -203,6 +204,22 @@ void monitor_options_apply_daemon_conf_kv(const char *key, const char *value_lin
     monitor_log_debug("%s: Setting enable_slow_tier to %d based on file %s\n", app_name,
                       enable_slow_tier, conf_file_name);
   }
+  if (strcmp(key, "emit_value_sentinels") == 0) {
+    emit_value_sentinels = (atoi(value_line) != 0) ? 1 : 0;
+    monitor_log_debug("%s: Setting emit_value_sentinels to %d based on file %s\n", app_name,
+                      emit_value_sentinels, conf_file_name);
+  }
+#ifdef DEBUG
+  /* DEBUG only: release builds do not parse it. */
+  if (strcmp(key, "debug_fault_inject") == 0) {
+    if (stats_fault_inject_set == NULL || stats_fault_inject_set(value_line) < 0)
+      monitor_log_warn("%s: ignoring malformed debug_fault_inject `%s` in file %s\n", app_name,
+                       value_line, conf_file_name);
+    else
+      monitor_log_debug("%s: debug_fault_inject `%s` based on file %s\n", app_name, value_line,
+                        conf_file_name);
+  }
+#endif
   if (strcmp(key, "send_freq") == 0) {
     if (parse_double_arg(value_line, &send_freq) == 0)
       monitor_log_debug("%s: Setting send frequency to %f based on file %s\n", app_name, send_freq,

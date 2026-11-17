@@ -8,6 +8,7 @@
 
 #include "opa_sysfs.h"
 #include "stats.h"
+#include "test_stats_missing_stub.h"
 
 #define MAX_REC 16
 
@@ -226,6 +227,13 @@ static void test_collect_classic_miss_uses_hw(void)
   assert(find_rec("port_rcv_pkts") == 1004ULL);
   assert(find_rec("port_xmit_wait") == 1005ULL);
   assert(!has_rec("DmaWait"));
+
+  /* Without STL MAD the MAD-only keys get the MAD code after the sysfs read. */
+  test_stats_missing_reset();
+  opa_sysfs_test_set_root(root);
+  assert(opa_sysfs_collect_port_without_mad(stats, "hfi1_0", 2, STATS_SENTINEL_BACKOFF) == 0);
+  opa_sysfs_test_set_root(NULL);
+  assert(test_stats_missing_code(TEST_STATS_MISSING_ALL_KEY) == STATS_SENTINEL_BACKOFF);
 
   rm_tree(root);
   free(root);

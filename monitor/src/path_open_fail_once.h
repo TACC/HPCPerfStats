@@ -2,6 +2,7 @@
 #define PATH_OPEN_FAIL_ONCE_H
 
 #include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 
 #include "fileio.h"
@@ -13,9 +14,11 @@ void path_fail_mark(const char *path);
 
 static inline DIR *path_opendir_or_record_fail(const char *path)
 {
-  if (path_open_is_skipped(path))
+  if (path_open_is_skipped(path)) {
+    errno = ENOENT; /* same as path_read for a path that already failed to open */
     return NULL;
-  DIR *d = opendir(path);
+  }
+  DIR *d = STATS_FAULT("opendir", path, &errno) ? NULL : opendir(path);
   if (d == NULL)
     path_open_record_failure_once(path);
   return d;

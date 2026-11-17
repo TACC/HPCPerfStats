@@ -32,30 +32,12 @@ static int try_gpa_initialize(void)
   return -1;
 }
 
-static void amd_gpu_publish_zeros(struct stats *stats)
+void amd_gpu_publish_not_built(struct stats *stats)
 {
   if (stats == NULL)
     return;
-  stats_set(stats, "gpu_util", 0);
-  stats_set(stats, "gpu_mem_util", 0);
-  stats_set(stats, "gpu_mem_total_mb", 0);
-  stats_set(stats, "gpu_mem_used_mb", 0);
-  stats_set(stats, "power_usage", 0);
-  stats_set(stats, "temperature", 0);
-  stats_set(stats, "fp64_active", 0);
-  stats_set(stats, "sm_active", 0);
-  stats_set(stats, "sm_occupancy", 0);
-  stats_set(stats, "fp32_active", 0);
-  stats_set(stats, "fp16_active", 0);
-  stats_set(stats, "tensor_active", 0);
-  stats_set(stats, "clocks_event_reasons", 0);
-  stats_set(stats, "gpu_flops_rate", 0);
-  stats_set(stats, "gpu_mem_bw_bytes_rate", 0);
-  stats_set(stats, "gpu_flops", 0);
-  stats_set(stats, "gpu_mem_read_bytes", 0);
-  stats_set(stats, "gpu_mem_write_bytes", 0);
-  stats_set(stats, "gpu_mem_total_bytes", 0);
   stats_set(stats, "gpu_count", 1);
+  stats_set_missing_all(stats, STATS_SENTINEL_NOT_BUILT);
 }
 
 static void amd_gpu_collect(struct stats_type *type)
@@ -76,7 +58,7 @@ static void amd_gpu_collect(struct stats_type *type)
     return;
   }
 
-  amd_gpu_publish_zeros(stats);
+  amd_gpu_publish_not_built(stats);
 }
 
 struct stats_type amd_gpu_stats_type = {

@@ -88,7 +88,9 @@ static void roofline_hw_peak_collect(struct stats_type *type)
               (int)mode, stats_collect_on_changeover, g_roofline_design_skip_calls);
     }
 #endif
-    return;
+    /* Between changeovers the row repeats the cached peaks, so no key reads as not updated. */
+    if (!g_roofline_cache.initialized)
+      return;
   }
 
   stats = get_current_stats(type, "-");

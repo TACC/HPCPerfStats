@@ -11,6 +11,7 @@
 #include "cpu_counter_metrics_arm_publish.h"
 #include "cpu_counter_metrics_arm_state.h"
 #include "stats.h"
+#include "test_stats_missing_stub.h"
 #include "test_stats_stub.h"
 
 #define W48 (1ULL << 48)
@@ -144,7 +145,12 @@ static void test_publish_never_synthesizes_instr_or_flops(void)
   arm_accumulate_from_util_sample(0, &sample, 1000000LL);
   test_stats_stub_reset(&stub);
   test_stats_stub_bind(&stub);
+  test_stats_missing_reset();
   publish_arm_cpu_stats(&g_dummy_stats, 0);
+  /* No per-channel DRAM reader on Grace: NOT_BUILT, never a hard 0. */
+  assert(!test_stats_stub_find(&stub, "dram_chan0_bytes", &val));
+  assert(test_stats_missing_code("dram_chan0_bytes") == STATS_SENTINEL_NOT_BUILT);
+  assert(test_stats_missing_code("dram_chan3_bytes") == STATS_SENTINEL_NOT_BUILT);
   /* O15: a busy CPU with no measured counters emits no instr / FLOP / FP value at all. */
   for (k = 0; g_measured_only_keys[k] != NULL; k++)
     assert(!test_stats_stub_find(&stub, g_measured_only_keys[k], &val));
@@ -251,11 +257,35 @@ static void test_measured_keys_and_widths(void)
   /* Grace never fills the x86 FP_ARITH buckets. */
   assert(!test_stats_stub_find(&stub, "fp_arith_inst_retired_scalar_double", &val));
 
-  /* Only one of FIXED / SCALE counted: arm_est_flops is not published (no partial FLOPs). */
+  /* Only one of FIXED / SCALE counted: arm_est_flops carries the missing event's sentinel. */
   m.have[ARM_CORE_FP_SCALE] = 0;
+  test_stats_missing_reset();
   publish_fail_soft_then(&m, &stub);
   assert(!test_stats_stub_find(&stub, "arm_est_flops", &val));
+  assert(test_stats_missing_code("arm_est_flops") == STATS_SENTINEL_NOT_PRESENT);
   assert(test_stats_stub_find(&stub, "arm_fp_dp_spec", &val));
+  m.have[ARM_CORE_FP_SCALE] = 1;
+
+  /* An interval that did not measure publishes the event's code instead of the lifetime:
+   * NOT_SCHEDULED, COUNTER_RESET, READ_FAILED and the open errno codes. */
+  test_stats_missing_reset();
+  m.code[ARM_CORE_INS] = STATS_SENTINEL_NOT_SCHEDULED;
+  m.code[ARM_CORE_FP_DP] = STATS_SENTINEL_COUNTER_RESET;
+  m.code[ARM_CORE_FP_SP] = STATS_SENTINEL_READ_FAILED;
+  m.code[ARM_CORE_FP_HP] = STATS_SENTINEL_PERMISSION_DENIED;
+  m.code[ARM_CORE_FP_FIXED] = STATS_SENTINEL_PMU_BUSY;
+  m.code[ARM_CORE_CYC] = STATS_SENTINEL_NOT_SCHEDULED;
+  publish_fail_soft_then(&m, &stub);
+  assert(!test_stats_stub_find(&stub, "instr_retired", &val));
+  assert(test_stats_missing_code("instr_retired") == STATS_SENTINEL_NOT_SCHEDULED);
+  assert(test_stats_missing_code("arm_fp_dp_spec") == STATS_SENTINEL_COUNTER_RESET);
+  assert(test_stats_missing_code("arm_fp_sp_spec") == STATS_SENTINEL_READ_FAILED);
+  assert(test_stats_missing_code("arm_fp_hp_spec") == STATS_SENTINEL_PERMISSION_DENIED);
+  assert(test_stats_missing_code("arm_est_flops") == STATS_SENTINEL_PMU_BUSY);
+  assert(test_stats_stub_find(&stub, "arm_int16_ops", &val) && val == 16ULL);
+  /* CYC unmeasured this tick: the fail-soft cycle estimate stays. */
+  assert(test_stats_stub_find(&stub, "aperf", &val) && val == 111ULL);
+  memset(m.code, 0, sizeof(m.code));
 
   /* NULL inputs are ignored. */
   publish_arm_measured_stats(NULL, &m);

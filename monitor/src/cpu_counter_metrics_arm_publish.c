@@ -28,11 +28,33 @@ void publish_arm_cpu_stats(struct stats *stats, int i)
   stats_set(stats, "cpu_clock_est_cycles", g_arm_ctr5[i]);
   stats_set(stats, "aperf", g_arm_aperf[i]);
   stats_set(stats, "mperf", g_arm_mperf[i]);
-  stats_set(stats, "dram_chan0_bytes", 0);
-  stats_set(stats, "dram_chan1_bytes", 0);
-  stats_set(stats, "dram_chan2_bytes", 0);
-  stats_set(stats, "dram_chan3_bytes", 0);
+  /* No per-channel DRAM reader on Grace (DRAM traffic is arm_aarch64_imc SCF). */
+  stats_set_missing(stats, "dram_chan0_bytes", STATS_SENTINEL_NOT_BUILT);
+  stats_set_missing(stats, "dram_chan1_bytes", STATS_SENTINEL_NOT_BUILT);
+  stats_set_missing(stats, "dram_chan2_bytes", STATS_SENTINEL_NOT_BUILT);
+  stats_set_missing(stats, "dram_chan3_bytes", STATS_SENTINEL_NOT_BUILT);
   stats_set(stats, "arm_dram_bw_bytes", g_arm_dram_bytes[i]);
+}
+
+/* STATS_SENTINEL_OK when event @p e was read this interval, else why not (an event that is not
+ * open and carries no code is NOT_PRESENT). */
+static enum stats_sentinel event_code(const struct arm_core_counts *m, int e)
+{
+  if (m->code[e] != STATS_SENTINEL_OK)
+    return (enum stats_sentinel)m->code[e];
+  return m->have[e] ? STATS_SENTINEL_OK : STATS_SENTINEL_NOT_PRESENT;
+}
+
+/* Publish one event lifetime (masked to the key's width), or the event's sentinel. */
+static void publish_event(struct stats *stats, const char *key, const struct arm_core_counts *m,
+                          int e, unsigned long long mask)
+{
+  enum stats_sentinel code = event_code(m, e);
+
+  if (code == STATS_SENTINEL_OK)
+    stats_set(stats, key, m->life[e] & mask);
+  else
+    stats_set_missing(stats, key, code);
 }
 
 void publish_arm_measured_stats(struct stats *stats, const struct arm_core_counts *m)
@@ -42,26 +64,25 @@ void publish_arm_measured_stats(struct stats *stats, const struct arm_core_count
   if (stats == NULL || m == NULL)
     return;
   life = m->life;
-  if (m->have[ARM_CORE_CYC] && life[ARM_CORE_CYC] > 0) {
+  /* aperf / mperf / cpu_clock_est_cycles keep the util x freq estimate unless CYC measured. */
+  if (event_code(m, ARM_CORE_CYC) == STATS_SENTINEL_OK && life[ARM_CORE_CYC] > 0) {
     stats_set(stats, "aperf", life[ARM_CORE_CYC] & ARM_W48_MASK);
     stats_set(stats, "mperf", life[ARM_CORE_CYC] & ARM_W48_MASK);
     stats_set(stats, "cpu_clock_est_cycles", life[ARM_CORE_CYC]);
   }
-  if (m->have[ARM_CORE_INS])
-    stats_set(stats, "instr_retired", life[ARM_CORE_INS] & ARM_W48_MASK);
-  if (m->have[ARM_CORE_FP_DP])
-    stats_set(stats, "arm_fp_dp_spec", life[ARM_CORE_FP_DP]);
-  if (m->have[ARM_CORE_FP_SP])
-    stats_set(stats, "arm_fp_sp_spec", life[ARM_CORE_FP_SP]);
-  if (m->have[ARM_CORE_FP_HP])
-    stats_set(stats, "arm_fp_hp_spec", life[ARM_CORE_FP_HP]);
-  /* Measured FLOPs (D1): FP_FIXED_OPS_SPEC + FP_SCALE_OPS_SPEC, only when both are counted. */
-  if (m->have[ARM_CORE_FP_FIXED] && m->have[ARM_CORE_FP_SCALE])
+  publish_event(stats, "instr_retired", m, ARM_CORE_INS, ARM_W48_MASK);
+  publish_event(stats, "arm_fp_dp_spec", m, ARM_CORE_FP_DP, ~0ULL);
+  publish_event(stats, "arm_fp_sp_spec", m, ARM_CORE_FP_SP, ~0ULL);
+  publish_event(stats, "arm_fp_hp_spec", m, ARM_CORE_FP_HP, ~0ULL);
+  /* Measured FLOPs (D1): FP_FIXED_OPS_SPEC + FP_SCALE_OPS_SPEC, only when both measured. */
+  if (event_code(m, ARM_CORE_FP_FIXED) != STATS_SENTINEL_OK)
+    stats_set_missing(stats, "arm_est_flops", event_code(m, ARM_CORE_FP_FIXED));
+  else if (event_code(m, ARM_CORE_FP_SCALE) != STATS_SENTINEL_OK)
+    stats_set_missing(stats, "arm_est_flops", event_code(m, ARM_CORE_FP_SCALE));
+  else
     stats_set(stats, "arm_est_flops", life[ARM_CORE_FP_FIXED] + life[ARM_CORE_FP_SCALE]);
-  if (m->have[ARM_CORE_SVE_INT8])
-    stats_set(stats, "arm_int8_ops", life[ARM_CORE_SVE_INT8] & ARM_W48_MASK);
-  if (m->have[ARM_CORE_SVE_INT16])
-    stats_set(stats, "arm_int16_ops", life[ARM_CORE_SVE_INT16] & ARM_W48_MASK);
+  publish_event(stats, "arm_int8_ops", m, ARM_CORE_SVE_INT8, ARM_W48_MASK);
+  publish_event(stats, "arm_int16_ops", m, ARM_CORE_SVE_INT16, ARM_W48_MASK);
   /* D6 PMU sharing: W=64 time lifetimes (ns). Ingest sums host_cpu_hw rows across CPUs, so the
    * consumer derives the host share as d(running) / d(enabled); outside sharing as running
    * below solo. No solo key without a known counter count. */

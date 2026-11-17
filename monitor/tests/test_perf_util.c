@@ -138,20 +138,77 @@ static void test_read_scaled_from_fd(void)
   assert(pipe(fds) == 0);
   assert(write(fds[1], rec, sizeof(rec)) == (ssize_t)sizeof(rec));
   assert(write(fds[1], rec2, sizeof(rec2)) == (ssize_t)sizeof(rec2));
-  assert(perf_read_scaled(fds[0], &p, &d, &t) == 0 && d == 0.0);
+  assert(perf_read_scaled(fds[0], &p, &d, &t, NULL) == 0 && d == 0.0);
   assert(t.enabled == 0 && t.running == 0);
-  assert(perf_read_scaled(fds[0], &p, &d, &t) == 0 && d == 400.0); /* 200 x 1000 / 500 */
+  assert(perf_read_scaled(fds[0], &p, &d, &t, NULL) == 0 && d == 400.0); /* 200 x 1000 / 500 */
   assert(t.enabled == 1000 && t.running == 500);
   /* Short read (8 of 24 bytes): error, prev unchanged, no times. */
   assert(write(fds[1], rec, 8) == 8);
   close(fds[1]);
   t.enabled = t.running = 7;
-  assert(perf_read_scaled(fds[0], &p, &d, &t) == -1 && d == 0.0);
+  assert(perf_read_scaled(fds[0], &p, &d, &t, NULL) == -1 && d == 0.0);
   assert(t.enabled == 0 && t.running == 0);
   assert(p.value == 300);
   close(fds[0]);
-  assert(perf_read_scaled(-1, &p, &d, NULL) == -1);
-  assert(perf_read_scaled(fds[0], NULL, &d, NULL) == -1);
+  assert(perf_read_scaled(-1, &p, &d, NULL, NULL) == -1);
+  assert(perf_read_scaled(fds[0], NULL, &d, NULL, NULL) == -1);
+}
+
+/* Value sentinels: each interval reports what it measured. Partial multiplexing is scaled with
+ * no sentinel; never scheduled is NOT_SCHEDULED; a re-seed is COUNTER_RESET. */
+static void test_scale_sample_status(void)
+{
+  struct perf_prev p;
+  const uint64_t seed[3] = {100, 1000, 1000};
+  const uint64_t partial[3] = {200, 2000, 1250};
+  const uint64_t unscheduled[3] = {200, 3000, 1250};
+  const uint64_t idle[3] = {200, 3000, 1250};
+  const uint64_t dropped[3] = {50, 4000, 2000};
+  double d;
+
+  memset(&p, 0, sizeof(p));
+  assert(perf_scale_sample(&p, seed, &d, NULL) == STATS_SENTINEL_OK && d == 0.0);
+  assert(perf_scale_sample(&p, partial, &d, NULL) == STATS_SENTINEL_OK && d == 400.0);
+  assert(perf_scale_sample(&p, unscheduled, &d, NULL) == STATS_SENTINEL_NOT_SCHEDULED && d == 0.0);
+  assert(perf_scale_sample(&p, idle, &d, NULL) == STATS_SENTINEL_OK && d == 0.0);
+  assert(perf_scale_sample(&p, dropped, &d, NULL) == STATS_SENTINEL_COUNTER_RESET && d == 0.0);
+  assert(p.value == 50);
+  assert(perf_scale_sample(NULL, seed, &d, NULL) == STATS_SENTINEL_READ_FAILED);
+}
+
+/* A failed read reports READ_FAILED and keeps prev, so the next good read's delta covers the
+ * whole gap, scaled over the combined enabled / running time (the consumer bridge is exact). */
+static void test_read_failure_bridges_gap(void)
+{
+  struct perf_prev p;
+  enum stats_sentinel st = STATS_SENTINEL_OK;
+  double d;
+  int fds[2];
+  uint64_t r0[3] = {0, 0, 0};
+  uint64_t r2[3] = {600, 3000, 1500};
+
+  memset(&p, 0, sizeof(p));
+  assert(pipe(fds) == 0);
+  assert(write(fds[1], r0, sizeof(r0)) == (ssize_t)sizeof(r0));
+  assert(perf_read_scaled(fds[0], &p, &d, NULL, &st) == 0 && st == STATS_SENTINEL_OK);
+  assert(perf_read_scaled(-1, &p, &d, NULL, &st) == -1 && st == STATS_SENTINEL_READ_FAILED);
+  assert(p.value == 0 && p.seeded);
+  assert(write(fds[1], r2, sizeof(r2)) == (ssize_t)sizeof(r2));
+  assert(perf_read_scaled(fds[0], &p, &d, NULL, &st) == 0 && st == STATS_SENTINEL_OK);
+  assert(d == 1200.0); /* 600 x 3000 / 1500 over the whole gap */
+  close(fds[0]);
+  close(fds[1]);
+}
+
+static void test_open_sentinel_mapping(void)
+{
+  assert(perf_open_sentinel(EACCES) == STATS_SENTINEL_PERMISSION_DENIED);
+  assert(perf_open_sentinel(EPERM) == STATS_SENTINEL_PERMISSION_DENIED);
+  assert(perf_open_sentinel(ENOENT) == STATS_SENTINEL_NOT_PRESENT);
+  assert(perf_open_sentinel(EINVAL) == STATS_SENTINEL_NOT_PRESENT);
+  assert(perf_open_sentinel(EOPNOTSUPP) == STATS_SENTINEL_NOT_PRESENT);
+  assert(perf_open_sentinel(EBUSY) == STATS_SENTINEL_PMU_BUSY);
+  assert(perf_open_sentinel(EMFILE) == STATS_SENTINEL_READ_FAILED);
 }
 
 static void test_attr_raw_scaled_not_pinned(void)
@@ -248,6 +305,9 @@ int main(void)
   test_scale_null_inputs();
   test_scale_sample_reports_times();
   test_read_scaled_from_fd();
+  test_scale_sample_status();
+  test_read_failure_bridges_gap();
+  test_open_sentinel_mapping();
   test_attr_raw_scaled_not_pinned();
   test_attr_from_sysfs_scf_encoding();
   test_pmu_type();

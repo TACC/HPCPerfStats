@@ -122,29 +122,34 @@ static int stats_buffer_debug_shm_write_atomic(const char *final_path, const cha
   return 0;
 }
 
-void stats_buffer_debug_shm_write_payload(const struct stats_buffer *sf,
-                                          enum stats_buffer_debug_shm_payload_kind kind)
+void stats_buffer_debug_shm_write_file(const char *name, const void *data, size_t len)
 {
   char final_path[PATH_MAX];
   char tmp_path[PATH_MAX];
   const char *base;
-  const char *name;
 
-  if (sf == NULL || sf->sf_data == NULL || sf->sf_data_len == 0)
+  if (name == NULL || (data == NULL && len != 0))
     return;
-
   if (stats_buffer_debug_shm_ensure_dir() < 0)
     return;
 
   base = stats_buffer_debug_shm_base_dir();
-  name = stats_buffer_debug_shm_kind_name(kind);
   if (snprintf(final_path, sizeof(final_path), "%s/%s", base, name) >= (int)sizeof(final_path))
     return;
   if (snprintf(tmp_path, sizeof(tmp_path), "%s/%s.tmp", base, name) >= (int)sizeof(tmp_path))
     return;
   unlink(tmp_path); /* clear stale tmp from prior crash so O_EXCL can succeed */
-  if (stats_buffer_debug_shm_write_atomic(final_path, tmp_path, sf->sf_data, sf->sf_data_len) < 0)
+  if (stats_buffer_debug_shm_write_atomic(final_path, tmp_path, data, len) < 0)
     monitor_log_debug("debug_shm: write %s: %m\n", final_path);
+}
+
+void stats_buffer_debug_shm_write_payload(const struct stats_buffer *sf,
+                                          enum stats_buffer_debug_shm_payload_kind kind)
+{
+  if (sf == NULL || sf->sf_data == NULL || sf->sf_data_len == 0)
+    return;
+  stats_buffer_debug_shm_write_file(stats_buffer_debug_shm_kind_name(kind), sf->sf_data,
+                                    sf->sf_data_len);
 }
 
 void stats_buffer_debug_shm_write_sample(const struct stats_buffer *sf, enum stats_row_tier tier)

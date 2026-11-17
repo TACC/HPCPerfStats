@@ -196,7 +196,7 @@ struct opa_port_ctx {
 
 static void opa_collect_one_port(struct stats *stats, const char *hfi, int port)
 {
-  int mad_ok = 0;
+  enum stats_sentinel mad_code = STATS_SENTINEL_NOT_BUILT;
 
   if (stats == NULL || hfi == NULL)
     return;
@@ -207,18 +207,19 @@ static void opa_collect_one_port(struct stats *stats, const char *hfi, int port)
     opa_mad_note_disabled_once();
   } else
 #endif
-      if (opa_mad_collect_cycle_ok()) {
-    if (collect_hfi_port_mad(stats, hfi, (uint32_t)port) == 0) {
-      opa_mad_note_success();
-      monitor_release_fail_clear(MONITOR_REL_FAIL_OPA_MAD);
-      mad_ok = 1;
-    } else {
-      opa_mad_note_failure();
-    }
+      if (!opa_mad_collect_cycle_ok()) {
+    mad_code = STATS_SENTINEL_BACKOFF;
+  } else if (collect_hfi_port_mad(stats, hfi, (uint32_t)port) == 0) {
+    opa_mad_note_success();
+    monitor_release_fail_clear(MONITOR_REL_FAIL_OPA_MAD);
+    mad_code = STATS_SENTINEL_OK;
+  } else {
+    opa_mad_note_failure();
+    mad_code = STATS_SENTINEL_BACKEND_ERROR;
   }
 #endif
-  if (!mad_ok)
-    (void)opa_sysfs_collect_port(stats, hfi, port);
+  if (mad_code != STATS_SENTINEL_OK)
+    (void)opa_sysfs_collect_port_without_mad(stats, hfi, port, mad_code);
 }
 
 static void opa_port_each(const char *base, const char *name, void *ctx)

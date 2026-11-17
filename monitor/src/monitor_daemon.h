@@ -29,6 +29,7 @@ extern double sample_freq_slow;
 extern double send_freq;
 extern double buffer_hours;
 extern int enable_slow_tier;
+extern int emit_value_sentinels;
 extern char *collection_profile;
 extern char *disable_types;
 extern char *intel_gpu_backend;

@@ -2,6 +2,7 @@
  *  LIKWID RAPL helpers: PWR* perfmon only (no MSR power_read).
  */
 
+#include <errno.h>
 #include <stddef.h>
 #include "monitor_log.h"
 #include "stats.h"
@@ -67,7 +68,7 @@ int likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id, unsigned l
 {
   if (pkg_mj == NULL || core_mj == NULL || dram_mj == NULL || has_pkg == NULL || has_core == NULL ||
       has_dram == NULL)
-    return -1;
+    return -EIO;
   *pkg_mj = *core_mj = *dram_mj = 0;
   *has_pkg = *has_core = *has_dram = 0;
   if (pp1_mj != NULL && has_pp1 != NULL) {
@@ -76,13 +77,13 @@ int likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id, unsigned l
   }
   if (cpu_id < 0 || cpu_id >= nr_cpus) {
     TRACE("likwid_rapl: invalid cpu_id %d\n", cpu_id);
-    return -1;
+    return -EIO;
   }
 
   if (!likwid_rapl_pwr_ready()) {
     TRACE("likwid_rapl: PWR RAPL not ready (cpu_id=%d)\n", cpu_id);
     likwid_rapl_warn_not_initialized(cpu_id);
-    return -1;
+    return -EIO;
   }
   return likwid_rapl_pwr_collect_socket_mj(cpu_id, socket_id, pkg_mj, core_mj, dram_mj, has_pkg,
                                            has_core, has_dram, pp1_mj, has_pp1);

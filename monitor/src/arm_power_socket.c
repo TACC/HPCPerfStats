@@ -24,9 +24,15 @@ void arm_power_socket_publish(struct stats *stats, struct arm_power_hwmon *h,
 
   if (stats == NULL || slots == NULL)
     return;
-  for (k = 0; k < ARM_POWER_KIND_COUNT; k++)
-    stats_set(stats, arm_power_socket_keys[k],
-              arm_power_watts_to_ull(arm_power_hwmon_read_w(h, slots[k])));
+  for (k = 0; k < ARM_POWER_KIND_COUNT; k++) {
+    double w;
+    enum stats_sentinel code = arm_power_hwmon_read(h, slots[k], &w);
+
+    if (code == STATS_SENTINEL_OK)
+      stats_set(stats, arm_power_socket_keys[k], arm_power_watts_to_ull(w));
+    else
+      stats_set_missing(stats, arm_power_socket_keys[k], code);
+  }
 }
 
 static int arm_power_socket_begin(struct stats_type *type)

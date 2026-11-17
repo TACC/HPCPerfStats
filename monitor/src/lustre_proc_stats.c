@@ -24,8 +24,9 @@ int lustre_parse_samples_count(const char *rest, unsigned long long *count, unsi
     return 2;
   }
 
-  n = sscanf(rest, "%llu samples", &c);
-  if (n == 1) {
+  /* %n proves the "samples" literal matched; sscanf returns 1 even when it did not. */
+  n = -1;
+  if (sscanf(rest, "%llu samples%n", &c, &n) == 1 && n > 0) {
     *count = c;
     if (sum != NULL)
       *sum = 0;

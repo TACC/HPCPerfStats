@@ -10,6 +10,7 @@
 #include "nvml.h"
 
 #include "nvidia_gpu_nvml.h"
+#include "stats_sentinel.h"
 
 #define STUB_MAX_GPU 4
 
@@ -20,6 +21,7 @@ static struct {
   int sample_get_rc;
   int metrics_get_rc;
   int fail_metric_id; /* metric whose nvmlReturn is set to an error */
+  int nan_metric_id;  /* metric whose value is NaN */
   int allocs, frees, inits, shutdowns, sample_gets, metrics_gets;
 } S;
 
@@ -162,6 +164,8 @@ static nvidia_gpu_nvml_ret_t st_metrics_get(void *p)
       x->value = 0.0;
       break;
     }
+    if ((int)x->metricId == S.nan_metric_id)
+      x->value = NAN;
   }
   return S.metrics_get_rc;
 }
@@ -201,6 +205,7 @@ static void reset_stub(unsigned int ngpu)
   memset(&S, 0, sizeof(S));
   S.ngpu = ngpu;
   S.fail_metric_id = -1;
+  S.nan_metric_id = -1;
   for (i = 0; i < STUB_MAX_GPU; i++)
     S.gpm_supported[i] = 1;
   nvidia_gpu_nvml_test_set_api(&g_stub);
@@ -260,17 +265,31 @@ static void test_short_gap_skips_gpm_but_keeps_row(void)
   nvidia_gpu_nvml_cleanup();
 }
 
-static void test_failed_metric_leaves_field_zero(void)
+static unsigned int miss_code(const dcgm_data_t *row, const char *key)
+{
+  for (int i = 0; i < row->nmiss; i++)
+    if (strcmp(row->miss[i].key, key) == 0)
+      return row->miss[i].code;
+  return 0;
+}
+
+/* A failed GPM metric is READ_FAILED and a non-finite one INVALID_VALUE on exactly its key; a
+ * metric that read 0 keeps the real 0 with no mark. */
+static void test_failed_and_nonfinite_metrics_are_marked(void)
 {
   dcgm_data_t row;
 
   reset_stub(1);
   S.fail_metric_id = NVML_GPM_METRIC_SM_UTIL;
+  S.nan_metric_id = NVML_GPM_METRIC_PCIE_TX_PER_SEC;
   assert(nvidia_gpu_nvml_prepare() == 0);
   memset(&row, 0, sizeof(row));
   assert(nvidia_gpu_nvml_fill(0, mono_us() + 1000000LL, &row) == 0);
-  assert(row.sm_active == 0.0);
-  assert(fabs(row.tensor_active - 0.8747) < 1e-9);
+  assert(miss_code(&row, "sm_active") == STATS_SENTINEL_READ_FAILED);
+  assert(miss_code(&row, "gpu_pcie_tx_bytes") == STATS_SENTINEL_INVALID_VALUE);
+  assert(miss_code(&row, "tensor_active") == 0 && fabs(row.tensor_active - 0.8747) < 1e-9);
+  assert(miss_code(&row, "fp16_active") == 0 && row.fp16_active == 0.0);
+  assert(miss_code(&row, "gpu_pcie_rx_bytes") == 0 && row.prof_pcie_rx_bytes == 0ULL);
   nvidia_gpu_nvml_cleanup();
 }
 
@@ -334,7 +353,7 @@ int main(void)
 {
   test_all_gpm_takes_nvml_path_and_fills_row();
   test_short_gap_skips_gpm_but_keeps_row();
-  test_failed_metric_leaves_field_zero();
+  test_failed_and_nonfinite_metrics_are_marked();
   test_any_gpu_without_gpm_uses_dcgm();
   test_init_failure_and_no_gpus();
   test_gpm_failure_mid_run_reports_fallback();

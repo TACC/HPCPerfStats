@@ -122,6 +122,7 @@ hpcperfstatsd_SOURCES = \
 	schema.c \
 	schema_entry_parse.c \
 	stats.h \
+	stats_sentinel.h \
 	stats.c \
 	stats_registry.h \
 	stats_registry.c \
@@ -161,6 +162,8 @@ hpcperfstatsd_SOURCES += \
 	stats_buffer.h \
 	stats_buffer_debug_shm.c \
 	stats_buffer_debug_shm.h \
+	stats_sentinel_debug.c \
+	stats_sentinel_debug.h \
 	stats_buffer_rmq.c \
 	stats_buffer_rmq_policy.c \
 	stats_buffer_rmq_policy.h \
@@ -225,6 +228,7 @@ TYPES 	= \
 	ps.c \
 	sysv_shm.c \
 	tmpfs.c \
+	host_tmpfs.h \
 	vfs.c \
 	vm.c
 

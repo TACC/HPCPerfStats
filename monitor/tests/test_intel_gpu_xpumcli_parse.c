@@ -5,6 +5,7 @@
 
 #include "intel_gpu_xpumcli.h"
 #include "stats.h"
+#include "test_stats_missing_stub.h"
 #include "test_stats_stub.h"
 
 static struct test_stats_stub g_stub;
@@ -76,12 +77,17 @@ static void test_parse_dump_power(void)
   assert(samples[1].gpu_util == 12.5);
 
   test_stats_stub_reset(&g_stub);
+  test_stats_missing_reset();
   intel_gpu_xpumcli_publish_sample(&g_dummy, &samples[0], 2);
   assert(test_stats_stub_find(&g_stub, "power_usage", &val) && val == 294ULL);
   assert(test_stats_stub_find(&g_stub, "temperature", &val) && val == 29ULL);
   assert(test_stats_stub_find(&g_stub, "gpu_mem_used_mb", &val) && val == 1024ULL);
   assert(test_stats_stub_find(&g_stub, "gpu_count", &val) && val == 2ULL);
-  assert(test_stats_stub_find(&g_stub, "gpu_pcie_rx_bytes", &val) && val == 0ULL);
+  /* xpumcli has no cumulative PCIe / Xe Link counters: NOT_BUILT, never a published 0. */
+  assert(!test_stats_stub_find(&g_stub, "gpu_pcie_rx_bytes", &val));
+  assert(test_stats_missing_code("gpu_pcie_rx_bytes") == STATS_SENTINEL_NOT_BUILT);
+  assert(test_stats_missing_code("gpu_xe_link_tx_bytes") == STATS_SENTINEL_NOT_BUILT);
+  assert(test_stats_missing_code(TEST_STATS_MISSING_ALL_KEY) == STATS_SENTINEL_NOT_PRESENT);
 }
 
 int main(void)

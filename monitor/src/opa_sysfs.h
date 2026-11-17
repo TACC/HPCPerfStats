@@ -1,6 +1,8 @@
 #ifndef _OPA_SYSFS_H_
 #define _OPA_SYSFS_H_
 
+#include "stats_sentinel.h"
+
 struct stats;
 
 /* Map hfi1 ports/N/counters filename to host_opa schema key, or NULL if unmapped. */
@@ -22,6 +24,12 @@ int opa_sysfs_collect_classic_counters(struct stats *stats, const char *hca, int
 /* hw_counters utilization map only. Returns 0 if any key set, else -1. */
 int opa_sysfs_collect_hw_counters(struct stats *stats, const char *hca, int port);
 
+/*
+ * opa_sysfs_collect_port for a cycle without STL MAD counters: every key sysfs did not supply or
+ * mark (the STL-only keys) gets `mad_code` (NOT_BUILT, BACKOFF or BACKEND_ERROR).
+ */
+int opa_sysfs_collect_port_without_mad(struct stats *stats, const char *hca, int port,
+                                       enum stats_sentinel mad_code);
 /* Test hook: override sysfs root (default "/sys"). Pass NULL to restore. */
 void opa_sysfs_test_set_root(const char *root);
 

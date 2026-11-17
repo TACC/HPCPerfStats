@@ -287,10 +287,11 @@ int likwid_rapl_pwr_collect_socket_mj(int cpu_id, unsigned int socket_id,
                                       int *has_dram, unsigned long long *pp1_mj, int *has_pp1)
 {
   int got = 0;
+  int rc = -EIO;
 
   if (pkg_mj == NULL || core_mj == NULL || dram_mj == NULL || has_pkg == NULL || has_core == NULL ||
       has_dram == NULL)
-    return -1;
+    return -EIO;
   *pkg_mj = *core_mj = *dram_mj = 0;
   *has_pkg = *has_core = *has_dram = 0;
   if (pp1_mj != NULL && has_pp1 != NULL) {
@@ -353,11 +354,12 @@ int likwid_rapl_pwr_collect_socket_mj(int cpu_id, unsigned int socket_id,
 #endif
 
   if (g_powercap_ok || rapl_powercap_available()) {
-    if (rapl_powercap_collect_socket_mj(socket_id, pkg_mj, core_mj, dram_mj, has_pkg, has_core,
-                                        has_dram, pp1_mj, has_pp1, g_pwr_amd_path) == 0)
+    rc = rapl_powercap_collect_socket_mj(socket_id, pkg_mj, core_mj, dram_mj, has_pkg, has_core,
+                                         has_dram, pp1_mj, has_pp1, g_pwr_amd_path);
+    if (rc == 0)
       return 0;
   }
 
   TRACE("likwid_rapl_pwr: no energy results for cpu_id=%d socket=%u\n", cpu_id, socket_id);
-  return -1;
+  return rc;
 }

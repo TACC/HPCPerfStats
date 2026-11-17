@@ -210,9 +210,10 @@ static void monitor_log_release_startup_summary(void)
   monitor_log_info("Disabled types: %s\n", types_buf[0] != '\0' ? types_buf : "(none)");
   monitor_log_info(
       "Config: server=%s port=%s sample_freq=%.1fs send_freq=%.1fs buffer=%d (%.2fh) "
-      "enable_slow_tier=%d sample_freq_slow=%.1fs; probe nvidia=%s amd=%s intel=%s ib=%s opa=%s\n",
+      "enable_slow_tier=%d sample_freq_slow=%.1fs emit_value_sentinels=%d; probe nvidia=%s amd=%s "
+      "intel=%s ib=%s opa=%s\n",
       server != NULL ? server : "(null)", port != NULL ? port : "(null)", sample_freq, send_freq,
-      max_buffer_size, buffer_hours, enable_slow_tier, sample_freq_slow,
+      max_buffer_size, buffer_hours, enable_slow_tier, sample_freq_slow, emit_value_sentinels,
       has_nvidia_gpu ? "yes" : "no", has_amd_gpu ? "yes" : "no", has_intel_gpu ? "yes" : "no",
       has_ib ? "yes" : "no", has_opa ? "yes" : "no");
 }

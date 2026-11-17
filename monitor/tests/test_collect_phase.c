@@ -45,6 +45,16 @@ int stats_type_init(struct stats_type *type)
   return 0;
 }
 
+void stats_type_mark_not_updated(struct stats_type *type)
+{
+  (void)type;
+}
+
+void stats_type_prune_untouched(struct stats_type *type)
+{
+  (void)type;
+}
+
 void stats_type_destroy(struct stats_type *type)
 {
   (void)type;

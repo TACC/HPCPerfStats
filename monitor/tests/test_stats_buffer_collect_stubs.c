@@ -55,12 +55,12 @@ int stats_buffer_collect_fixture_init(struct stats_buffer_collect_fixture *fx,
     return -1;
   fx->stats->s_type = &fx->type;
   fx->stats->s_val = calloc(n, sizeof(*fx->stats->s_val));
-  fx->stats->s_val_present = calloc(n, 1);
-  if (fx->stats->s_val == NULL || fx->stats->s_val_present == NULL)
+  fx->stats->s_val_state = calloc(n, 1);
+  if (fx->stats->s_val == NULL || fx->stats->s_val_state == NULL)
     return -1;
   for (k = 0; k < n; k++) {
     fx->stats->s_val[k] = (k < nvals) ? vals[k] : 0ULL;
-    fx->stats->s_val_present[k] = 1;
+    fx->stats->s_val_state[k] = STATS_SENTINEL_OK;
   }
   strcpy(fx->stats->s_dev, "dev0");
   if (dict_set(&fx->type.st_current_dict, fx->stats->s_dev) < 0)
@@ -77,7 +77,7 @@ void stats_buffer_collect_fixture_teardown(struct stats_buffer_collect_fixture *
   schema_destroy(&fx->type.st_schema);
   dict_destroy(&fx->type.st_current_dict, NULL);
   free(fx->stats->s_val);
-  free(fx->stats->s_val_present);
+  free(fx->stats->s_val_state);
   free(fx->stats);
   fx->stats = NULL;
   memset(fx, 0, sizeof(*fx));

@@ -33,10 +33,13 @@ static void cpu_collect(struct stats_type *type)
   size_t line_size = 0;
 
   if (g_cpu_proc_stat == NULL) {
-    if (path_open_is_skipped(path))
+    if (path_open_is_skipped(path)) {
+      stats_type_set_missing_all(type, STATS_SENTINEL_READ_FAILED);
       goto out;
+    }
     g_cpu_proc_stat = file_fopen_read(path);
     if (g_cpu_proc_stat == NULL) {
+      stats_type_set_missing_all(type, stats_sentinel_for_errno(errno));
       path_open_record_failure_once(path);
       goto out;
     }

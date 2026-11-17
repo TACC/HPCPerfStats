@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "perf_util.h"
+#include "stats.h"
 
 #ifndef PERF_FLAG_FD_CLOEXEC
 #define PERF_FLAG_FD_CLOEXEC (1UL << 3)
@@ -158,23 +159,35 @@ int perf_cpumask_first(const char *path)
   return (int)cpu;
 }
 
-void perf_scale_sample(struct perf_prev *prev, const uint64_t sample[3], double *delta_out,
-                       struct perf_times *times_out)
+enum stats_sentinel perf_open_sentinel(int err)
 {
-  int reseed;
+  return err == EINVAL ? STATS_SENTINEL_NOT_PRESENT : stats_sentinel_for_errno(err);
+}
+
+enum stats_sentinel perf_scale_sample(struct perf_prev *prev, const uint64_t sample[3],
+                                      double *delta_out, struct perf_times *times_out)
+{
+  enum stats_sentinel status = STATS_SENTINEL_OK;
+  int was_seeded;
 
   if (delta_out != NULL)
     *delta_out = 0.0;
   if (times_out != NULL)
     times_out->enabled = times_out->running = 0;
   if (prev == NULL || sample == NULL || delta_out == NULL)
-    return;
-  reseed = !prev->seeded || sample[0] < prev->value || sample[1] < prev->enabled ||
-           sample[2] < prev->running;
-  if (!reseed && sample[2] > prev->running)
+    return STATS_SENTINEL_READ_FAILED;
+  was_seeded = prev->seeded;
+  if (sample[0] < prev->value || sample[1] < prev->enabled || sample[2] < prev->running)
+    status = STATS_SENTINEL_COUNTER_RESET;
+  else if (sample[2] > prev->running)
     *delta_out = (double)(sample[0] - prev->value) * (double)(sample[1] - prev->enabled) /
                  (double)(sample[2] - prev->running);
-  if (!reseed && times_out != NULL) {
+  else if (sample[1] > prev->enabled)
+    status = STATS_SENTINEL_NOT_SCHEDULED;
+  if (!was_seeded) {
+    status = STATS_SENTINEL_OK;
+    *delta_out = 0.0;
+  } else if (status != STATS_SENTINEL_COUNTER_RESET && times_out != NULL) {
     times_out->enabled = sample[1] - prev->enabled;
     times_out->running = sample[2] - prev->running;
   }
@@ -182,21 +195,26 @@ void perf_scale_sample(struct perf_prev *prev, const uint64_t sample[3], double 
   prev->enabled = sample[1];
   prev->running = sample[2];
   prev->seeded = 1;
+  return status;
 }
 
 int perf_read_scaled(int fd, struct perf_prev *prev, double *delta_out,
-                     struct perf_times *times_out)
+                     struct perf_times *times_out, enum stats_sentinel *status_out)
 {
   uint64_t sample[3];
+  enum stats_sentinel status = STATS_SENTINEL_READ_FAILED;
+  int rc = -1;
 
   if (delta_out != NULL)
     *delta_out = 0.0;
   if (times_out != NULL)
     times_out->enabled = times_out->running = 0;
-  if (fd < 0 || prev == NULL || delta_out == NULL)
-    return -1;
-  if (read(fd, sample, sizeof(sample)) != (ssize_t)sizeof(sample))
-    return -1;
-  perf_scale_sample(prev, sample, delta_out, times_out);
-  return 0;
+  if (fd >= 0 && prev != NULL && delta_out != NULL &&
+      read(fd, sample, sizeof(sample)) == (ssize_t)sizeof(sample)) {
+    status = perf_scale_sample(prev, sample, delta_out, times_out);
+    rc = 0;
+  }
+  if (status_out != NULL)
+    *status_out = status;
+  return rc;
 }

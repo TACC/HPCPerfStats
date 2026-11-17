@@ -139,6 +139,26 @@ out:
   return rc;
 }
 
+/* Parse the next number of a whitespace list into *val and advance *str; 0 (logged) when the
+ * token is missing or out of range. */
+static int collect_parse_token(const char **str, const char *key, unsigned long long *val)
+{
+  char *end = NULL;
+
+  errno = 0;
+  *val = strtoull(*str, &end, 0);
+  if (errno != 0) {
+    ERROR("cannot convert str `%s' for key `%s': %m\n", *str, key);
+    return 0;
+  }
+  if (end == *str) {
+    ERROR("no value in str `%s' for key `%s'\n", *str, key);
+    return 0;
+  }
+  *str = end;
+  return 1;
+}
+
 int str_collect_key_list(const char *str, struct stats *stats, ...)
 {
   int rc = 0;
@@ -152,31 +172,20 @@ int str_collect_key_list(const char *str, struct stats *stats, ...)
 
   for (;;) {
     const char *key = va_arg(key_list, const char *);
-    char *end = NULL;
     unsigned long long val;
 
     if (key == NULL)
       break;
 
-    errno = 0;
-    val = strtoull(str, &end, 0);
-    if (errno != 0) {
-      ERROR("cannot convert str `%s' for key `%s': %m\n", str, key);
-      goto out;
+    if (!collect_parse_token(&str, key, &val)) {
+      stats_set_missing_all(stats, STATS_SENTINEL_READ_FAILED);
+      break;
     }
-
-    if (str == end) {
-      ERROR("no value in str `%s' for key `%s'\n", str, key);
-      goto out;
-    }
-
     if (collect_key_is_active(g_key_active_hook, g_key_active_hook_ctx, stats, key))
       stats_set(stats, key, val);
-    str = end;
     rc++;
   }
 
-out:
   va_end(key_list);
   if (errno == 0)
     errno = errno_saved;
@@ -221,7 +230,6 @@ int str_collect_prefix_key_list(const char *str, struct stats *stats, const char
 
   for (;;) {
     const char *suf = va_arg(suf_list, const char *);
-    char *end = NULL;
     unsigned long long val;
 
     if (suf == NULL)
@@ -235,21 +243,12 @@ int str_collect_prefix_key_list(const char *str, struct stats *stats, const char
 
     TRACE("pre `%s', suf `%s', key `%s'\n", pre, suf, key);
 
-    errno = 0;
-    val = strtoull(str, &end, 0);
-    if (errno != 0) {
-      ERROR("cannot convert str `%s' for key `%s': %m\n", str, key);
+    if (!collect_parse_token(&str, key, &val)) {
+      stats_set_missing_all(stats, STATS_SENTINEL_READ_FAILED);
       goto out;
     }
-
-    if (str == end) {
-      ERROR("no value in str `%s' for key `%s'\n", str, key);
-      goto out;
-    }
-
     if (collect_key_is_active(g_key_active_hook, g_key_active_hook_ctx, stats, key))
       stats_set(stats, key, val);
-    str = end;
     rc++;
   }
 
@@ -270,8 +269,10 @@ static int vpath_collect_key_list(const char *path, struct stats *stats,
   int rc = 0;
   const char *p;
 
-  if (collect_read_small(path, buf, sizeof(buf), &n) < 0)
+  if (collect_read_small(path, buf, sizeof(buf), &n) < 0) {
+    stats_set_missing_all(stats, stats_sentinel_for_errno(errno));
     return -1;
+  }
 
   p = buf;
   for (;;) {
@@ -285,6 +286,7 @@ static int vpath_collect_key_list(const char *path, struct stats *stats,
      * store keys active in the current collection phase. */
     if (!collect_parse_one_ull(&p, &val)) {
       ERROR("%s: no value for key `%s'\n", path, key);
+      stats_set_missing_all(stats, STATS_SENTINEL_READ_FAILED);
       return rc;
     }
     if (collect_key_is_active(active, ctx, stats, key))
@@ -328,6 +330,7 @@ static void collect_apply_key_value_line(char *line, struct stats *stats,
                                          collect_key_active_fn active, void *ctx)
 {
   char *rest;
+  char *end = NULL;
   char *key;
   unsigned long long val;
 
@@ -340,9 +343,11 @@ static void collect_apply_key_value_line(char *line, struct stats *stats,
     return;
 
   errno = 0;
-  val = strtoull(rest, NULL, 0);
-  if (errno == 0)
+  val = strtoull(rest, &end, 0);
+  if (errno == 0 && end != rest)
     stats_set(stats, key, val);
+  else
+    stats_set_missing(stats, key, STATS_SENTINEL_READ_FAILED);
 }
 
 int path_collect_key_value_filtered(const char *path, struct stats *stats,
@@ -355,8 +360,10 @@ int path_collect_key_value_filtered(const char *path, struct stats *stats,
     return -1;
 
   content = collect_slurp_file(path);
-  if (content == NULL)
+  if (content == NULL) {
+    stats_set_missing_all(stats, stats_sentinel_for_errno(errno));
     return -1;
+  }
 
   for (ptr = content; *ptr != '\0';) {
     char *line = ptr;
@@ -373,6 +380,8 @@ int path_collect_key_value_filtered(const char *path, struct stats *stats,
   }
 
   free(content);
+  /* The file is the source of truth for its keys: a schema key it does not list is absent. */
+  stats_set_missing_all(stats, STATS_SENTINEL_NOT_PRESENT);
   return 0;
 }
 
@@ -401,6 +410,8 @@ static int collect_one_dir_entry(const char *dir_path, struct dirent *ent, struc
 
   if (path_collect_single(path, &val) == 1)
     stats_set(stats, ent->d_name, val);
+  else
+    stats_set_missing(stats, ent->d_name, STATS_SENTINEL_READ_FAILED);
 
   free(path);
   return 0;
@@ -417,13 +428,17 @@ int path_collect_key_value_dir_filtered(const char *dir_path, struct stats *stat
     return -1;
 
   dir = path_opendir_or_record_fail(dir_path);
-  if (dir == NULL)
+  if (dir == NULL) {
+    stats_set_missing_all(stats, stats_sentinel_for_errno(errno));
     return -1;
+  }
 
   while ((ent = readdir(dir)) != NULL)
     (void)collect_one_dir_entry(dir_path, ent, stats, active, ctx);
 
   closedir(dir);
+  /* A schema key with no file in the directory is absent on this device. */
+  stats_set_missing_all(stats, STATS_SENTINEL_NOT_PRESENT);
   return rc;
 }
 

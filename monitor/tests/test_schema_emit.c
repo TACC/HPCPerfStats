@@ -41,7 +41,7 @@ static void test_emit_property_banner(void)
   assert(strstr(cap.buf, "$hostname node1\n") != NULL);
   assert(strstr(cap.buf, "$uname Linux aarch64 6.1.0 #1\n") != NULL);
   assert(strstr(cap.buf, "$uptime 12345\n") != NULL);
-  assert(strstr(cap.buf, "$build x86_64-ver3.0-debug-slowtier1\n") != NULL);
+  assert(strstr(cap.buf, "$build x86_64-ver3.0-debug-slowtier1\n$sentinels 1\n") != NULL);
   /* listend host is second $ line */
   first_nl = strchr(cap.buf, '\n');
   assert(first_nl != NULL);
@@ -61,6 +61,15 @@ static void test_emit_property_banner(void)
   stats_format_emit_property_banner(capture_emit, &cap, '$', "hpcperfstats", "1.2.3", "node1",
                                     "Linux", "aarch64", "6.1.0", "#1", 12345ULL, "");
   assert(strstr(cap.buf, "$build") == NULL);
+
+  cap.len = 0;
+  cap.buf[0] = '\0';
+  stats_format_set_value_sentinels(0);
+  stats_format_emit_property_banner(capture_emit, &cap, '$', "hpcperfstats", "1.2.3", "node1",
+                                    "Linux", "aarch64", "6.1.0", "#1", 12345ULL, "slug");
+  assert(strstr(cap.buf, "$build slug\n") != NULL);
+  assert(strstr(cap.buf, "sentinels") == NULL);
+  stats_format_set_value_sentinels(1);
 
   cap.len = 0;
   cap.buf[0] = '\0';

@@ -22,4 +22,9 @@
       X(fs_bytes_total, "U=B", ""), X(fs_bytes_free, "U=B", ""), X(fs_bytes_avail, "U=B", ""),     \
       X(fs_files_total, "", ""), X(fs_files_free, "", "")
 
+/* One OBD: opcode counters from <proc_dir>/<d_name>/stats and capacity from
+ * <sys_dir>/<d_name>/ (either dir may be NULL to skip that half). */
+void lustre_llite_collect_obd(struct stats *stats, const char *proc_dir, const char *sys_dir,
+                              const char *d_name);
+
 #endif

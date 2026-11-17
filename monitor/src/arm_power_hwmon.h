@@ -12,6 +12,8 @@
 
 #include <stddef.h>
 
+#include "stats_sentinel.h"
+
 /* Meter kinds; each maps to one host_power_socket key. */
 enum arm_power_kind {
   ARM_POWER_CPU = 0, /* "CPU Power Socket N": CPU core rail  -> cpu_power_w */
@@ -46,8 +48,10 @@ int arm_power_hwmon_parse_label(const char *label, int *kind, int *sock);
 int arm_power_hwmon_open(struct arm_power_hwmon *h, const char *sysfs_root);
 /* Meter slot for (kind, sock), or -1. */
 int arm_power_hwmon_find(const struct arm_power_hwmon *h, int kind, int sock);
-/* Watts from one pread of power1_average; 0 (and a one-shot warn) when unreadable. */
-double arm_power_hwmon_read_w(struct arm_power_hwmon *h, int slot);
+/* Watts from one pread of power1_average into *w (0 when not read).
+ * @return STATS_SENTINEL_OK, NOT_PRESENT for no meter (slot -1), the pread errno code, or
+ * READ_FAILED for an unparsable value (one-shot warn per meter). */
+enum stats_sentinel arm_power_hwmon_read(struct arm_power_hwmon *h, int slot, double *w);
 void arm_power_hwmon_close(struct arm_power_hwmon *h);
 
 #endif

@@ -21,8 +21,24 @@
 #include <likwid.h>
 #endif
 
+#define LIKWID_UNCORE_PLAN_DEVS 32
+#define LIKWID_UNCORE_COUNTER_NAME_MAX 32
+
 static int g_profile_group[LIKWID_UNCORE_PROFILE_COUNT];
 static int g_profile_ready[LIKWID_UNCORE_PROFILE_COUNT];
+/* Eventset of the ready group; static string literals from likwid_uncore_profiles.c. */
+static const char *g_profile_events[LIKWID_UNCORE_PROFILE_COUNT];
+
+/* Devices an eventset programs, each with a bit per schema index it programs. */
+struct likwid_uncore_plan {
+  struct {
+    char dev[16];
+    unsigned long long keys;
+  } devs[LIKWID_UNCORE_PLAN_DEVS];
+  int n;
+  int planned;
+};
+static struct likwid_uncore_plan g_profile_plan[LIKWID_UNCORE_PROFILE_COUNT];
 
 static int likwid_uncore_quiet_stderr(int *saved_stderr, int *null_fd)
 {
@@ -105,12 +121,13 @@ static int likwid_uncore_try_eventset(const char *events, int *group_out, const 
   return 0;
 }
 
-static int likwid_uncore_spr_enable(likwid_uncore_profile_t profile, int group, const char *label,
-                                    int index, const char *st_name)
+static int likwid_uncore_spr_enable(likwid_uncore_profile_t profile, int group, const char *events,
+                                    const char *label, int index, const char *st_name)
 {
   const char *name = st_name != NULL ? st_name : "intel_x86_uncore_imc";
 
   g_profile_group[profile] = group;
+  g_profile_events[profile] = events;
   g_profile_ready[profile] = 1;
   monitor_log_info("%s: enabled with eventset %s (index %d)\n", name, label, index);
   if (index > 0)
@@ -195,7 +212,7 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type, likwid_uncor
     if (likwid_uncore_try_eventset(events, &group, &fail_step, &fail_errno) == 0) {
       if (likwid_uncore_spr_mbox_results_ok(group) == 0) {
         likwid_uncore_unquiet(&quiet, &saved_stderr, &null_fd);
-        return likwid_uncore_spr_enable(profile, group, label, try_idx, st_name);
+        return likwid_uncore_spr_enable(profile, group, events, label, try_idx, st_name);
       }
       fail_step = "mboxResults";
       fail_errno = 0;
@@ -227,7 +244,7 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type, likwid_uncor
     if (likwid_uncore_try_eventset(events, &group, &fail_step, &fail_errno) == 0) {
       /* HBM ladder has no MBOX; mbox gate is a no-op pass. */
       likwid_uncore_unquiet(&quiet, &saved_stderr, &null_fd);
-      return likwid_uncore_spr_enable(profile, group, label, try_idx, st_name);
+      return likwid_uncore_spr_enable(profile, group, events, label, try_idx, st_name);
     }
     likwid_uncore_unquiet(&quiet, &saved_stderr, &null_fd);
     monitor_log_warn("%s: eventset %s failed at %s (errno=%d)\n", st_name, label,
@@ -273,7 +290,7 @@ static int likwid_uncore_adapter_begin_icx(struct stats_type *type, likwid_uncor
 
     if (likwid_uncore_try_eventset(events, &group, &fail_step, &fail_errno) == 0) {
       likwid_uncore_unquiet(&quiet, &saved_stderr, &null_fd);
-      return likwid_uncore_spr_enable(profile, group, label, i, st_name);
+      return likwid_uncore_spr_enable(profile, group, events, label, i, st_name);
     }
     likwid_uncore_unquiet(&quiet, &saved_stderr, &null_fd);
     monitor_log_warn("%s: eventset %s (`%s`) failed at %s (errno=%d)\n", st_name, label,
@@ -329,6 +346,7 @@ int likwid_uncore_adapter_begin(struct stats_type *type, likwid_uncore_profile_t
     goto err;
   if (quiet)
     likwid_uncore_restore_stderr(saved_stderr, null_fd);
+  g_profile_events[profile] = events;
   g_profile_ready[profile] = 1;
   return 0;
 
@@ -350,21 +368,115 @@ err:
 #endif
 }
 
+/* Row and key a LIKWID counter name maps to, or NULL. */
+static struct stats *likwid_uncore_counter_row(struct stats_type *type,
+                                               likwid_uncore_profile_t profile,
+                                               const char *counter_name, const char **key)
+{
+  char dev[32];
+
+  if (type == NULL || counter_name == NULL)
+    return NULL;
+  if (likwid_uncore_profile_map_counter(profile, counter_name, dev, sizeof(dev), key) < 0 ||
+      *key == NULL)
+    return NULL;
+  return get_current_stats(type, dev);
+}
+
 void likwid_uncore_adapter_emit_counter(struct stats_type *type, likwid_uncore_profile_t profile,
                                         const char *counter_name, unsigned long long val)
 {
-  char dev[32];
   const char *key = NULL;
-  struct stats *stats = NULL;
+  struct stats *stats = likwid_uncore_counter_row(type, profile, counter_name, &key);
 
-  if (type == NULL || counter_name == NULL)
-    return;
-  if (likwid_uncore_profile_map_counter(profile, counter_name, dev, sizeof(dev), &key) < 0)
-    return;
-  stats = get_current_stats(type, dev);
-  if (stats != NULL && key != NULL)
+  if (stats != NULL)
     stats_set(stats, key, val);
 }
+
+/* Adds the counter `name` to `plan`; -1 when it maps to no schema key or the table is full. */
+static int likwid_uncore_plan_add(struct likwid_uncore_plan *plan, struct stats_type *type,
+                                  likwid_uncore_profile_t profile, const char *name)
+{
+  char dev[16];
+  const char *key = NULL;
+  int k;
+  int d;
+
+  if (likwid_uncore_profile_map_counter(profile, name, dev, sizeof(dev), &key) < 0)
+    return -1;
+  k = schema_ref(&type->st_schema, key);
+  if (k < 0 || k >= 64)
+    return -1;
+  for (d = 0; d < plan->n && strcmp(plan->devs[d].dev, dev) != 0; d++)
+    ;
+  if (d == plan->n) {
+    if (d == LIKWID_UNCORE_PLAN_DEVS)
+      return -1;
+    snprintf(plan->devs[d].dev, sizeof(plan->devs[d].dev), "%s", dev);
+    plan->devs[d].keys = 0;
+    plan->n++;
+  }
+  plan->devs[d].keys |= 1ULL << k;
+  return 0;
+}
+
+int likwid_uncore_adapter_plan(struct stats_type *type, likwid_uncore_profile_t profile,
+                               const char *events)
+{
+  struct likwid_uncore_plan *plan;
+  const char *p = events;
+
+  if (type == NULL || events == NULL || profile < 0 || profile >= LIKWID_UNCORE_PROFILE_COUNT)
+    return -1;
+  plan = &g_profile_plan[profile];
+  plan->planned = 1;
+  plan->n = 0;
+  /* EVENT:COUNTER[,EVENT:COUNTER...] */
+  while ((p = strchr(p, ':')) != NULL) {
+    char name[LIKWID_UNCORE_COUNTER_NAME_MAX];
+    size_t len = strcspn(++p, ",");
+
+    if (len >= sizeof(name))
+      len = sizeof(name) - 1;
+    memcpy(name, p, len);
+    name[len] = '\0';
+    if (likwid_uncore_plan_add(plan, type, profile, name) < 0) {
+      plan->n = 0;
+      return -1;
+    }
+    p += len;
+  }
+  return plan->n > 0 ? 0 : -1;
+}
+
+void likwid_uncore_adapter_mark_unprogrammed(struct stats_type *type,
+                                             likwid_uncore_profile_t profile)
+{
+  const struct likwid_uncore_plan *plan;
+
+  if (type == NULL || profile < 0 || profile >= LIKWID_UNCORE_PROFILE_COUNT)
+    return;
+  plan = &g_profile_plan[profile];
+  for (int d = 0; d < plan->n; d++) {
+    struct stats *stats = get_current_stats(type, plan->devs[d].dev);
+
+    for (size_t k = 0; stats != NULL && k < type->st_schema.sc_len; k++)
+      if (k >= 64 || !(plan->devs[d].keys & (1ULL << k)))
+        stats_set_missing(stats, type->st_schema.sc_ent[k]->se_key, STATS_SENTINEL_NOT_BUILT);
+  }
+}
+
+#ifdef HAVE_LIKWID
+/* A failed group read: every planned device's keys not marked yet this cycle get `code`. */
+static void likwid_uncore_mark_planned(struct stats_type *type, likwid_uncore_profile_t profile,
+                                       enum stats_sentinel code)
+{
+  const struct likwid_uncore_plan *plan = &g_profile_plan[profile];
+
+  for (int d = 0; d < plan->n; d++)
+    stats_set_missing_all(get_current_stats(type, plan->devs[d].dev), code);
+}
+#endif
 
 void likwid_uncore_adapter_collect(struct stats_type *type, likwid_uncore_profile_t profile)
 {
@@ -380,6 +492,13 @@ void likwid_uncore_adapter_collect(struct stats_type *type, likwid_uncore_profil
   if (!g_profile_ready[profile] || g_profile_group[profile] < 0)
     return;
 
+  if (!g_profile_plan[profile].planned &&
+      likwid_uncore_adapter_plan(type, profile, g_profile_events[profile]) < 0)
+    monitor_log_warn("%s: eventset `%s` does not map onto the schema; unprogrammed keys emit -1\n",
+                     type->st_name,
+                     g_profile_events[profile] != NULL ? g_profile_events[profile] : "");
+  likwid_uncore_adapter_mark_unprogrammed(type, profile);
+
   group = g_profile_group[profile];
   /*
    * host_cpu_hw prepare_collect re-arms the core group each tick; SKX/ICX
@@ -387,18 +506,20 @@ void likwid_uncore_adapter_collect(struct stats_type *type, likwid_uncore_profil
    */
   if (likwid_uncore_finish_group(group) < 0) {
     time_t now = time(NULL);
-    const char *name = type->st_name != NULL ? type->st_name : "uncore";
 
     if (last_warn == 0 || (now > last_warn && now - last_warn >= 60)) {
       monitor_log_warn("%s: perfmon_setupCounters(uncore group=%d) failed before "
-                       "readGroupCounters; uncore counters may stay zero\n",
-                       name, group);
+                       "readGroupCounters; uncore keys emit BACKEND_ERROR\n",
+                       type->st_name, group);
       last_warn = now;
     }
+    likwid_uncore_mark_planned(type, profile, STATS_SENTINEL_BACKEND_ERROR);
     return;
   }
-  if (perfmon_readGroupCounters(group) < 0)
+  if (perfmon_readGroupCounters(group) < 0) {
+    likwid_uncore_mark_planned(type, profile, STATS_SENTINEL_BACKEND_ERROR);
     return;
+  }
 
   n_events = perfmon_getNumberOfEvents(group);
   for (i = 0; i < n_events; i++) {
@@ -407,8 +528,14 @@ void likwid_uncore_adapter_collect(struct stats_type *type, likwid_uncore_profil
     double raw;
 
     raw = perfmon_getResult(group, i, thread_id);
-    if (likwid_result_to_ull(raw, LIKWID_RESULT_U48_MAX, &val) < 0)
+    if (likwid_result_to_ull(raw, LIKWID_RESULT_U48_MAX, &val) < 0) {
+      const char *key = NULL;
+      struct stats *stats = likwid_uncore_counter_row(type, profile, counter_name, &key);
+
+      if (stats != NULL)
+        stats_set_missing(stats, key, STATS_SENTINEL_INVALID_VALUE);
       continue;
+    }
     likwid_uncore_adapter_emit_counter(type, profile, counter_name, val);
   }
 #else

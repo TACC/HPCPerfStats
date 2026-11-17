@@ -10,6 +10,7 @@
 
 #include "arm_core_perf.h"
 #include "monitor_log.h"
+#include "stats_sentinel_debug.h"
 
 #define ARM_CORE_MIDR_PATH "/sys/devices/system/cpu/cpu0/regs/identification/midr_el1"
 #define ARM_CORE_CPUINFO_PATH "/proc/cpuinfo"
@@ -46,6 +47,7 @@ static const struct arm_core_midr_row g_midr_rows[] = {
 
 struct arm_core_slot {
   int fd;
+  unsigned char open_code; /* enum stats_sentinel why fd < 0 */
   struct perf_prev prev;
   unsigned long long life;
 };
@@ -239,7 +241,7 @@ static void log_unresolved(const int ok[ARM_CORE_NEVENTS], unsigned long long mi
   for (e = 0; e < ARM_CORE_NEVENTS; e++) {
     if (!ok[e])
       monitor_log_info("arm_core_perf: %s not named in sysfs and no raw-code row for MIDR "
-                       "0x%llx; key stays 0\n",
+                       "0x%llx; key emits NOT_PRESENT\n",
                        g_event_names[e], midr);
   }
 }
@@ -254,14 +256,18 @@ static int open_event_all_cpus(const struct arm_core_perf_cfg *c, int e,
     struct arm_core_slot *s = &g_slots[cpu * ARM_CORE_NEVENTS + e];
 
     errno = 0;
-    s->fd = c->open_fn(attr, cpu);
-    if (s->fd >= 0)
+    s->fd = STATS_FAULT("perf_open", g_event_names[e], &errno) ? -1 : c->open_fn(attr, cpu);
+    if (s->fd >= 0) {
       opened++;
-    else if (first_errno == 0)
+      continue;
+    }
+    if (first_errno == 0)
       first_errno = errno != 0 ? errno : EINVAL;
+    s->open_code = (unsigned char)perf_open_sentinel(errno != 0 ? errno : EINVAL);
   }
   if (opened < g_ncpus)
-    monitor_log_warn("arm_core_perf: %s open failed on %d of %d CPU(s) (%s); key stays 0 there\n",
+    monitor_log_warn("arm_core_perf: %s open failed on %d of %d CPU(s) (%s); key emits its "
+                     "sentinel there\n",
                      g_event_names[e], g_ncpus - opened, g_ncpus, strerror(first_errno));
   return opened;
 }
@@ -310,8 +316,10 @@ int arm_core_perf_begin(int ncpus, const struct arm_core_perf_cfg *cfg)
     return -1;
   }
   g_ncpus = ncpus;
-  for (i = 0; i < ncpus * ARM_CORE_NEVENTS; i++)
+  for (i = 0; i < ncpus * ARM_CORE_NEVENTS; i++) {
     g_slots[i].fd = -1;
+    g_slots[i].open_code = STATS_SENTINEL_NOT_PRESENT; /* unnamed event (unknown MIDR) */
+  }
   for (e = 0; e < ARM_CORE_NEVENTS; e++) {
     g_on_cycle_counter[e] = ok[e] && attrs[e].config == ARM_CORE_CPU_CYCLES_EVENT;
     if (ok[e] && open_event_all_cpus(&c, e, &attrs[e]) > 0)
@@ -344,6 +352,7 @@ void arm_core_perf_collect_cpu(int cpu, struct arm_core_counts *out)
   if (out == NULL)
     return;
   memset(out, 0, sizeof(*out));
+  memset(out->code, STATS_SENTINEL_NOT_PRESENT, sizeof(out->code));
   if (!g_ready || cpu < 0 || cpu >= g_ncpus)
     return;
   t = &g_times[cpu];
@@ -351,11 +360,16 @@ void arm_core_perf_collect_cpu(int cpu, struct arm_core_counts *out)
     struct arm_core_slot *s = &g_slots[cpu * ARM_CORE_NEVENTS + e];
     struct perf_times dt;
     double delta = 0.0;
+    enum stats_sentinel st;
 
-    if (s->fd < 0)
+    if (s->fd < 0) {
+      out->code[e] = s->open_code;
       continue;
-    if (perf_read_scaled(s->fd, &s->prev, &delta, &dt) == 0 && delta > 0.0)
+    }
+    /* life only grows: a failed read keeps prev, so the next delta spans the gap. */
+    if (perf_read_scaled(s->fd, &s->prev, &delta, &dt, &st) == 0 && delta > 0.0)
       s->life += (unsigned long long)(delta + 0.5);
+    out->code[e] = (unsigned char)st;
     t->enabled += dt.enabled;
     t->running += dt.running;
     t->solo += (double)dt.enabled * (g_on_cycle_counter[e] ? 1.0 : t->gp_share);

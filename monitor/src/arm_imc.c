@@ -171,8 +171,8 @@ static void arm_aarch64_imc_collect_dmc(struct stats_type *type)
     double d_r = 0.0, d_w = 0.0;
     struct stats *s;
 
-    if (perf_read_scaled(dev->fd_read, &dev->prev_read, &d_r, &t_r) != 0 ||
-        perf_read_scaled(dev->fd_write, &dev->prev_write, &d_w, &t_w) != 0)
+    if (perf_read_scaled(dev->fd_read, &dev->prev_read, &d_r, &t_r, NULL) != 0 ||
+        perf_read_scaled(dev->fd_write, &dev->prev_write, &d_w, &t_w, NULL) != 0)
       continue;
     dev->acc_read += (unsigned long long)(d_r + 0.5) / 64ULL;
     dev->acc_write += (unsigned long long)(d_w + 0.5) / 64ULL;

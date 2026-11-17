@@ -57,7 +57,7 @@ static void emit_fixture_free_stats(struct stats *stats)
   if (stats == NULL)
     return;
   free(stats->s_val);
-  free(stats->s_val_present);
+  free(stats->s_val_state);
   free(stats);
 }
 
@@ -87,12 +87,12 @@ static int emit_fixture_init_one(struct emit_fixture_type *slot, const char *nam
     return -1;
   slot->stats->s_type = &slot->type;
   slot->stats->s_val = calloc(n, sizeof(*slot->stats->s_val));
-  slot->stats->s_val_present = calloc(n, 1);
-  if (slot->stats->s_val == NULL || slot->stats->s_val_present == NULL)
+  slot->stats->s_val_state = calloc(n, 1);
+  if (slot->stats->s_val == NULL || slot->stats->s_val_state == NULL)
     return -1;
   for (k = 0; k < n; k++) {
     slot->stats->s_val[k] = 10ULL + (unsigned long long)k;
-    slot->stats->s_val_present[k] = 1;
+    slot->stats->s_val_state[k] = STATS_SENTINEL_OK;
   }
   strcpy(slot->stats->s_dev, dev);
   if (dict_set(&slot->type.st_current_dict, slot->stats->s_dev) < 0)

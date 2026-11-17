@@ -32,6 +32,9 @@ enum arm_core_event {
 struct arm_core_counts {
   unsigned long long life[ARM_CORE_NEVENTS];
   unsigned char have[ARM_CORE_NEVENTS];
+  /* enum stats_sentinel per event: OK when life[] is this interval's reading, else why not
+   * (open errno or unnamed event, read failure, NOT_SCHEDULED, COUNTER_RESET). */
+  unsigned char code[ARM_CORE_NEVENTS];
   unsigned long long pmu_enabled_ns;
   unsigned long long pmu_running_ns;
   unsigned long long pmu_solo_ns;

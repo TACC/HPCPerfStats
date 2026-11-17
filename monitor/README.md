@@ -32,7 +32,7 @@ Configure selects optional collectors via Automake conditionals; use **`./config
 ### Omni-Path / Cornelis (`host_opa`)
 
 - **`host_opa` is always built.** It collects Cornelis CN5000 and Intel Omni-Path HFI 100 Series devices (`hfi1_*` under `/sys/class/infiniband`). Device ids use a slash (`hfi1_0/1`), not the IB dot form.
-- **Sysfs fallback (default):** reads overlapping utilization counters from `ports/N/counters` first (Stampede3 OPA100). Maps `port_*_packets` → schema `*_pkts`; missing files (e.g. without `multicast_*`) are skipped. On **Cornelis CN5000 NDR**, classic `counters/` files often exist but read **EINVAL**; when no classic keys are readable, fall back to `ports/N/hw_counters` map: `TxWords`/`RxWords`/`TxPkt`/`RxPkt`/`TxWait` → `port_xmit_data`/`port_rcv_data`/`port_xmit_pkts`/`port_rcv_pkts`/`port_xmit_wait`. Do not map `DmaWait` / `RcvHdrOvr*` into KEYS. STL-only keys (FECN/BECN, bubbles, …) stay empty without MAD.
+- **Sysfs fallback (default):** reads overlapping utilization counters from `ports/N/counters` first (Stampede3 OPA100). Maps `port_*_packets` → schema `*_pkts`; a schema key without its counter file (e.g. without `multicast_*`) emits `NOT_PRESENT` (`-2`). On **Cornelis CN5000 NDR**, classic `counters/` files often exist but read **EINVAL**; when no classic keys are readable, fall back to `ports/N/hw_counters` map: `TxWords`/`RxWords`/`TxPkt`/`RxPkt`/`TxWait` → `port_xmit_data`/`port_rcv_data`/`port_xmit_pkts`/`port_rcv_pkts`/`port_xmit_wait`. Do not map `DmaWait` / `RcvHdrOvr*` into KEYS. STL-only keys (FECN/BECN, bubbles, …) emit `NOT_BUILT` (`-10`) without MAD.
 - **Collectible ports only:** inactive/DOWN ports are skipped (`ib_port_collectible`) — e.g. CN5000 dual-port with port1 Offline emits only `hfi1_0/2`.
 - **`--enable-opa-mad-dlopen`:** compiles STL MAD against vendored `third_party/oib-shim/` and **`dlopen`s `liboib_utils`** at runtime (`HPCPERFSTATS_OIB_LIB`). No link-time `-loib_utils`. Stampede3 fleet default. If the `.so` is missing (common on PVC and other nodes that only have `opa-basic-tools`), MAD is **probed once then disabled**—no recurring MAD journal lines; **sysfs `host_opa` continues**. `opa-basic-tools` alone does **not** provide `liboib_utils` for MAD.
 - **`--enable-opa`:** legacy link-time Cornelis/Intel IFS **`liboib_utils`** (+ system `oib_utils.h`). Requires IFS devel on the build host.
@@ -179,8 +179,9 @@ If LIKWID setup fails, `host_cpu_hw` is disabled (no MSR fallback).
 `amd_x86_pmc` / `amd_x86_uncore_df` MSR collectors are **removed** (no MSR fallback).
 
 **`host_cpu_hw` on Intel LIKWID (SKX → SRF):** Leading util / clock /
-arm-backend columns stay **0** by design (those keys are filled only by the
-Grace `arm` backend). Core FIXC fields (`instr_retired_any`,
+arm-backend columns emit `NOT_PRESENT` (`-2`): those keys are filled only by the
+Grace `arm` backend. Intel `fp_arith_inst_retired_*` keys emit `NOT_BUILT` (`-10`)
+until the LIKWID eventset programs them. Core FIXC fields (`instr_retired_any`,
 `cycles_unhalted_core`, `cycles_unhalted_ref`, and mirrored
 `instr_retired` / `aperf` / `mperf`) advance when that logical CPU runs work.
 **Sparse all-zero FIXC rows after warm-up are expected on idle CPUs** (common
@@ -190,7 +191,7 @@ FIXC. With `@full` tier tokens, census awk must use **CPU = `$2`**, FIXC =
 **`$10 $11 $12`**.
 
 **`host_cpu_hw` on AMD LIKWID (Rome → Turin):** Leading util / Intel FIXC /
-FP columns stay **0** by design. Judge health on mid-row AMD canaries
+FP columns emit `NOT_PRESENT` (`-2`). Judge health on mid-row AMD canaries
 (`retired_instructions`, `retired_branch_instr`, `ls_dispatch`, `instr_retired`)
 under load — not on FIXC. If those canaries stay flat while
 `amd_x86_uncore_df_*` and `amd_x86_rapl` look healthy, core PERF programming was
@@ -307,6 +308,83 @@ GROUP BY 1 ORDER BY 1;
 **Consumer follow-up (analysis):** roofline/mbw still probe `dram_cas_*` only;
 HBM-primary SPR needs `hbm_cas_*` pairs in analysis (see plan
 `spr-imc-mbox-nan`).
+
+## Value sentinels
+
+A key the daemon could not read this cycle is emitted as the token `-<n>` in place of its value,
+so an emitted `0` always means "read, and the counter was 0". Codes come from the catalog in
+`src/stats_sentinel.h` (append-only; the consumer mirror is `hpcperfstats/lib/monitor_sentinel.py`):
+
+| Token | Slug | Meaning | Counter chain |
+|-------|------|---------|---------------|
+| `-1` | `NOT_UPDATED` | no collector set the key this cycle (skipped tick, early return) | bridgeable |
+| `-2` | `NOT_PRESENT` | the counter does not exist on this host (absent file, foreign CPU key) | breaks |
+| `-3` | `READ_FAILED` | open / read / parse failed | bridgeable |
+| `-4` | `PERMISSION_DENIED` | `EACCES` / `EPERM` | breaks |
+| `-5` | `PMU_BUSY` | counter register in use by another program | breaks |
+| `-6` | `NOT_SCHEDULED` | perf event not scheduled this interval | breaks |
+| `-7` | `BACKEND_ERROR` | DCGM / LIKWID / MAD / beegfs-ctl call failed | bridgeable |
+| `-8` | `INVALID_VALUE` | the backend returned a blank / NaN / poisoned value | bridgeable |
+| `-9` | `BACKOFF` | source in failure backoff or a slow-cycle cooldown | bridgeable |
+| `-10` | `NOT_BUILT` | not compiled in, or not programmed by this build's eventset | breaks |
+| `-11` | `COUNTER_RESET` | the counter re-seeded; that interval's activity is lost | breaks |
+
+- **Per-cycle reset.** Each collect cycle marks every key active in the phase `NOT_UPDATED`;
+  `s_val` keeps the last reading, so `E` counter arithmetic (mod 2^W) is unchanged. Rows of
+  transient entities (`host_proc` processes) are dropped after a cycle that touched none of
+  their keys; real-device rows (cores, ports, GPUs, sockets, filesystems) persist and an
+  untouched key keeps emitting `-1`.
+- **Wire.** `$sentinels <catalog version>` follows `$build` in the `$` banner and the capability
+  slug carries `sent<N>`. Bridgeable codes mean the source kept counting, so the next valid value
+  is >= the last one (mod 2^W); every other code starts a new chain. On LIKWID `host_cpu_hw` builds
+  without the `x86perf` slug token, bridgeable codes are treated as chain-breaking.
+- **Knob.** `emit_value_sentinels 1` (default) in `hpcperfstats.conf`; `0` prints `s_val` exactly
+  as before sentinels (byte-identical legacy wire, no `$sentinels` banner); the slug keeps
+  `sent<N>` because it names the build, not the runtime setting.
+- **Rollout: consumer first.** Deploy the consumer that decodes `-<n>` (ingest, readers, Job
+  Detail reasons) on every site before installing a monitor with the knob on; an older consumer
+  would store a sentinel as a huge unsigned value. `emit_value_sentinels 0` is the escape hatch.
+- **No key renames**: `docs/monitor_variable_rename_map.yaml` is unchanged.
+- **Validators.** `scripts/lib/row_validate.py` accepts an unsigned integer or a catalog `-<n>`;
+  `cross_sample_validate.py` skips chain-breaking gaps, FAILs a bridgeable gap whose next value
+  dropped, and prints `NOTE sentinel` counts per code. A capture without the `$sentinels`
+  banner reports the sentinel layers as `SKIP`, never `PASS`, and any sentinel token in it FAILs.
+- **DEBUG verification layers** (`rpm_debug_shm_verify.sh` / `validate_stampede3_profile.sh`, on by
+  default; opt out per layer with `STRICT_SENTINELS=0`, `SENTINEL_PROBE_CHECK=0`,
+  `INDEPENDENT_READ_CHECK=0`, `CONSUMER_PARSE_CHECK=0`): the expectations manifest carries
+  `allowed_sentinels` / `expect_not_built` per type and key (a code outside it FAILs; a key the
+  build cannot read that emits a value FAILs); `NOT_PRESENT` is checked against `/proc/vmstat`,
+  IB / OPA sysfs counters and the hwmon power meters (nvidia_gpu reports SKIP: no read-only DCGM
+  field probe); a key `NOT_UPDATED` in two consecutive captures FAILs with its collector site; a
+  live counter read (`/proc/stat`, IB / OPA counters, `/sys/block/<dev>/stat`) between two
+  captures must lie between the emitted values, and a gauge (node `meminfo`, hwmon power) emitted
+  0 in both captures while its source is non-zero FAILs; the
+  captures go through the consumer parser (`scripts/consumer_parse_check.py`, repo `.venv`).
+- **DEBUG provenance** (`--enable-debug` only): every `stats_set_missing*` call site registers in
+  a linker-section registry; `/dev/shm/hpcperfstatsd-debug/sentinels` lists each non-OK key as
+  `type dev key code slug errno site first_ts last_ts count`, `sentinel_sites` lists every site
+  with its hit count, and each state transition is logged once. `debug_fault_inject` in the conf
+  forces failures at the fault points `open`, `opendir` (I/O primitives), `perf_open` (event
+  name), `mad_query` (HCA), `dcgm_fetch`, `hwmon_read` (meter name), `scandir` (host_proc),
+  `statfs` (host_tmpfs) and `net_rebuild_slow` (host_net), as
+  `point:subject-substring!errno@cycles`. `tests/test_fault_inject_matrix.c` and
+  `tests/test_fault_inject_hw.c`, `_fs.c`, `_cpu.c` and the coverage twins of the collector
+  sentinel tests (all built with `-DDEBUG` in every build) FAIL on any linked failure site never
+  exercised; together they link every src file with a site (`scripts/lib/fault_ci_files.py`,
+  checked by `tests/test_fault_ci_files.sh`).
+- **Live fault injection** (`FAULT_INJECT`, default 1; `FAULT_INJECT=0` to skip; release RPMs
+  print a SKIP line): after validation `rpm_debug_shm_verify.sh` runs
+  `scripts/fault_inject_verify.sh`, which restarts the DEBUG daemon with `debug_fault_inject` for
+  `FAULT_INJECT_TICKS` (3) cycles on every injectable point the node has, captures the window,
+  restores the conf, and checks that the mapped codes land on only the planned keys, values come
+  back after release (where the read path does not latch), bridgeable gaps keep counters
+  monotonic, and every site in `sentinel_sites` fired: a never-fired site is a NOTE when make check
+  forces its file (`fault_ci_files.py`) or its collector is not active on the node, else FAIL.
+- **Release log**: the hourly status adds `sentinels: SLUG=n ...` (tokens emitted per code since
+  the last hour; `sentinels: none` when there were none).
+- **Error-path lint**: `scripts/check_sentinel_error_paths.py src` (in `make check`) flags
+  `stats_set(..., 0)` or a silent `continue` / `return` / `goto` after a failed read; intentional
+  cases go in `scripts/check_sentinel_error_paths.allowlist` with a reason.
 
 ## Two-tier collection (fast/slow) and sparse rows
 
@@ -628,7 +706,7 @@ formula. See `HPCPerfStats/docs/monitor_variable_rename_map.yaml`.
 
 
 - **`cpu_counter_metrics` (`arm` backend on Grace)**: util accumulators from `/proc/stat` jiffies over the daemon's collect interval; the clock comes from cpufreq **`scaling_cur_freq`** (never `cpuinfo_cur_freq`, which reports bogus CPPC values on Grace), falling back to `base_frequency` / `cpuinfo_max_freq` / `scaling_max_freq`. **Fail-soft cycle keys** (accumulated from util + `clock_khz`): **`mperf`** = reference cycles (`ref = clock_khz × Δt_us / 1000`), **`aperf`** = active cycles (`act = ref × (util_total / 100)`), **`cpu_clock_est_cycles`** = same as **`aperf`**. When the direct-perf CYC event (`arm_core_perf`) is open and its scaled lifetime is > 0, all three carry measured cycles instead. `instr_retired`, `arm_fp_{dp,sp,hp}_spec`, `arm_est_flops` (FIXED + SCALE) and `arm_int8_ops` / `arm_int16_ops` come only from measured events; nothing synthesizes instructions or FLOPs from util. The backend uses no DCGM: embedded DCGM ran five 100–200 Hz timer loops (~615 wakeups/s) whatever the watch cadence, ≈ 8 core-s/h under the `performance` governor and ≈ 109 under `ondemand`.
-- **`host_power_socket`**: one row per socket from the ACPI power meters (`acpi_power_meter` hwmon, `power1_average` µW → W): `cpu_power_w`, `socket_power_w`, `sysio_power_w`, `module_power_w`; a missing meter publishes 0 and unknown `<Name> Power Socket <N>` labels are logged once. `socket_power_w` already contains `cpu_power_w` and `sysio_power_w`; `module_power_w` (GH200) contains the GPU — do not add them together.
+- **`host_power_socket`**: one row per socket from the ACPI power meters (`acpi_power_meter` hwmon, `power1_average` µW → W): `cpu_power_w`, `socket_power_w`, `sysio_power_w`, `module_power_w`; a missing meter emits `NOT_PRESENT` (`-2`), a failed read `READ_FAILED` (`-3`), and unknown `<Name> Power Socket <N>` labels are logged once. `socket_power_w` already contains `cpu_power_w` and `sysio_power_w`; `module_power_w` (GH200) contains the GPU — do not add them together.
 - **`nvidia_gpu`**: **`power_usage`** is the per-GPU draw. On GPM-capable GPUs (Hopper and newer) every key comes from **NVML + GPM** (`libnvidia-ml` loaded at runtime, override **`HPCPERFSTATS_NVML_LIB`**, allowlisted like the DCGM override): GPM percent × 0.01 = the DCGM ratio, GPM MiB/s × 1048576 = DCGM PROF bytes/s (checked against DCGM under load on GB200). NVML+GPM runs no background threads (embedded DCGM ran ~400 wakeups/s for the same fields). GPUs without GPM, or a node without a usable `libnvidia-ml`, use the DCGM path; an NVML failure mid-run switches to DCGM for the rest of the process (logged once). `dev` = NVML index, which equals the DCGM GPU id order on GB200 and GH200.
 - **`nvidia_gpu` profiling splits**: when the DCGM stack supports them, **`tensor_imma_active`**, **`tensor_hmma_active`**, and **`tensor_dfma_active`** mirror **`DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE` / `TENSOR_HMMA_ACTIVE` / `TENSOR_DFMA_ACTIVE`** (tensor pipe duty cycles, 0–100). IMMA is a **low-precision tensor / FP8-adjacent signal only**, not a dedicated FP8 FLOP counter. **`gpu_flops_rate`** / **`fp_mix`** still use **`tensor_active`** plus FP64/32/16 pipes only, so IMMA/HMMA/DFMA are **not** folded into the lumped FLOP estimate (avoids double-counting with legacy **`tensor_active`**). If **`dcgmWatchFields`** rejects optional tensor split field IDs (common on older embedded DCGM builds), the monitor automatically retries with the smaller core PROF field set so **`nvidia_gpu`** rows still publish on GH/Hopper clusters.
 - **`nvidia_gpu` DCGM extras**: per-direction link counters (**`gpu_pcie_*_bytes`**, **`gpu_nvlink_*_bytes`**, schema suffix **`E`** — monotonic hardware counters), **`gpu_mem_free_mb`**, **`gpu_sm_clock`**, **`gpu_pcie_replay_counter`**, and **`gpu_dram_active`** when the active watch profile includes those fields. **`gpu_io_link_total_bytes`** is a separate delta-accumulated event counter built from those PROF byte fields.

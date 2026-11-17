@@ -10,6 +10,8 @@
 #include <stdint.h>
 #include <linux/perf_event.h>
 
+#include "stats_sentinel.h"
+
 #define PERF_DEVICES_DIR "/sys/bus/event_source/devices"
 
 /** Opens one counting event on @p cpu (pid -1); returns an fd or -1. Injectable for tests. */
@@ -49,18 +51,28 @@ struct perf_times {
   uint64_t running;
 };
 
+/** Value sentinel for a failed perf_event_open errno: EACCES / EPERM PERMISSION_DENIED, EBUSY
+ * PMU_BUSY, ENOENT / ENODEV / EINVAL / EOPNOTSUPP NOT_PRESENT, anything else READ_FAILED. */
+enum stats_sentinel perf_open_sentinel(int err);
+
 /**
  * Scaled delta from one {value, enabled, running} sample:
  * delta = dvalue x denabled / drunning. The first sample seeds and gives 0; drunning == 0
  * gives 0; a value (or time) going down re-seeds without adding. @p times_out (may be NULL)
  * receives {denabled, drunning}, also when drunning == 0 (enabled but never scheduled).
+ * @return what the interval measured: STATS_SENTINEL_OK (seed, idle or scaled, partial
+ * multiplexing included), STATS_SENTINEL_NOT_SCHEDULED (enabled but never on a counter, so the
+ * activity is unmeasured), STATS_SENTINEL_COUNTER_RESET (re-seed: the interval is lost), or
+ * STATS_SENTINEL_READ_FAILED for invalid arguments.
  */
-void perf_scale_sample(struct perf_prev *prev, const uint64_t sample[3], double *delta_out,
-                       struct perf_times *times_out);
+enum stats_sentinel perf_scale_sample(struct perf_prev *prev, const uint64_t sample[3],
+                                      double *delta_out, struct perf_times *times_out);
 
-/** Reads {value, enabled, running} from @p fd and applies perf_scale_sample.
- * @return 0 on success, -1 on a short or failed read (*delta_out = 0, times 0, prev unchanged). */
+/** Reads {value, enabled, running} from @p fd and applies perf_scale_sample; @p status_out (may
+ * be NULL) gets its status, or STATS_SENTINEL_READ_FAILED on a failed read.
+ * @return 0 on success, -1 on a short or failed read (*delta_out = 0, times 0, prev unchanged,
+ * so the next good read spans the gap). */
 int perf_read_scaled(int fd, struct perf_prev *prev, double *delta_out,
-                     struct perf_times *times_out);
+                     struct perf_times *times_out, enum stats_sentinel *status_out);
 
 #endif

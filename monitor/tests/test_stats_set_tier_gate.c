@@ -13,7 +13,7 @@ struct stats_type *const stats_type_table[] = {NULL};
 const size_t stats_type_nr = 0;
 static struct stats_type g_type;
 static unsigned long long g_vals[5];
-static unsigned char g_present[5];
+static unsigned char g_state[5];
 static char g_stats_storage[sizeof(struct stats) + 16];
 static struct stats *g_stats;
 
@@ -25,12 +25,12 @@ static void setup_host_mem_type(void)
   collect_tier_set_enabled(1);
   collect_tier_apply_to_type(&g_type);
   memset(g_vals, 0, sizeof(g_vals));
-  memset(g_present, 0, sizeof(g_present));
+  memset(g_state, STATS_SENTINEL_NOT_UPDATED, sizeof(g_state));
   memset(g_stats_storage, 0, sizeof(g_stats_storage));
   g_stats = (struct stats *)g_stats_storage;
   g_stats->s_type = &g_type;
   g_stats->s_val = g_vals;
-  g_stats->s_val_present = g_present;
+  g_stats->s_val_state = g_state;
   strcpy(g_stats->s_dev, "-");
 }
 
@@ -43,14 +43,14 @@ static void test_stats_set_skips_slow_on_fast_phase(void)
   stats_set(g_stats, "inactive", 50ULL);
 
   assert(g_vals[0] == 100ULL);
-  assert(g_present[0] == 1);
+  assert(g_state[0] == STATS_SENTINEL_OK);
   assert(g_vals[3] == 0ULL);
-  assert(g_present[3] == 0);
+  assert(g_state[3] == STATS_SENTINEL_NOT_UPDATED);
 
   collect_tier_set_phase(COLLECT_FULL);
   stats_set(g_stats, "inactive", 50ULL);
   assert(g_vals[3] == 50ULL);
-  assert(g_present[3] == 1);
+  assert(g_state[3] == STATS_SENTINEL_OK);
 
   schema_destroy(&g_type.st_schema);
 }

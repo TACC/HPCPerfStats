@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import re
 
-from .message_parse import fast_schema_keys
+try:
+    from .message_parse import fast_schema_keys
+    from .sentinel_catalog import SENTINEL_SLUGS
+except ImportError:  # imported as a top-level module with scripts/lib on sys.path
+    from message_parse import fast_schema_keys
+    from sentinel_catalog import SENTINEL_SLUGS
 
 _TIER_MARKERS = frozenset({"@fast", "@full"})
 _DRIVER_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -32,6 +37,20 @@ def token_is_uint(tok: str) -> bool:
     if not tok:
         return False
     return tok.isdigit()
+
+
+def token_sentinel_code(tok: str) -> int | None:
+    """Catalog code n of a ``-n`` sentinel token (canonical digits only), else None."""
+    digits = tok[1:]
+    if tok[:1] != "-" or not digits.isdigit() or digits != str(int(digits)):
+        return None
+    code = int(digits)
+    return code if code in SENTINEL_SLUGS else None
+
+
+def token_is_value(tok: str) -> bool:
+    """An emitted value: an unsigned integer, or ``-n`` for a catalog sentinel code n."""
+    return token_is_uint(tok) or token_sentinel_code(tok) is not None
 
 
 def validate_sample_header(line: str) -> tuple[float, str, str]:
@@ -88,8 +107,11 @@ def validate_metric_row(
             f"type {type_name!r} dev {dev!r}: got {len(values)} values, expected {expect}"
         )
     for val in values:
-        if not token_is_uint(val):
-            raise ValueError(f"type {type_name!r} non-numeric value {val!r} in {line!r}")
+        if not token_is_value(val):
+            raise ValueError(
+                f"type {type_name!r} value {val!r} is neither unsigned nor a catalog sentinel"
+                f" in {line!r}"
+            )
     return type_name, dev, tier_marker
 
 

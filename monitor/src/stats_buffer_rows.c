@@ -5,6 +5,7 @@
 
 #include "collect.h"
 #include "collect_tier.h"
+#include "monitor_release_log.h"
 #include "stats.h"
 #include "stats_buffer.h"
 #include "stats_buffer_data_append.h"
@@ -83,9 +84,27 @@ static void stats_buffer_append_type_row_fallback(struct stats_buffer *sf, struc
   for (size_t k = 0; k < type->st_schema.sc_len; k++) {
     if (tier == STATS_ROW_FAST && type->st_schema.sc_ent[k]->se_collect_tier != COLLECT_TIER_FAST)
       continue;
-    stats_buffer_append_fmt(sf, " %llu", stats->s_val[k]);
+    unsigned int code = stats_format_value_sentinel(stats, k);
+
+    if (code != 0)
+      stats_buffer_append_fmt(sf, " -%u", code);
+    else
+      stats_buffer_append_fmt(sf, " %llu", stats->s_val[k]);
   }
   stats_buffer_append_fmt(sf, "\n");
+}
+
+/* Per-code count of the sentinel tokens a row emitted, for the release hourly log. */
+static void stats_buffer_note_row_sentinels(const struct stats_type *type,
+                                            const struct stats *stats, enum stats_row_tier tier)
+{
+  for (size_t k = 0; k < type->st_schema.sc_len; k++) {
+    unsigned int code = stats_format_value_sentinel(stats, k);
+
+    if (code != 0 &&
+        (tier != STATS_ROW_FAST || type->st_schema.sc_ent[k]->se_collect_tier == COLLECT_TIER_FAST))
+      monitor_release_sentinel_note(code);
+  }
 }
 
 enum stats_row_tier stats_buffer_row_tier_decide(int is_schema_payload, int tier_enabled, int phase)
@@ -114,6 +133,7 @@ void stats_buffer_append_enabled_type_rows(struct stats_buffer *sf, enum stats_r
         continue;
       if (stats_buffer_append_type_row(sf, type, stats, tier) < 0)
         stats_buffer_append_type_row_fallback(sf, type, stats, tier);
+      stats_buffer_note_row_sentinels(type, stats, tier);
     }
   }
 }

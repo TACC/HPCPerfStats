@@ -25,6 +25,10 @@
 
 static int g_initialized = 0;
 static int g_group = -1;
+/* Eventset of g_group and, once the first row is read, the per-key code of every host_cpu_hw key
+ * the eventset does not program (likwid_pmc_key_codes): static for the life of the group. */
+static char *g_event_string;
+static unsigned char *g_key_codes;
 
 static int likwid_env_setup_quiet(void)
 {
@@ -138,6 +142,10 @@ void likwid_pmc_adapter_finalize(void)
 #endif
   g_initialized = 0;
   g_group = -1;
+  free(g_event_string);
+  free(g_key_codes);
+  g_event_string = NULL;
+  g_key_codes = NULL;
 }
 
 int likwid_pmc_adapter_setup_events(const char *event_string)
@@ -159,6 +167,10 @@ int likwid_pmc_adapter_setup_events(const char *event_string)
   g_group = perfmon_addEventSet(event_string);
   if (quiet)
     likwid_stderr_quiet_end(&saved_stderr, &null_fd);
+  free(g_event_string);
+  free(g_key_codes);
+  g_event_string = strdup(event_string);
+  g_key_codes = NULL;
   if (g_group < 0 && quiet)
     g_group = perfmon_addEventSet(event_string);
   if (g_group < 0) {
@@ -203,8 +215,6 @@ static void set_counter_by_name(struct stats *stats, const char *counter_name,
 
   if (counter_name == NULL || stats == NULL)
     return;
-  if (likwid_pmc_result_is_invalid(value))
-    return;
   fixc = likwid_pmc_fixc_index(counter_name);
   if (fixc == 0)
     stats_set(stats, "instr_retired", value);
@@ -215,18 +225,42 @@ static void set_counter_by_name(struct stats *stats, const char *counter_name,
 }
 
 #ifdef HAVE_LIKWID
-static void likwid_pmc_adapter_zero_fp_arith_stats(struct stats *stats)
+/* Marks every key the eventset does not program with its static code (computed on the first row,
+ * from the CPU vendor and the eventset). Values read this tick then override programmed keys. */
+static void likwid_pmc_adapter_mark_unprogrammed(struct stats *stats)
 {
-  if (stats == NULL)
-    return;
-  stats_set(stats, "fp_arith_inst_retired_scalar_double", 0);
-  stats_set(stats, "fp_arith_inst_retired_128b_packed_double", 0);
-  stats_set(stats, "fp_arith_inst_retired_256b_packed_double", 0);
-  stats_set(stats, "fp_arith_inst_retired_512b_packed_double", 0);
-  stats_set(stats, "fp_arith_inst_retired_scalar_single", 0);
-  stats_set(stats, "fp_arith_inst_retired_128b_packed_single", 0);
-  stats_set(stats, "fp_arith_inst_retired_256b_packed_single", 0);
-  stats_set(stats, "fp_arith_inst_retired_512b_packed_single", 0);
+  struct schema *sc = &stats->s_type->st_schema;
+
+  if (g_key_codes == NULL) {
+    g_key_codes = (unsigned char *)malloc(sc->sc_len > 0 ? sc->sc_len : 1);
+    if (g_key_codes == NULL ||
+        /* The AMD_* enumerators come first in processor_t. */
+        likwid_pmc_key_codes(sc, g_event_string, processor <= AMD_TURIN, g_key_codes) < 0) {
+      free(g_key_codes);
+      g_key_codes = NULL;
+      return;
+    }
+  }
+  for (size_t k = 0; k < sc->sc_len; k++)
+    if (g_key_codes[k] != STATS_SENTINEL_OK)
+      stats_set_missing(stats, sc->sc_ent[k]->se_key, (enum stats_sentinel)g_key_codes[k]);
+}
+
+/* An unusable LIKWID result (NaN, negative, LIKWID_INVALID_RESULT) is INVALID_VALUE on the keys
+ * that event would have set. */
+static void likwid_pmc_adapter_mark_invalid(struct stats *stats, const char *counter_name,
+                                            const char *event_name)
+{
+  static const char *const fixc_keys[] = {"instr_retired", "aperf", "mperf"};
+  char keybuf[128];
+  const char *key;
+  int fixc = likwid_pmc_fixc_index(counter_name);
+
+  if (fixc >= 0)
+    stats_set_missing(stats, fixc_keys[fixc], STATS_SENTINEL_INVALID_VALUE);
+  key = likwid_pmc_schema_key_from_event(event_name, keybuf, sizeof(keybuf));
+  if (key != NULL)
+    stats_set_missing(stats, key, STATS_SENTINEL_INVALID_VALUE);
 }
 
 static void likwid_pmc_adapter_apply_one_event(struct stats *stats, const char *counter_name,
@@ -238,9 +272,6 @@ static void likwid_pmc_adapter_apply_one_event(struct stats *stats, const char *
   char keybuf[128];
   const char *schema_key;
   int fixc;
-
-  if (likwid_pmc_result_is_invalid(val))
-    return;
 
   set_counter_by_name(stats, counter_name, val);
   fixc = likwid_pmc_fixc_index(counter_name);
@@ -286,11 +317,11 @@ static void likwid_pmc_adapter_publish_semantic_counters(
 }
 #endif /* HAVE_LIKWID */
 
-int likwid_pmc_adapter_prepare_collect(void)
+enum stats_sentinel likwid_pmc_adapter_prepare_collect(void)
 {
 #ifdef HAVE_LIKWID
   if (!g_initialized || g_group < 0)
-    return -1;
+    return STATS_SENTINEL_BACKEND_ERROR;
 
 #if defined(__aarch64__) || defined(__arm__)
   /*
@@ -299,7 +330,7 @@ int likwid_pmc_adapter_prepare_collect(void)
    * keys (cpu_clock_est_cycles / aperf / mperf / instr_retired). Keep the
    * session from setup_events and only readGroupCounters in collect.
    */
-  return 0;
+  return STATS_SENTINEL_OK;
 #else
   {
     int setup_rc;
@@ -316,20 +347,21 @@ int likwid_pmc_adapter_prepare_collect(void)
       time_t now = time(NULL);
 
       if (last_warn == 0 || (now > last_warn && now - last_warn >= 60)) {
-        monitor_log_warn("host_cpu_hw: perfmon_setupCounters(core group=%d) failed before "
-                         "readGroupCounters; core PMCs may stay zero\n",
-                         g_group);
+        monitor_log_warn("host_cpu_hw: perfmon_setupCounters(core group=%d) failed (%d) before "
+                         "readGroupCounters; core PMC keys emit their sentinel\n",
+                         g_group, setup_rc);
         last_warn = now;
       }
-      return -1;
+      /* -EBUSY: counter register in use by another program (LIKWID_FORCE=0). */
+      return setup_rc == -EBUSY ? STATS_SENTINEL_PMU_BUSY : STATS_SENTINEL_BACKEND_ERROR;
     }
     /* Same as likwid_uncore_finish_group: start may fail if already running. */
     (void)perfmon_startCounters();
-    return 0;
+    return STATS_SENTINEL_OK;
   }
 #endif /* __aarch64__ || __arm__ */
 #else
-  return -1;
+  return STATS_SENTINEL_NOT_BUILT;
 #endif
 }
 
@@ -351,9 +383,11 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, 
   (void)nr_events;
   if (!g_initialized || g_group < 0 || stats == NULL || cpu < 0)
     return -1;
-  likwid_pmc_adapter_zero_fp_arith_stats(stats);
-  if (perfmon_readGroupCounters(g_group) < 0)
+  likwid_pmc_adapter_mark_unprogrammed(stats);
+  if (perfmon_readGroupCounters(g_group) < 0) {
+    stats_set_missing_all(stats, STATS_SENTINEL_BACKEND_ERROR);
     return -1;
+  }
   n_events = perfmon_getNumberOfEvents(g_group);
   for (i = 0; i < n_events; i++) {
     const char *counter_name = perfmon_getCounterName(g_group, i);
@@ -362,8 +396,11 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, 
     double raw = perfmon_getResult(g_group, i, cpu);
 
     /* No W=48 cap: APERF/MPERF and fixed counters may exceed 48 bits. */
-    if (likwid_result_to_ull(raw, ~(unsigned long long)0, &val) < 0)
+    if (likwid_result_to_ull(raw, ~(unsigned long long)0, &val) < 0 ||
+        likwid_pmc_result_is_invalid(val)) {
+      likwid_pmc_adapter_mark_invalid(stats, counter_name, event_name);
       continue;
+    }
     likwid_pmc_adapter_apply_one_event(stats, counter_name, event_name, val, &inst_retired, &aperf,
                                        &mperf, &have_inst, &have_aperf, &have_mperf);
   }

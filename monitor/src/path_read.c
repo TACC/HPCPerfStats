@@ -29,7 +29,7 @@ static int path_read_open(const char *path, const struct path_read_opts *opts)
     return -1;
   }
 
-  fd = open(path, O_RDONLY | O_CLOEXEC);
+  fd = STATS_FAULT("open", path, &errno) ? -1 : open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
     int saved = errno;
 

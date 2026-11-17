@@ -74,11 +74,8 @@ def check_row_invariants(type_name: str, dev: str, vals: dict[str, int]) -> list
 def _value_map(row_values: list[str], key_names: list[str]) -> dict[str, int]:
     out: dict[str, int] = {}
     for i, name in enumerate(key_names):
-        if i < len(row_values):
-            try:
-                out[name] = int(row_values[i])
-            except ValueError:
-                continue
+        if i < len(row_values) and row_values[i].isdigit():
+            out[name] = int(row_values[i])
     return out
 
 

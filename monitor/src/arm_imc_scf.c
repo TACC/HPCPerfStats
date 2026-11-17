@@ -148,9 +148,9 @@ int arm_imc_scf_read(struct arm_imc_scf_dev *d, unsigned long long *cas_rd,
 
   if (d == NULL || cas_rd == NULL || cas_wr == NULL)
     return -1;
-  if (perf_read_scaled(d->fd_rd, &d->prev_rd, &rd, &t_rd) == 0 && rd > 0.0)
+  if (perf_read_scaled(d->fd_rd, &d->prev_rd, &rd, &t_rd, NULL) == 0 && rd > 0.0)
     d->life_rd_beats += (unsigned long long)(rd + 0.5);
-  if (perf_read_scaled(d->fd_wr, &d->prev_wr, &wr, &t_wr) == 0 && wr > 0.0)
+  if (perf_read_scaled(d->fd_wr, &d->prev_wr, &wr, &t_wr, NULL) == 0 && wr > 0.0)
     d->life_wr_bytes += (unsigned long long)(wr + 0.5);
   d->life_enabled_ns += t_rd.enabled + t_wr.enabled; /* times are 0 on a failed read */
   d->life_running_ns += t_rd.running + t_wr.running;

@@ -16,6 +16,7 @@ int g_fake_perf_n;
 static int g_fail_enabled;
 static uint64_t g_fail_config;
 static int g_fail_cpu;
+static int g_fail_errno = ENOENT;
 
 void fake_sysfs_init(char *root, unsigned long cap)
 {
@@ -78,7 +79,7 @@ int fake_perf_open(const struct perf_event_attr *attr, int cpu)
   int fds[2];
 
   if (g_fail_enabled && attr->config == g_fail_config && (g_fail_cpu < 0 || g_fail_cpu == cpu)) {
-    errno = ENOENT;
+    errno = g_fail_errno;
     return -1;
   }
   assert(g_fake_perf_n < FAKE_PERF_MAX);
@@ -97,8 +98,15 @@ int fake_perf_open(const struct perf_event_attr *attr, int cpu)
   return fds[0];
 }
 
+void fake_perf_fail_errno(uint64_t config, int cpu, int err)
+{
+  fake_perf_fail(config, cpu);
+  g_fail_errno = err;
+}
+
 void fake_perf_fail(uint64_t config, int cpu)
 {
+  g_fail_errno = ENOENT;
   g_fail_enabled = 1;
   g_fail_config = config;
   g_fail_cpu = cpu;

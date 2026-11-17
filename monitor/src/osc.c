@@ -1,4 +1,5 @@
 /* lustre_osc - Lustre object storage client stats from /proc/fs/lustre/osc. */
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,51 +18,67 @@ static const char *const osc_stats_names[] = {
     "stats",
 };
 
-static void osc_apply_stats_line(struct stats *stats, const char *key, const char *rest)
+#define X(k, o, d) #k
+static const char *const osc_keys[] = {KEYS};
+#undef X
+#define OSC_NKEYS (sizeof(osc_keys) / sizeof(osc_keys[0]))
+
+static size_t osc_key_index(const char *key)
+{
+  size_t i = 0;
+
+  while (i < OSC_NKEYS && strcmp(osc_keys[i], key) != 0)
+    i++;
+  return i;
+}
+
+/* Adds one stats line to `life`, the lifetime counters of one OSC indexed like osc_keys. */
+static void osc_apply_stats_line(unsigned long long *life, const char *key, const char *rest)
 {
   unsigned long long count = 0;
   unsigned long long sum = 0;
+  size_t i;
   int n;
-
-  if (stats == NULL || key == NULL || rest == NULL)
-    return;
 
   n = lustre_parse_samples_count(rest, &count, &sum);
   if (n == 0)
     return;
 
   if (strcmp(key, "req_waittime") == 0) {
-    stats_inc(stats, "reqs", count);
-    stats_inc(stats, "wait", sum);
+    life[osc_key_index("reqs")] += count;
+    life[osc_key_index("wait")] += sum;
   } else if (strcmp(key, "read_bytes") == 0 || strcmp(key, "lockless_read_bytes") == 0) {
-    stats_inc(stats, "read_bytes", n == 2 ? sum : count);
+    life[osc_key_index("read_bytes")] += n == 2 ? sum : count;
   } else if (strcmp(key, "write_bytes") == 0 || strcmp(key, "lockless_write_bytes") == 0) {
-    stats_inc(stats, "write_bytes", n == 2 ? sum : count);
-  } else if (strcmp(key, "ost_destroy") == 0 || strcmp(key, "ost_punch") == 0 ||
-             strcmp(key, "ost_read") == 0 || strcmp(key, "ost_setattr") == 0 ||
-             strcmp(key, "ost_statfs") == 0 || strcmp(key, "ost_write") == 0 ||
-             strcmp(key, "reqs") == 0 || strcmp(key, "wait") == 0) {
-    stats_inc(stats, key, count);
+    life[osc_key_index("write_bytes")] += n == 2 ? sum : count;
+  } else if ((i = osc_key_index(key)) < OSC_NKEYS) {
+    life[i] += count;
   } else {
-    stats_inc(stats, "reqs", count);
+    life[osc_key_index("reqs")] += count;
   }
 }
 
-static void osc_collect_fs(struct stats *stats, const char *d_name)
+void lustre_osc_collect_obd(struct stats *stats, const char *dir, const char *d_name)
 {
+  unsigned long long life[OSC_NKEYS] = {0};
   char *path = NULL;
   FILE *file = NULL;
   char file_buf[4096];
   char *line_buf = NULL;
   size_t line_buf_size = 0;
 
-  if (stats == NULL || d_name == NULL)
+  if (stats == NULL || dir == NULL || d_name == NULL)
     return;
 
-  if (lustre_fopen_obd_named(OSC_DIR_PATH, d_name, osc_stats_names,
+  if (lustre_fopen_obd_named(dir, d_name, osc_stats_names,
                              sizeof(osc_stats_names) / sizeof(osc_stats_names[0]), &path,
-                             &file) < 0)
+                             &file) < 0) {
+    enum stats_sentinel code = stats_sentinel_for_errno(errno);
+
+    for (size_t i = 0; i < OSC_NKEYS; i++)
+      stats_set_missing(stats, osc_keys[i], code);
     return;
+  }
 
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
   while (getline(&line_buf, &line_buf_size, file) >= 0) {
@@ -70,12 +87,15 @@ static void osc_collect_fs(struct stats *stats, const char *d_name)
 
     if (key == NULL || line == NULL)
       continue;
-    osc_apply_stats_line(stats, key, line);
+    osc_apply_stats_line(life, key, line);
   }
 
   free(line_buf);
   fclose(file);
   free(path);
+  /* Lustre lists only non-zero counters, so an omitted key contributes 0. */
+  for (size_t i = 0; i < OSC_NKEYS; i++)
+    stats_accumulate(stats, osc_keys[i], life[i]);
 }
 
 static void osc_each(const char *base, const char *name, void *ctx)
@@ -98,7 +118,7 @@ static void osc_each(const char *base, const char *name, void *ctx)
   if (stats == NULL)
     return;
 
-  osc_collect_fs(stats, name);
+  lustre_osc_collect_obd(stats, OSC_DIR_PATH, name);
 }
 
 static void osc_collect(struct stats_type *type)

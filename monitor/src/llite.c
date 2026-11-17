@@ -1,4 +1,5 @@
 /* lustre_llite - VFS client opcodes (proc) + capacity gauges (sysfs). */
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -105,7 +106,7 @@ static void llite_apply_stats_line(struct stats *stats, const char *key, const c
     stats_set(stats, mapped, count);
 }
 
-static void llite_collect_proc_stats(struct stats *stats, const char *d_name)
+static void llite_collect_proc_stats(struct stats *stats, const char *dir, const char *d_name)
 {
   char *path = NULL;
   FILE *file = NULL;
@@ -115,13 +116,19 @@ static void llite_collect_proc_stats(struct stats *stats, const char *d_name)
 
   if (stats == NULL || d_name == NULL)
     return;
-  if (asprintf(&path, "%s/%s/stats", LLITE_PROC_PATH, d_name) < 0) {
+  if (asprintf(&path, "%s/%s/stats", dir, d_name) < 0) {
     ERROR("cannot create path: %m\n");
     return;
   }
   file = file_fopen_read(path);
-  if (file == NULL)
+  if (file == NULL) {
+    for (size_t i = 0; i < sizeof(llite_opcode_map) / sizeof(llite_opcode_map[0]); i++)
+      stats_set_missing(stats, llite_opcode_map[i].dst, stats_sentinel_for_errno(errno));
     goto out;
+  }
+  /* Lustre lists only opcodes with a non-zero count, so an absent line is a real 0. */
+  for (size_t i = 0; i < sizeof(llite_opcode_map) / sizeof(llite_opcode_map[0]); i++)
+    stats_set(stats, llite_opcode_map[i].dst, 0);
 
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
   while (getline(&line_buf, &line_buf_size, file) >= 0) {
@@ -140,34 +147,37 @@ out:
   free(path);
 }
 
-static void llite_collect_sysfs_capacity(struct stats *stats, const char *d_name)
+static void llite_collect_capacity_key(struct stats *stats, const char *dir, const char *d_name,
+                                       const char *file, const char *key, unsigned long long scale)
 {
   char path[512];
-  unsigned long long kbytes = 0;
-  unsigned long long files = 0;
+  unsigned long long v = 0;
 
+  snprintf(path, sizeof(path), "%s/%s/%s", dir, d_name, file);
+  if (pscanf(path, "%llu", &v) == 1)
+    stats_set(stats, key, v * scale);
+  else
+    stats_set_missing(stats, key, STATS_SENTINEL_READ_FAILED);
+}
+
+static void llite_collect_sysfs_capacity(struct stats *stats, const char *dir, const char *d_name)
+{
   if (stats == NULL || d_name == NULL)
     return;
+  llite_collect_capacity_key(stats, dir, d_name, "kbytestotal", "fs_bytes_total", 1024ULL);
+  llite_collect_capacity_key(stats, dir, d_name, "kbytesfree", "fs_bytes_free", 1024ULL);
+  llite_collect_capacity_key(stats, dir, d_name, "kbytesavail", "fs_bytes_avail", 1024ULL);
+  llite_collect_capacity_key(stats, dir, d_name, "filestotal", "fs_files_total", 1ULL);
+  llite_collect_capacity_key(stats, dir, d_name, "filesfree", "fs_files_free", 1ULL);
+}
 
-  snprintf(path, sizeof(path), "%s/%s/kbytestotal", LLITE_SYSFS_PATH, d_name);
-  if (pscanf(path, "%llu", &kbytes) == 1)
-    stats_set(stats, "fs_bytes_total", kbytes * 1024ULL);
-
-  snprintf(path, sizeof(path), "%s/%s/kbytesfree", LLITE_SYSFS_PATH, d_name);
-  if (pscanf(path, "%llu", &kbytes) == 1)
-    stats_set(stats, "fs_bytes_free", kbytes * 1024ULL);
-
-  snprintf(path, sizeof(path), "%s/%s/kbytesavail", LLITE_SYSFS_PATH, d_name);
-  if (pscanf(path, "%llu", &kbytes) == 1)
-    stats_set(stats, "fs_bytes_avail", kbytes * 1024ULL);
-
-  snprintf(path, sizeof(path), "%s/%s/filestotal", LLITE_SYSFS_PATH, d_name);
-  if (pscanf(path, "%llu", &files) == 1)
-    stats_set(stats, "fs_files_total", files);
-
-  snprintf(path, sizeof(path), "%s/%s/filesfree", LLITE_SYSFS_PATH, d_name);
-  if (pscanf(path, "%llu", &files) == 1)
-    stats_set(stats, "fs_files_free", files);
+void lustre_llite_collect_obd(struct stats *stats, const char *proc_dir, const char *sys_dir,
+                              const char *d_name)
+{
+  if (proc_dir != NULL)
+    llite_collect_proc_stats(stats, proc_dir, d_name);
+  if (sys_dir != NULL)
+    llite_collect_sysfs_capacity(stats, sys_dir, d_name);
 }
 
 static void llite_each(const char *base, const char *name, void *ctx)
@@ -191,10 +201,8 @@ static void llite_each(const char *base, const char *name, void *ctx)
     return;
 
   is_sysfs = (strcmp(base, LLITE_SYSFS_PATH) == 0);
-  if (is_sysfs)
-    llite_collect_sysfs_capacity(stats, name);
-  else
-    llite_collect_proc_stats(stats, name);
+  lustre_llite_collect_obd(stats, is_sysfs ? NULL : LLITE_PROC_PATH,
+                           is_sysfs ? LLITE_SYSFS_PATH : NULL, name);
 }
 
 static void llite_collect(struct stats_type *type)

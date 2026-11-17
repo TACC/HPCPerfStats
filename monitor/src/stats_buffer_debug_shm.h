@@ -2,6 +2,8 @@
 #ifndef STATS_BUFFER_DEBUG_SHM_H
 #define STATS_BUFFER_DEBUG_SHM_H
 
+#include <stddef.h>
+
 #include "stats_text_format.h"
 
 struct stats_buffer;
@@ -26,6 +28,8 @@ static inline int stats_buffer_debug_shm_sample_wanted(int write_hdr, int payloa
 
 #ifdef DEBUG
 void stats_buffer_debug_shm_init(void);
+/*! Atomically write `len` bytes as `<debug shm dir>/<name>` (mode 0600). */
+void stats_buffer_debug_shm_write_file(const char *name, const void *data, size_t len);
 void stats_buffer_debug_shm_write_payload(const struct stats_buffer *sf,
                                           enum stats_buffer_debug_shm_payload_kind kind);
 void stats_buffer_debug_shm_write_sample(const struct stats_buffer *sf, enum stats_row_tier tier);

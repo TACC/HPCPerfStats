@@ -216,20 +216,37 @@ int stats_runtime_daemon_ensure_types(void)
   return 0;
 }
 
+static int stats_runtime_type_collects(const struct stats_type *type, int require_selected)
+{
+  return type->st_enabled && (!require_selected || type->st_selected);
+}
+
 void stats_runtime_collect_enabled_metrics(int require_selected)
 {
   size_t i = 0;
   struct stats_type *type;
 
+  /* Reset every type before any collect runs, so no collect sees another type half reset. */
+  while ((type = stats_type_for_each(&i)) != NULL)
+    if (stats_runtime_type_collects(type, require_selected))
+      stats_type_mark_not_updated(type);
+  i = 0;
   while ((type = stats_type_for_each(&i)) != NULL) {
-    if (!type->st_enabled)
-      continue;
-    if (require_selected && !type->st_selected)
+    if (!stats_runtime_type_collects(type, require_selected))
       continue;
     metric_profiler_collect_begin(type->st_name);
     (*type->st_collect)(type);
+    stats_type_prune_untouched(type);
+#ifdef DEBUG
+    if (stats_sentinel_debug_cycle_end != NULL)
+      stats_sentinel_debug_cycle_end(type, time(NULL));
+#endif
     metric_profiler_collect_end(type->st_name);
   }
+#ifdef DEBUG
+  if (stats_fault_inject_tick != NULL)
+    stats_fault_inject_tick();
+#endif
 }
 
 void stats_runtime_main_prepare_types(const stats_runtime_main_prepare_spec *spec)

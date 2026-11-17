@@ -21,6 +21,7 @@
 #include "dyn_lib_path.h"
 #include "nvidia_gpu_nvml.h"
 #include "nvidia_gpu_nvml_convert.h"
+#include "nvidia_gpu_dcgm_field.h"
 
 /* GPM metric -> dcgm_data_t ratio field (offset of a double) or PROF byte field. */
 enum nvml_gpm_dst { GPM_DST_RATIO, GPM_DST_BYTES };
@@ -29,25 +30,34 @@ struct nvml_gpm_map {
   unsigned int metric;
   enum nvml_gpm_dst kind;
   size_t offset;
+  const char *key;
 };
 
 static const struct nvml_gpm_map g_gpm_map[] = {
-    {NVML_GPM_METRIC_SM_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, sm_active)},
-    {NVML_GPM_METRIC_SM_OCCUPANCY, GPM_DST_RATIO, offsetof(dcgm_data_t, sm_occupancy)},
-    {NVML_GPM_METRIC_ANY_TENSOR_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, tensor_active)},
-    {NVML_GPM_METRIC_IMMA_TENSOR_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, tensor_imma_active)},
-    {NVML_GPM_METRIC_HMMA_TENSOR_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, tensor_hmma_active)},
-    {NVML_GPM_METRIC_DFMA_TENSOR_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, tensor_dfma_active)},
-    {NVML_GPM_METRIC_DRAM_BW_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, dram_active)},
-    {NVML_GPM_METRIC_FP64_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, fp64_active)},
-    {NVML_GPM_METRIC_FP32_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, fp32_active)},
-    {NVML_GPM_METRIC_FP16_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, fp16_active)},
-    {NVML_GPM_METRIC_PCIE_TX_PER_SEC, GPM_DST_BYTES, offsetof(dcgm_data_t, prof_pcie_tx_bytes)},
-    {NVML_GPM_METRIC_PCIE_RX_PER_SEC, GPM_DST_BYTES, offsetof(dcgm_data_t, prof_pcie_rx_bytes)},
+    {NVML_GPM_METRIC_SM_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, sm_active), "sm_active"},
+    {NVML_GPM_METRIC_SM_OCCUPANCY, GPM_DST_RATIO, offsetof(dcgm_data_t, sm_occupancy),
+     "sm_occupancy"},
+    {NVML_GPM_METRIC_ANY_TENSOR_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, tensor_active),
+     "tensor_active"},
+    {NVML_GPM_METRIC_IMMA_TENSOR_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, tensor_imma_active),
+     "tensor_imma_active"},
+    {NVML_GPM_METRIC_HMMA_TENSOR_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, tensor_hmma_active),
+     "tensor_hmma_active"},
+    {NVML_GPM_METRIC_DFMA_TENSOR_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, tensor_dfma_active),
+     "tensor_dfma_active"},
+    {NVML_GPM_METRIC_DRAM_BW_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, dram_active),
+     "gpu_dram_active"},
+    {NVML_GPM_METRIC_FP64_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, fp64_active), "fp64_active"},
+    {NVML_GPM_METRIC_FP32_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, fp32_active), "fp32_active"},
+    {NVML_GPM_METRIC_FP16_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, fp16_active), "fp16_active"},
+    {NVML_GPM_METRIC_PCIE_TX_PER_SEC, GPM_DST_BYTES, offsetof(dcgm_data_t, prof_pcie_tx_bytes),
+     "gpu_pcie_tx_bytes"},
+    {NVML_GPM_METRIC_PCIE_RX_PER_SEC, GPM_DST_BYTES, offsetof(dcgm_data_t, prof_pcie_rx_bytes),
+     "gpu_pcie_rx_bytes"},
     {NVML_GPM_METRIC_NVLINK_TOTAL_TX_PER_SEC, GPM_DST_BYTES,
-     offsetof(dcgm_data_t, prof_nvlink_tx_bytes)},
+     offsetof(dcgm_data_t, prof_nvlink_tx_bytes), "gpu_nvlink_tx_bytes"},
     {NVML_GPM_METRIC_NVLINK_TOTAL_RX_PER_SEC, GPM_DST_BYTES,
-     offsetof(dcgm_data_t, prof_nvlink_rx_bytes)},
+     offsetof(dcgm_data_t, prof_nvlink_rx_bytes), "gpu_nvlink_rx_bytes"},
 };
 #define NVML_GPM_NMAP (sizeof(g_gpm_map) / sizeof(g_gpm_map[0]))
 
@@ -270,26 +280,50 @@ static void nvml_fill_basic(nvidia_gpu_nvml_dev_t d, dcgm_data_t *row)
 
   if (g_api.clock_info(d, NVML_CLOCK_SM, &u) == 0)
     row->sm_clock = (int64_t)u;
+  else
+    nvidia_gpu_row_mark(row, "gpu_sm_clock", STATS_SENTINEL_READ_FAILED);
   if (g_api.power_usage(d, &u) == 0)
     row->power_usage = nvidia_gpu_nvml_mw_to_w(u);
+  else
+    nvidia_gpu_row_mark(row, "power_usage", STATS_SENTINEL_READ_FAILED);
   if (g_api.utilization(d, &util) == 0) {
     row->gpu_util = (int64_t)util.gpu;
     row->mem_util = (int64_t)util.memory;
+  } else {
+    nvidia_gpu_row_mark(row, "gpu_util", STATS_SENTINEL_READ_FAILED);
+    nvidia_gpu_row_mark(row, "gpu_mem_util", STATS_SENTINEL_READ_FAILED);
   }
-  if (g_api.temperature != NULL && g_api.temperature(d, NVML_TEMPERATURE_GPU, &u) == 0)
+  if (g_api.temperature == NULL)
+    nvidia_gpu_row_mark(row, "temperature", STATS_SENTINEL_NOT_PRESENT);
+  else if (g_api.temperature(d, NVML_TEMPERATURE_GPU, &u) == 0)
     row->temperature = (int64_t)u;
+  else
+    nvidia_gpu_row_mark(row, "temperature", STATS_SENTINEL_READ_FAILED);
   if (g_api.memory_info(d, &mem) == 0) {
     row->fb_total_mb = nvidia_gpu_nvml_bytes_to_mib(mem.total);
     row->fb_used_mb = nvidia_gpu_nvml_bytes_to_mib(mem.used);
     row->fb_free_mb = nvidia_gpu_nvml_bytes_to_mib(mem.free);
+  } else {
+    nvidia_gpu_row_mark(row, "gpu_mem_total_mb", STATS_SENTINEL_READ_FAILED);
+    nvidia_gpu_row_mark(row, "gpu_mem_used_mb", STATS_SENTINEL_READ_FAILED);
+    nvidia_gpu_row_mark(row, "gpu_mem_free_mb", STATS_SENTINEL_READ_FAILED);
   }
-  if (g_api.clocks_event_reasons != NULL && g_api.clocks_event_reasons(d, &reasons) == 0)
+  if (g_api.clocks_event_reasons == NULL)
+    nvidia_gpu_row_mark(row, "clocks_event_reasons", STATS_SENTINEL_NOT_PRESENT);
+  else if (g_api.clocks_event_reasons(d, &reasons) == 0)
     row->clocks_event_reasons = (int64_t)reasons;
-  if (g_api.pcie_replay_counter != NULL && g_api.pcie_replay_counter(d, &u) == 0)
+  else
+    nvidia_gpu_row_mark(row, "clocks_event_reasons", STATS_SENTINEL_READ_FAILED);
+  if (g_api.pcie_replay_counter == NULL)
+    nvidia_gpu_row_mark(row, "gpu_pcie_replay_counter", STATS_SENTINEL_NOT_PRESENT);
+  else if (g_api.pcie_replay_counter(d, &u) == 0)
     row->pcie_replay_counter = (int64_t)u;
+  else
+    nvidia_gpu_row_mark(row, "gpu_pcie_replay_counter", STATS_SENTINEL_READ_FAILED);
 }
 
-/* Metrics of one sample pair into row; per-metric failures leave that field 0. */
+/* Metrics of one sample pair into row; a failed metric marks its key READ_FAILED, a non-finite
+ * or out-of-range value INVALID_VALUE. */
 static void nvml_apply_metrics(dcgm_data_t *row)
 {
   unsigned int m;
@@ -297,13 +331,14 @@ static void nvml_apply_metrics(dcgm_data_t *row)
   for (m = 0; m < g_mg.numMetrics && m < NVML_GPM_NMAP; m++) {
     const struct nvml_gpm_map *map = &g_gpm_map[m];
     char *dst = (char *)row + map->offset;
+    double v = g_mg.metrics[m].value;
 
     if (g_mg.metrics[m].nvmlReturn != NVML_SUCCESS)
-      continue;
-    if (map->kind == GPM_DST_RATIO)
-      (void)nvidia_gpu_nvml_pct_to_ratio(g_mg.metrics[m].value, (double *)(void *)dst);
-    else
-      *(uint64_t *)(void *)dst = nvidia_gpu_nvml_mib_per_s_to_bytes(g_mg.metrics[m].value);
+      nvidia_gpu_row_mark(row, map->key, STATS_SENTINEL_READ_FAILED);
+    else if ((map->kind == GPM_DST_RATIO
+                  ? nvidia_gpu_nvml_pct_to_ratio(v, (double *)(void *)dst)
+                  : nvidia_gpu_nvml_mib_per_s_to_bytes(v, (uint64_t *)(void *)dst)) < 0)
+      nvidia_gpu_row_mark(row, map->key, STATS_SENTINEL_INVALID_VALUE);
   }
 }
 

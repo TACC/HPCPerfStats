@@ -36,6 +36,7 @@
 #include "monitor_options.h"
 #include "monitor_release_log.h"
 #include "stats_sink.h"
+#include "stats_text_format.h"
 #include "stats_runtime.h"
 #ifdef MONITOR_SHARED_NODE_MULTI_JID
 #include "job_shared_emit.h"
@@ -56,6 +57,7 @@ double sample_freq_slow = 600;
 double send_freq = 300;
 double buffer_hours = 6.0;
 int enable_slow_tier = 1;
+int emit_value_sentinels = 1;
 char *collection_profile = NULL;
 char *disable_types = NULL;
 char *intel_gpu_backend = NULL;
@@ -316,6 +318,7 @@ void monitor_daemon_finalize_runtime_settings(void)
   stats_runtime_daemon_set_type_controls(collection_profile, disable_types);
   dcgm_watch_policy_set_interval(sample_freq); /* before types prepare: start and SIGHUP */
   collect_tier_set_enabled(enable_slow_tier);
+  stats_format_set_value_sentinels(emit_value_sentinels);
   monitor_daemon_apply_dynamic_buffer_size_if_needed();
 }
 
@@ -426,6 +429,9 @@ static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_h
     stats_buffer_debug_shm_write_sample(sf, tier);
     stats_buffer_debug_shm_burst_commit(tier);
   }
+#ifdef DEBUG
+  stats_sentinel_debug_write_shm();
+#endif
   rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
   if (rc < 0) {
     g_ring_insert_fail_count++;
@@ -697,6 +703,7 @@ void monitor_daemon_hourly_status_cb(struct ev_loop *loop, ev_timer *w_, int rev
   unsigned long ring_c = 0, ib_c = 0, nv_c = 0, opa_c = 0;
   unsigned long d_ring = 0, d_ib = 0, d_nv = 0;
   unsigned long d_opa = 0;
+  char sentinels[512];
   static unsigned long prev_c, prev_q, prev_p;
   static unsigned long prev_ring, prev_ib, prev_nv, prev_opa;
   static int have_prev;
@@ -741,6 +748,8 @@ void monitor_daemon_hourly_status_cb(struct ev_loop *loop, ev_timer *w_, int rev
                    w->q_count, max_buffer_size, w->b_count, w->s_count, w->r_count,
                    file_mode_enabled, d_c, d_q, d_p, rmq_c, rmq_q, rmq_p, d_ring, d_ib, d_nv, d_opa,
                    ring_c, ib_c, nv_c, opa_c);
+  if (monitor_release_sentinel_summary(sentinels, sizeof(sentinels)) > 0)
+    monitor_log_info("hourly %s\n", sentinels);
 }
 
 void monitor_daemon_rotate_collect_flush(struct sf_ring_buffer *w)

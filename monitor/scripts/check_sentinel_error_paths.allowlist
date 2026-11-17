@@ -1,0 +1,6 @@
+# check_sentinel_error_paths.py allowlist: <file>: <if condition, whitespace collapsed>  # reason
+job_shared_emit.c: f == NULL  # cgroup lookup for a discovered PID that already exited; no metric is read
+job_shared_emit.c: fgets(line, (int)sizeof(line), f) == NULL  # cgroup lookup for a discovered PID; no metric is read
+likwid_pmc_adapter.c: perfmon_init(nr_threads, cpus) < 0  # begin-time init: failure disables host_cpu_hw, no row is emitted
+net.c: pscanf(flags_path, "%x", &flags) != 1  # interface enumeration (IFF_UP); a vanished interface gets no row
+proc.c: file == NULL  # /proc/<pid>/status gone: the process exited and its row is pruned (st_prune_untouched)

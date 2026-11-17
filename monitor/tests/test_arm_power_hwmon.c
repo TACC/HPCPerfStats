@@ -74,9 +74,18 @@ static void rm_root(const char *root)
   assert(system(cmd) == 0);
 }
 
+/* Watts of one meter, or 0 when it reads a sentinel. */
+static double read_w(struct arm_power_hwmon *h, int slot)
+{
+  double w = -1.0;
+
+  (void)arm_power_hwmon_read(h, slot, &w);
+  return w;
+}
+
 static double watts(struct arm_power_hwmon *h, int kind, int sock)
 {
-  return arm_power_hwmon_read_w(h, arm_power_hwmon_find(h, kind, sock));
+  return read_w(h, arm_power_hwmon_find(h, kind, sock));
 }
 
 static void test_parse_label(void)
@@ -136,7 +145,7 @@ static void test_gb200_el10_shuffled(void)
   assert(watts(&h, ARM_POWER_SYSIO, 1) == 6.2);
   /* No Module meter on GB200: never mapped from Grace (finding 22). */
   assert(arm_power_hwmon_find(&h, ARM_POWER_MODULE, 0) == -1);
-  assert(arm_power_hwmon_read_w(&h, -1) == 0.0);
+  assert(read_w(&h, -1) == 0.0);
   arm_power_hwmon_close(&h);
   assert(h.n == 0);
   rm_root(root);
@@ -202,15 +211,23 @@ static void test_missing_garbage_duplicate_and_empty(void)
   assert(arm_power_hwmon_find(&h, ARM_POWER_CPU, 0) == -1);
   slot = arm_power_hwmon_find(&h, ARM_POWER_SOCKET, 0);
   assert(slot >= 0);
-  assert(arm_power_hwmon_read_w(&h, slot) == 50.0 || arm_power_hwmon_read_w(&h, slot) == 99.0);
+  assert(read_w(&h, slot) == 50.0 || read_w(&h, slot) == 99.0);
   /* Value turns into garbage after open: one pread returns 0 W (one-shot warn). */
   snprintf(dir, sizeof(dir), "%s/class/hwmon/hwmon2", root);
   write_text(dir, "power1_average", "n/a\n");
   snprintf(dir, sizeof(dir), "%s/class/hwmon/hwmon3", root);
   write_text(dir, "power1_average", "n/a\n");
-  assert(arm_power_hwmon_read_w(&h, slot) == 0.0);
+  assert(read_w(&h, slot) == 0.0);
   assert(h.m[slot].read_warned == 1);
-  assert(arm_power_hwmon_read_w(&h, slot) == 0.0);
+  assert(read_w(&h, slot) == 0.0);
+  /* Value sentinels: garbage READ_FAILED, no meter NOT_PRESENT, never a published 0. */
+  {
+    double w = 7.0;
+
+    assert(arm_power_hwmon_read(&h, slot, &w) == STATS_SENTINEL_READ_FAILED && w == 0.0);
+    assert(arm_power_hwmon_read(&h, -1, &w) == STATS_SENTINEL_NOT_PRESENT);
+    assert(arm_power_hwmon_read(&h, slot, NULL) == STATS_SENTINEL_NOT_PRESENT);
+  }
   arm_power_hwmon_close(&h);
   rm_root(root);
 
@@ -220,7 +237,7 @@ static void test_missing_garbage_duplicate_and_empty(void)
   assert(arm_power_hwmon_open(&h, NULL) == 0);
   assert(arm_power_hwmon_open(NULL, root) == 0);
   assert(arm_power_hwmon_find(NULL, 0, 0) == -1);
-  assert(arm_power_hwmon_read_w(NULL, 0) == 0.0);
+  assert(read_w(NULL, 0) == 0.0);
   arm_power_hwmon_close(NULL);
   rm_root(root);
 }

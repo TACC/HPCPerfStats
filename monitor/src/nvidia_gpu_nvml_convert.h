@@ -16,8 +16,9 @@
 /* GPM percent (0..100) -> DCGM ratio (0..1); out unchanged and -1 when not finite / out of range
  * (beyond a 0.5 % rounding slack). */
 int nvidia_gpu_nvml_pct_to_ratio(double pct, double *out);
-/* GPM MiB/s -> DCGM PROF bytes/s (rounded); negative / non-finite -> 0. */
-uint64_t nvidia_gpu_nvml_mib_per_s_to_bytes(double mib_per_s);
+/* GPM MiB/s -> DCGM PROF bytes/s (rounded, saturating); -1 and out unchanged when negative or
+ * not finite. */
+int nvidia_gpu_nvml_mib_per_s_to_bytes(double mib_per_s, uint64_t *out);
 /* nvmlDeviceGetPowerUsage milliwatts -> watts. */
 double nvidia_gpu_nvml_mw_to_w(unsigned int mw);
 /* nvmlMemory_t bytes -> DCGM FB MiB (rounded down, like the driver's MiB view). */

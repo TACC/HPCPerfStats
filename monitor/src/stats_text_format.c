@@ -8,6 +8,24 @@
 
 #include "schema.h"
 #include "stats.h"
+#include "stats_sentinel.h"
+
+static int g_value_sentinels = 1;
+
+void stats_format_set_value_sentinels(int enabled)
+{
+  g_value_sentinels = enabled ? 1 : 0;
+}
+
+int stats_format_value_sentinels(void)
+{
+  return g_value_sentinels;
+}
+
+unsigned int stats_format_value_sentinel(const struct stats *stats, size_t k)
+{
+  return g_value_sentinels ? stats->s_val_state[k] : 0;
+}
 
 static void stats_format_append_type_flag(char **p, char *end, int is_control)
 {
@@ -89,6 +107,8 @@ void stats_format_emit_property_banner(stats_format_emit_fn emit, void *opaque, 
   emit(opaque, "%cuptime %llu\n", prop_char, (unsigned long long)uptime);
   if (capability_slug != NULL && capability_slug[0] != '\0')
     emit(opaque, "%cbuild %s\n", prop_char, capability_slug);
+  if (g_value_sentinels)
+    emit(opaque, "%csentinels %d\n", prop_char, STATS_SENTINEL_CATALOG_VERSION);
 }
 
 static void stats_format_emit_one_schema_entry(stats_format_emit_fn emit, void *opaque,
@@ -197,7 +217,10 @@ static int stats_format_append_values(char *buf, size_t cap, size_t used, struct
   for (k = 0; k < type->st_schema.sc_len; k++) {
     if (!stats_format_row_key_emitted(type, k, tier))
       continue;
-    n = snprintf(p, rem, " %llu", (unsigned long long)stats->s_val[k]);
+    unsigned int code = stats_format_value_sentinel(stats, k);
+
+    n = code != 0 ? snprintf(p, rem, " -%u", code)
+                  : snprintf(p, rem, " %llu", (unsigned long long)stats->s_val[k]);
     if (n < 0)
       return -1;
     if ((size_t)n >= rem)

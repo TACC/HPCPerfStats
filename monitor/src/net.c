@@ -106,7 +106,8 @@ static void net_iface_cache_rebuild(struct stats_type *type)
   sys_iter_for_each("/sys/class/net", net_iface_cache_each, NULL);
   if (started_us > 0) {
     elapsed_us = net_monotonic_us() - started_us;
-    if (elapsed_us > (long long)slow_warn_ms * 1000LL) {
+    if (STATS_FAULT("net_rebuild_slow", NULL, &errno) ||
+        elapsed_us > (long long)slow_warn_ms * 1000LL) {
       monitor_log_warn("net cache rebuild slow: elapsed_us=%lld ifaces=%zu; skip rebuild %ds\n",
                        elapsed_us, net_n_cached, skip_sec);
       net_rebuild_skip_until = time(NULL) + skip_sec;
@@ -134,8 +135,11 @@ static void net_collect(struct stats_type *type)
   net_ticks_since_rebuild++;
   if (net_n_cached == 0 || net_ticks_since_rebuild >= NET_IFACE_CACHE_REFRESH_INTERVAL) {
     time_t now = time(NULL);
-    if (net_n_cached != 0 && net_rebuild_skip_until > 0 && now > 0 && now < net_rebuild_skip_until)
+    if (net_n_cached != 0 && net_rebuild_skip_until > 0 && now > 0 &&
+        now < net_rebuild_skip_until) {
+      stats_type_set_missing_all(type, STATS_SENTINEL_BACKOFF);
       return;
+    }
     net_ticks_since_rebuild = 0;
     net_iface_cache_rebuild(type);
   }

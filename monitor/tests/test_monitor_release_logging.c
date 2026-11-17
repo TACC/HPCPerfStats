@@ -1,6 +1,7 @@
 /* Pure helpers: first-fail latch, named failure counters, stderr quiet (release logging). */
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "monitor_release_log.h"
@@ -109,6 +110,35 @@ static void test_stderr_quiet_begin_end(void)
   monitor_stderr_quiet_end(NULL, NULL);
 }
 
+/* Hourly "sentinels:" line: deltas since the last summary, non-zero codes only, catalog order. */
+static void test_sentinel_summary_counts_per_code(void)
+{
+  char line[256];
+  char tiny[12];
+
+  monitor_release_fail_reset_for_test();
+  assert(monitor_release_sentinel_summary(line, sizeof(line)) > 0);
+  assert(strcmp(line, "sentinels: none") == 0);
+
+  monitor_release_sentinel_note(3);
+  monitor_release_sentinel_note(3);
+  monitor_release_sentinel_note(10);
+  monitor_release_sentinel_note(0);
+  monitor_release_sentinel_note(99);
+  monitor_release_sentinel_summary(line, sizeof(line));
+  assert(strcmp(line, "sentinels: READ_FAILED=2 NOT_BUILT=1") == 0);
+
+  monitor_release_sentinel_note(5);
+  monitor_release_sentinel_summary(line, sizeof(line));
+  assert(strcmp(line, "sentinels: PMU_BUSY=1") == 0);
+
+  monitor_release_sentinel_note(1);
+  assert(monitor_release_sentinel_summary(tiny, sizeof(tiny)) > (int)sizeof(tiny));
+  assert(strlen(tiny) == sizeof(tiny) - 1);
+  assert(monitor_release_sentinel_summary(NULL, 4) == -1);
+  monitor_release_fail_reset_for_test();
+}
+
 int main(void)
 {
   test_should_emit_always_when_not_first_only();
@@ -117,6 +147,7 @@ int main(void)
   test_failure_deltas();
   test_named_fail_note_and_clear();
   test_stderr_quiet_begin_end();
+  test_sentinel_summary_counts_per_code();
   printf("test_monitor_release_logging passed\n");
   return 0;
 }

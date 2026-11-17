@@ -8,33 +8,36 @@
       X(file_use, "", "number of file handles in use"),                                            \
       X(inode_use, "", "number of inodes in use")
 
+/* Set `key` to alloc - free from the first two numbers of `path`, else READ_FAILED. */
+static void vfs_collect_in_use(struct stats *stats, const char *path, const char *key)
+{
+  unsigned long long alloc = 0, free_n = 0;
+
+  if (path_collect_list(path, &alloc, &free_n, NULL) == 2)
+    stats_set(stats, key, alloc - free_n);
+  else
+    stats_set_missing(stats, key, STATS_SENTINEL_READ_FAILED);
+}
+
 static void vfs_collect(struct stats_type *type)
 {
-  struct stats *stats = NULL;
-#define X(k, r...) k = 0
-  unsigned long long KEYS;
-#undef X
+  struct stats *stats = get_current_stats(type, NULL);
+  unsigned long long file_use = 0;
 
-  stats = get_current_stats(type, NULL);
   if (stats == NULL)
     return;
 
   /* dentry-state: nr_dentry nr_unused age_limit want_pages + 2 dummies. */
-  unsigned long long dentry_alloc = 0, dentry_free = 0;
-  if (path_collect_list("/proc/sys/fs/dentry-state", &dentry_alloc, &dentry_free, NULL) == 2)
-    dentry_use = dentry_alloc - dentry_free;
+  vfs_collect_in_use(stats, "/proc/sys/fs/dentry-state", "dentry_use");
 
   /* file-nr: allocated, free (always 0 since Linux 2.6, so allocated == used), max. */
-  path_collect_single("/proc/sys/fs/file-nr", &file_use);
+  if (path_collect_single("/proc/sys/fs/file-nr", &file_use) == 1)
+    stats_set(stats, "file_use", file_use);
+  else
+    stats_set_missing(stats, "file_use", STATS_SENTINEL_READ_FAILED);
 
   /* inode-state: nr_inodes nr_free_inodes preshrink + 4 dummies. */
-  unsigned long long inode_alloc = 0, inode_free = 0;
-  if (path_collect_list("/proc/sys/fs/inode-state", &inode_alloc, &inode_free, NULL) == 2)
-    inode_use = inode_alloc - inode_free;
-
-#define X(k, r...) stats_set(stats, #k, k)
-  KEYS;
-#undef X
+  vfs_collect_in_use(stats, "/proc/sys/fs/inode-state", "inode_use");
 }
 
 struct stats_type vfs_stats_type = {

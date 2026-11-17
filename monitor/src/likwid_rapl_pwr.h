@@ -43,6 +43,7 @@ int likwid_rapl_pwr_begin(int amd_path);
 
 int likwid_rapl_pwr_ready(void);
 
+/* 0 on success; powercap's -EACCES / -EPERM when energy_uj was denied, else -EIO. */
 int likwid_rapl_pwr_collect_socket_mj(int cpu_id, unsigned int socket_id,
                                       unsigned long long *pkg_mj, unsigned long long *core_mj,
                                       unsigned long long *dram_mj, int *has_pkg, int *has_core,

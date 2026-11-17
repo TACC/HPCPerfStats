@@ -1,4 +1,5 @@
 /* host_opa sysfs fallback - map hfi1 ports/N/counters (+ hw_counters) to KEYS. */
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -13,7 +14,7 @@ struct opa_sysfs_map_entry {
 
 /*
  * Classic IB-style filenames under ports/N/counters (Stampede3 OPA100).
- * Schema uses *_pkts not *_packets. Multicast files may be absent (skipped).
+ * Schema uses *_pkts not *_packets. Multicast files may be absent (NOT_PRESENT).
  * On Cornelis CN5000 NDR, these files often exist but read EINVAL; then
  * opa_sysfs_collect_port falls back to hw_counters (see opa_sysfs_hw_map).
  */
@@ -79,8 +80,11 @@ static int collect_from_map(struct stats *stats, const char *hca, int port, cons
   for (i = 0; table[i].sysfs_name != NULL; i++) {
     snprintf(path, sizeof(path), "%s/class/infiniband/%s/ports/%d/%s/%s", g_opa_sysfs_root, hca,
              port, subdir, table[i].sysfs_name);
-    if (pscanf(path, "%llu", &val) != 1)
+    errno = 0;
+    if (pscanf(path, "%llu", &val) != 1) {
+      stats_set_missing(stats, table[i].schema_key, stats_sentinel_for_errno(errno));
       continue;
+    }
     stats_set(stats, table[i].schema_key, val);
     n_ok++;
   }
@@ -103,4 +107,13 @@ int opa_sysfs_collect_port(struct stats *stats, const char *hca, int port)
     return 0;
   /* Classic miss (missing files or EINVAL stubs): CN5000 NDR hw_counters. */
   return opa_sysfs_collect_hw_counters(stats, hca, port);
+}
+
+int opa_sysfs_collect_port_without_mad(struct stats *stats, const char *hca, int port,
+                                       enum stats_sentinel mad_code)
+{
+  int rc = opa_sysfs_collect_port(stats, hca, port);
+
+  stats_set_missing_all(stats, mad_code);
+  return rc;
 }

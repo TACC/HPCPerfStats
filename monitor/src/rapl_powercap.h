@@ -29,7 +29,8 @@ int rapl_powercap_available(void);
 /*
  * Read cumulative energy for socket_id under powercap_root.
  * Sets has_* only for domains that were read successfully.
- * Returns 0 when at least one domain was read, -1 otherwise.
+ * Returns 0 when at least one domain was read; otherwise -EACCES / -EPERM when a domain's energy_uj
+ * was denied (root-only since the PLATYPUS mitigation), else -EIO.
  */
 int rapl_powercap_collect_socket_mj_under(const char *powercap_root, unsigned socket_id,
                                           unsigned long long *pkg_mj, unsigned long long *core_mj,

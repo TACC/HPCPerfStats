@@ -402,15 +402,16 @@ void intel_gpu_xpumcli_publish_sample(struct stats *stats, const struct intel_gp
     stats_set(stats, "sm_active", (unsigned long long)(s->eu_active + 0.5));
   if (s->has_mem_bw)
     stats_set(stats, "gpu_dram_active", (unsigned long long)(s->mem_bw + 0.5));
-  stats_set(stats, "gpu_pcie_rx_bytes", 0);
-  stats_set(stats, "gpu_pcie_tx_bytes", 0);
-  stats_set(stats, "gpu_xe_link_rx_bytes", 0);
-  stats_set(stats, "gpu_xe_link_tx_bytes", 0);
+  /* xpumcli dump has throughput only, not the cumulative counters of the libxpum backend. */
+  stats_set_missing(stats, "gpu_pcie_rx_bytes", STATS_SENTINEL_NOT_BUILT);
+  stats_set_missing(stats, "gpu_pcie_tx_bytes", STATS_SENTINEL_NOT_BUILT);
+  stats_set_missing(stats, "gpu_xe_link_rx_bytes", STATS_SENTINEL_NOT_BUILT);
+  stats_set_missing(stats, "gpu_xe_link_tx_bytes", STATS_SENTINEL_NOT_BUILT);
   if (s->has_throttle)
     stats_set(stats, "clocks_event_reasons", s->throttle_flags);
-  else
-    stats_set(stats, "clocks_event_reasons", 0);
   stats_set(stats, "gpu_count", (unsigned long long)gpu_count);
+  /* A metric this dump did not report. */
+  stats_set_missing_all(stats, STATS_SENTINEL_NOT_PRESENT);
 }
 
 int intel_gpu_xpumcli_collect(struct stats_type *type)

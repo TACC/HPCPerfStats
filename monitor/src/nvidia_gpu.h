@@ -49,6 +49,13 @@
       X(gpu_count, "",                                                                             \
         "Number of GPUs on this node (DCGM-visible; same value on each device row)")
 
+/* Keys of one GPU row that could not be read this collect, with their value sentinel. */
+#define NVIDIA_GPU_ROW_MISS_MAX 32
+struct nvidia_gpu_row_miss {
+  const char *key;
+  unsigned char code; /* enum stats_sentinel */
+};
+
 typedef struct dcgm_data {
   int64_t mem_util;
   int64_t fb_total_mb;
@@ -74,6 +81,8 @@ typedef struct dcgm_data {
   uint64_t prof_pcie_rx_bytes;
   uint64_t prof_nvlink_tx_bytes;
   uint64_t prof_nvlink_rx_bytes;
+  struct nvidia_gpu_row_miss miss[NVIDIA_GPU_ROW_MISS_MAX];
+  int nmiss;
 } dcgm_data_t;
 
 #endif

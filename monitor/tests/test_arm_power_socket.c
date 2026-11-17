@@ -9,6 +9,7 @@
 
 #include "arm_power_socket.h"
 #include "stats.h"
+#include "test_stats_missing_stub.h"
 #include "test_stats_stub.h"
 
 #define X SCHEMA_DEF
@@ -103,20 +104,23 @@ static void test_gb200_two_sockets(void)
 
   test_stats_stub_reset(&stub);
   test_stats_stub_bind(&stub);
+  test_stats_missing_reset();
   slots_for(&h, 0, slots);
   arm_power_socket_publish(&g_dummy_stats, &h, slots);
-  assert(stub.n == ARM_POWER_KIND_COUNT);
+  assert(stub.n == ARM_POWER_KIND_COUNT - 1);
   assert(key_val(&stub, "cpu_power_w") == 45ULL);
   assert(key_val(&stub, "socket_power_w") == 89ULL); /* 88.5 rounds half up */
   assert(key_val(&stub, "sysio_power_w") == 6ULL);
-  assert(key_val(&stub, "module_power_w") == 0ULL);
+  /* No Module meter on GB200: NOT_PRESENT, never a published 0. */
+  assert(!test_stats_stub_find(&stub, "module_power_w", NULL));
+  assert(test_stats_missing_code("module_power_w") == STATS_SENTINEL_NOT_PRESENT);
 
   test_stats_stub_reset(&stub);
   slots_for(&h, 1, slots);
   arm_power_socket_publish(&g_dummy_stats, &h, slots);
   assert(key_val(&stub, "cpu_power_w") == 45ULL);
   assert(key_val(&stub, "socket_power_w") == 91ULL);
-  assert(key_val(&stub, "module_power_w") == 0ULL);
+  assert(!test_stats_stub_find(&stub, "module_power_w", NULL));
   test_stats_stub_unbind();
 
   arm_power_hwmon_close(&h);
@@ -165,10 +169,12 @@ static void test_null_guards(void)
   arm_power_socket_publish(NULL, NULL, slots);
   arm_power_socket_publish(&g_dummy_stats, NULL, NULL);
   assert(stub.n == 0);
-  /* No meters at all: every key still present, all 0. */
+  /* No meters at all: every key NOT_PRESENT, no value. */
+  test_stats_missing_reset();
   arm_power_socket_publish(&g_dummy_stats, NULL, slots);
-  assert(stub.n == ARM_POWER_KIND_COUNT);
-  assert(key_val(&stub, "cpu_power_w") == 0ULL);
+  assert(stub.n == 0);
+  assert(test_stats_missing_code("cpu_power_w") == STATS_SENTINEL_NOT_PRESENT);
+  assert(test_stats_missing_code("module_power_w") == STATS_SENTINEL_NOT_PRESENT);
   test_stats_stub_unbind();
 }
 

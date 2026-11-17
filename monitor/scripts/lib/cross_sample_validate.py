@@ -1,11 +1,12 @@
 """Cross-sample timestamp cadence and monotonic E-counter checks."""
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from .daemon_conf import DaemonTiming, WaitBounds, is_debug_rpm_timing, wait_bounds_from_timing
 from .message_parse import schema_key_name, schema_token_is_event_counter
-from .payload_parse import metric_value_at_key, rows_by_type
+from .payload_parse import metric_sentinel_at_key, metric_value_at_key, rows_by_type
+from .sentinel_catalog import is_bridgeable, sentinel_slug
 from .shm_snapshot import SnapshotPair
 
 # Inclusive cadence bounds tolerate float formatting / timer jitter at the edge.
@@ -65,9 +66,24 @@ def _build_event_map(
         for row in type_rows:
             for key in event_keys:
                 val = metric_value_at_key(row.values, key_names, key)
+                if val is None:
+                    code = metric_sentinel_at_key(row.values, key_names, key)
+                    val = None if code is None else -code
                 if val is not None:
                     out[(type_name, row.dev, key)] = val
     return out
+
+
+def _bridge_unproven(manifest: dict, type_name: str) -> bool:
+    """host_cpu_hw on LIKWID without x86perf: its bridge is not proven, so a gap breaks the chain
+    and a bridge violation is informational. A manifest without a slug counts as LIKWID."""
+    tokens = set(str(manifest.get("capability_slug") or "likwid").split("-"))
+    return type_name == "host_cpu_hw" and "likwid" in tokens and "x86perf" not in tokens
+
+
+def _valid_only(event_map: dict[tuple[str, str, str], int]) -> dict[tuple[str, str, str], int]:
+    """Drop sentinel entries (stored as -code) so value comparisons see readings only."""
+    return {k: v for k, v in event_map.items() if v >= 0}
 
 
 def _check_cadence(
@@ -116,6 +132,7 @@ def _check_monotonic_pair(
     *,
     sample_freq: float,
     strict: bool,
+    sentinel_banner: int | None,
     warnings: list[str],
     errors: list[str],
     notes: list[str],
@@ -125,45 +142,98 @@ def _check_monotonic_pair(
 
     enable_slow = manifest.get("enable_slow_tier", True)
     require_tier, allowed = _pair_tier_args(pair, enable_slow)
-
-    map_a = _build_event_map(
-        pair.body_a,
-        manifest,
-        schema_by_type,
-        require_tier=require_tier,
-        allowed_tier=allowed,
-    )
-    map_b = _build_event_map(
-        pair.body_b,
-        manifest,
-        schema_by_type,
-        require_tier=require_tier,
-        allowed_tier=allowed,
-    )
+    maps = [
+        _build_event_map(
+            body,
+            manifest,
+            schema_by_type,
+            require_tier=require_tier,
+            allowed_tier=allowed,
+        )
+        for body in (pair.body_a, *pair.bodies_mid, pair.body_b)
+    ]
+    widths = _event_widths(manifest, schema_by_type)
     delta = pair.ts_b - pair.ts_a
-    common = set(map_a.keys()) & set(map_b.keys())
     checked = 0
+    sentinels: Counter[str] = Counter()
+    bridged = chain_breaks = 0
     # A counter that did not move is expected on an idle node (no I/O on a disk, no user time
     # on a core, idle GPU, unused NUMA node: c122-018 2026-11-09), so flats are a NOTE. A
     # decrease breaks the E contract and fails; liveness is the must-move canaries' job.
     flat: dict[tuple[str, str], list[tuple[str, str, str]]] = defaultdict(list)
-    widths = _event_widths(manifest, schema_by_type)
-    for key in sorted(common):
-        va, vb = map_a[key], map_b[key]
+    for key in sorted(set().union(*maps)):
         type_name, dev, metric = key
-        checked += 1
-        moved = _advance(va, vb, widths.get((type_name, metric), 64))
-        if moved < 0:
-            warn(f"{type_name}/{dev} {metric}: decreased {va} -> {vb} (possible restart?)")
-        elif moved == 0 and delta >= sample_freq:
+        width = widths.get((type_name, metric), 64)
+        last: int | None = None
+        gap: list[int] = []
+        compared = False
+        for event_map in maps:
+            val = event_map.get(key)
+            if val is None:
+                continue
+            if val < 0:
+                gap.append(-val)
+                sentinels[sentinel_slug(-val)] += 1
+                continue
+            if last is not None:
+                compared = True
+                moved = _advance(last, val, width)
+                bridge = bool(gap) and all(is_bridgeable(c) for c in gap)
+                if not gap and moved < 0:
+                    warn(f"{type_name}/{dev} {metric}: decreased {last} -> {val} (possible restart?)")
+                elif bridge and _bridge_unproven(manifest, type_name):
+                    chain_breaks += 1
+                    if moved < 0:
+                        notes.append(
+                            f"NOTE cross_sample bridge {type_name}/{dev} {metric}: {last} -> {val}"
+                            " across a gap (LIKWID host_cpu_hw bridge unproven, informational)"
+                        )
+                elif bridge:
+                    bridged += 1
+                    if moved < 0:
+                        errors.append(
+                            f"FAIL cross_sample bridge {type_name}/{dev} {metric}: {last} -> {val}"
+                            " decreased across a bridgeable gap ("
+                            + ",".join(sentinel_slug(c) for c in gap)
+                            + ")"
+                        )
+                elif gap:
+                    chain_breaks += 1
+            last, gap = val, []
+        checked += compared
+        first, final = maps[0].get(key), maps[-1].get(key)
+        if (
+            first is not None
+            and first == final
+            and first >= 0
+            and all(m.get(key, 0) >= 0 for m in maps)
+            and delta >= sample_freq
+        ):
             flat[(type_name, dev)].append(key)
 
+    if sentinel_banner is None:
+        if sentinels:
+            errors.append(
+                "FAIL cross_sample sentinel tokens without a $sentinels banner: "
+                + ", ".join(f"{slug}={n}" for slug, n in sorted(sentinels.items()))
+            )
+        else:
+            notes.append(f"SKIP cross_sample {pair.kind} sentinel bridge (emit_value_sentinels 0)")
+    elif sentinels:
+        notes.append(
+            f"NOTE sentinel cross_sample {pair.kind}: "
+            + " ".join(f"{slug}={n}" for slug, n in sorted(sentinels.items()))
+            + f" (bridged {bridged}, chain-break {chain_breaks})"
+        )
+
+    valid_a = _valid_only(maps[0])
+    valid_common = set(valid_a) & set(_valid_only(maps[-1]))
     flat_types: dict[str, int] = defaultdict(int)
     for (type_name, dev), keys in sorted(flat.items()):
         if (
             type_name == "host_cpu_hw"
-            and not any(map_a[k] for k in keys)
-            and len(keys) == sum(1 for k in common if k[:2] == (type_name, dev))
+            and not any(valid_a[k] for k in keys)
+            and len(keys) == sum(1 for k in valid_common if k[:2] == (type_name, dev))
         ):
             warn(f"{type_name}/{dev}: all E-keys flat at 0 (PMC inactive or not collecting)")
             continue
@@ -224,8 +294,8 @@ def _merge_event_maps(
             require_tier=require_tier,
             allowed_tier=allowed,
         )
-        map_a.update(a)
-        map_b.update(b)
+        map_a.update(_valid_only(a))
+        map_b.update(_valid_only(b))
     return map_a, map_b
 
 
@@ -288,7 +358,15 @@ def run_cross_sample_checks(
     active_conf_note: str,
     check_canaries: bool = False,
     touched_lustre: bool = False,
+    sentinel_banner: int | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
+    """Cadence and E-counter checks over the fast/full snapshot pairs.
+
+    ``sentinel_banner`` is the ``$sentinels`` version from the schema (None: the daemon runs with
+    emit_value_sentinels 0, so the sentinel bridge layer reports SKIP and any sentinel token
+    FAILs). Chain-breaking sentinel gaps skip the monotonic check; across a bridgeable gap the
+    next valid value must not be below the last one (mod 2^W), else FAIL.
+    """
     notes: list[str] = []
     warnings: list[str] = []
     errors: list[str] = []
@@ -312,6 +390,7 @@ def run_cross_sample_checks(
             schema_by_type,
             sample_freq=timing.sample_freq,
             strict=strict,
+            sentinel_banner=sentinel_banner,
             warnings=warnings,
             errors=errors,
             notes=notes,
@@ -328,6 +407,7 @@ def run_cross_sample_checks(
             schema_by_type,
             sample_freq=freq,
             strict=strict,
+            sentinel_banner=sentinel_banner,
             warnings=warnings,
             errors=errors,
             notes=notes,
@@ -351,4 +431,33 @@ def run_cross_sample_checks(
             notes=notes,
         )
 
+    return notes, warnings, errors
+
+
+def check_sentinel_bridges(
+    pair: SnapshotPair,
+    manifest: dict,
+    schema_by_type: dict[str, list[str]],
+    *,
+    sample_freq: float,
+    sentinel_banner: int | None,
+) -> tuple[list[str], list[str], list[str]]:
+    """The monotonic / bridge-validity layer alone over one capture series (no cadence check),
+    for callers that captured across a deliberate disturbance such as fault injection."""
+    notes: list[str] = []
+    warnings: list[str] = []
+    errors: list[str] = []
+    note = _check_monotonic_pair(
+        pair,
+        manifest,
+        schema_by_type,
+        sample_freq=sample_freq,
+        strict=False,
+        sentinel_banner=sentinel_banner,
+        warnings=warnings,
+        errors=errors,
+        notes=notes,
+    )
+    if note:
+        notes.append(note)
     return notes, warnings, errors

@@ -39,17 +39,29 @@ static void test_pct_to_ratio_bounds(void)
   assert(nvidia_gpu_nvml_pct_to_ratio(50.0, NULL) == -1);
 }
 
+static uint64_t mib_bytes(double mib_per_s)
+{
+  uint64_t out = 7;
+
+  assert(nvidia_gpu_nvml_mib_per_s_to_bytes(mib_per_s, &out) == 0);
+  return out;
+}
+
 static void test_mib_per_s_to_bytes(void)
 {
+  uint64_t out = 7;
+
   /* Idle PCIe TX 0.7541 MiB/s = 790,731 B/s (DCGM read 806,939 in a shifted 10 s window). */
-  assert(nvidia_gpu_nvml_mib_per_s_to_bytes(0.7541) == 790731ULL);
-  assert(nvidia_gpu_nvml_mib_per_s_to_bytes(1.0) == 1048576ULL);
+  assert(mib_bytes(0.7541) == 790731ULL);
+  assert(mib_bytes(1.0) == 1048576ULL);
   /* NvLink TX 2.53e5 MiB/s -> 2.653e11 B/s. */
-  assert(nvidia_gpu_nvml_mib_per_s_to_bytes(253000.0) == 265289728000ULL);
-  assert(nvidia_gpu_nvml_mib_per_s_to_bytes(0.0) == 0);
-  assert(nvidia_gpu_nvml_mib_per_s_to_bytes(-3.0) == 0);
-  assert(nvidia_gpu_nvml_mib_per_s_to_bytes(NAN) == 0);
-  assert(nvidia_gpu_nvml_mib_per_s_to_bytes(1e300) == UINT64_MAX);
+  assert(mib_bytes(253000.0) == 265289728000ULL);
+  assert(mib_bytes(0.0) == 0);
+  assert(mib_bytes(1e300) == UINT64_MAX);
+  /* Not a rate: -1, out untouched (the caller marks the key INVALID_VALUE). */
+  assert(nvidia_gpu_nvml_mib_per_s_to_bytes(-3.0, &out) == -1 && out == 7);
+  assert(nvidia_gpu_nvml_mib_per_s_to_bytes(NAN, &out) == -1 && out == 7);
+  assert(nvidia_gpu_nvml_mib_per_s_to_bytes(1.0, NULL) == -1);
 }
 
 static void test_power_and_memory(void)

@@ -36,6 +36,8 @@ void fake_sysfs_rm(const char *root);
 int fake_perf_open(const struct perf_event_attr *attr, int cpu);
 /** Fail opens with @p config on @p cpu (-1 = every CPU). */
 void fake_perf_fail(uint64_t config, int cpu);
+/** fake_perf_fail with a chosen errno (default ENOENT). */
+void fake_perf_fail_errno(uint64_t config, int cpu, int err);
 /** Writes one {value, enabled, running} sample for the fd returned by call @p idx. */
 void fake_perf_push(int idx, uint64_t value, uint64_t enabled, uint64_t running);
 /** Index of the open call with @p config on @p cpu (and @p type when non-zero), or -1. */

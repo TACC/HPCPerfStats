@@ -15,6 +15,11 @@
 #           CROSS_SAMPLE_CHECK (default 1; set 0 to disable),
 #           STRICT_LIVE_SPOT_CHECK / STRICT_PLAUSIBILITY / STRICT_CROSS_SAMPLE
 #             (default 1; set 0 to disable),
+#           STRICT_SENTINELS / SENTINEL_PROBE_CHECK / INDEPENDENT_READ_CHECK /
+#             CONSUMER_PARSE_CHECK (value sentinel layers; default 1; set 0 to disable),
+#           FAULT_INJECT (default 1; 0 = SKIP): after validation, restart the DEBUG daemon with
+#             debug_fault_inject for FAULT_INJECT_TICKS cycles and check codes, recovery,
+#             bridges and site coverage (scripts/fault_inject_verify.sh; release RPMs SKIP),
 #           GOLDEN_DIR=/path|auto or GOLDEN_CHECK=1 (opt-in golden diff),
 #           HPCPERFSTATS_CONF=/path/to/hpcperfstats.conf
 set -euo pipefail
@@ -290,6 +295,18 @@ main() {
       validate_args+=(--conf "${HPCPERFSTATS_CONF}")
     fi
   fi
+  if ! env_flag_on "${STRICT_SENTINELS:-1}"; then
+    validate_args+=(--no-strict-sentinels)
+  fi
+  if ! env_flag_on "${SENTINEL_PROBE_CHECK:-1}"; then
+    validate_args+=(--no-sentinel-probe-check)
+  fi
+  if ! env_flag_on "${INDEPENDENT_READ_CHECK:-1}"; then
+    validate_args+=(--no-independent-read)
+  fi
+  if env_flag_on "${CONSUMER_PARSE_CHECK:-1}"; then
+    validate_args+=(--consumer-parse-check)
+  fi
   # Golden is opt-in only (GOLDEN_DIR=/path|auto or GOLDEN_CHECK=1).
   if test "${GOLDEN_CHECK:-0}" = "1" || test -n "${GOLDEN_DIR:-}"; then
     resolved_golden="$(
@@ -344,6 +361,12 @@ PY
 
   rm -f "${validate_out}"
   echo "PASS: validate_shm_messages (slug=${slug})"
+
+  # Live fault injection (DEBUG RPMs; SKIP line otherwise): restarts the daemon twice.
+  CAPS="${caps}" MANIFEST="${expectations}" SHM_DIR="${shm_dir}" PY="${py}" \
+    FAULT_INJECT_SAMPLE_FREQ="${FULL}" \
+    FAULT_INJECT_REPORT="${report_dir}/fault_inject_rpm_debug_${slug}_$(date +%F).txt" \
+    "${monitor_dir}/scripts/fault_inject_verify.sh"
 }
 
 if test "$(basename "$0")" = "rpm_debug_shm_verify.sh"; then

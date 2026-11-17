@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -16,6 +18,10 @@ from lib.cross_sample_validate import run_cross_sample_checks  # noqa: E402
 from lib.daemon_conf import discover_active_conf, load_fixture_timing  # noqa: E402
 from lib.device_validate import validate_devices_in_payload  # noqa: E402
 from lib.golden_diff import compare_golden_shm  # noqa: E402
+from lib.independent_read import (  # noqa: E402
+    check_independent_reads,
+    read_independent_sources,
+)
 from lib.listend_contract import (  # noqa: E402
     listend_host_from_sample_header,
     validate_schema_listend_contract,
@@ -23,6 +29,13 @@ from lib.listend_contract import (  # noqa: E402
 from lib.live_spot_check import run_live_spot_checks  # noqa: E402
 from lib.message_parse import parse_schema_counts  # noqa: E402
 from lib.shm_snapshot import capture_pair, load_fixture_pair, save_snapshot_pair  # noqa: E402
+from lib.sentinel_validate import (  # noqa: E402
+    check_allowed_sentinels,
+    check_not_present_probes,
+    check_persistent_not_updated,
+    check_sentinel_banner,
+    load_provenance,
+)
 from lib.row_validate import (  # noqa: E402
     validate_sample_payload,
     validate_schema_tail_rows,
@@ -219,6 +232,30 @@ def validate_sample_hosts(manifest: dict, bodies: dict[str, str], errors: list[s
             errors.append(f"FAIL {kind}: host {host!r} != manifest {want!r}")
 
 
+def _run_consumer_parse(
+    schema_body: str, pair, report: Path | None
+) -> tuple[list[str], list[str]]:
+    """Consumer-parse E2E: the schema payload plus the pair's captures through the consumer's
+    parser (repo .venv). SKIP when the .venv or the consumer is absent."""
+    py = MONITOR.parents[1] / ".venv" / "bin" / "python3"
+    if not py.is_file():
+        return [f"SKIP consumer_parse: no repo .venv ({py})"], []
+    with tempfile.TemporaryDirectory() as td:
+        files = []
+        for i, body in enumerate((schema_body, pair.body_a, *pair.bodies_mid, pair.body_b)):
+            files.append(Path(td) / f"p{i}")
+            files[-1].write_text(body, encoding="utf-8")
+        cmd = [str(py), str(MONITOR / "scripts" / "consumer_parse_check.py"), "--schema", str(files[0])]
+        cmd += [str(f) for f in files[1:]]
+        if report is not None:
+            cmd += ["--report", str(report)]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    if proc.returncode == 0 or proc.returncode == 77:
+        return lines, []
+    return [], lines or [f"FAIL consumer_parse: exit {proc.returncode}: {proc.stderr.strip()[-300:]}"]
+
+
 def _run_cross_sample_validation(
     args,
     *,
@@ -228,6 +265,8 @@ def _run_cross_sample_validation(
     is_fixture: bool,
     enable_slow: bool,
     full_body: str | None,
+    sentinel_banner: int | None,
+    schema_body: str | None,
 ) -> tuple[list[str], list[str], list[str], str | None]:
     notes: list[str] = []
     warnings: list[str] = []
@@ -237,6 +276,7 @@ def _run_cross_sample_validation(
     full_pair = None
     timing = None
     conf_note = ""
+    live_reads: dict[str, tuple[float, dict]] = {}
 
     if args.cross_sample_fixture_dir is not None:
         fixture_dir = args.cross_sample_fixture_dir
@@ -273,6 +313,21 @@ def _run_cross_sample_validation(
 
         use_stimulus = not getattr(args, "no_cross_sample_stimulus", False)
         touched_lustre = False
+
+        def independent(kind: str):
+            if args.no_independent_read:
+                return None
+
+            def read_live(body: str) -> None:
+                live_reads[kind] = read_independent_sources(
+                    schema_by_type,
+                    body,
+                    require_tier=enable_slow,
+                    allowed_tier=f"@{kind}" if enable_slow else None,
+                )
+
+            return read_live
+
         try:
             if use_stimulus:
                 with cross_sample_stimulus() as stim:
@@ -281,22 +336,30 @@ def _run_cross_sample_validation(
                         + ("+lustre" if stim.touched_lustre else "")
                     )
                     if enable_slow:
-                        fast_pair = capture_pair(shm_dir, "fast", timing=timing)
+                        fast_pair = capture_pair(
+                            shm_dir, "fast", timing=timing, between=independent("fast")
+                        )
                         if args.cross_sample_save_dir:
                             save_snapshot_pair(fast_pair, args.cross_sample_save_dir)
                     if args.cross_sample_wait_full or not enable_slow:
-                        full_pair = capture_pair(shm_dir, "full", timing=timing)
+                        full_pair = capture_pair(
+                            shm_dir, "full", timing=timing, between=independent("full")
+                        )
                         if args.cross_sample_save_dir:
                             save_snapshot_pair(full_pair, args.cross_sample_save_dir)
                     touched_lustre = stim.touched_lustre
             else:
                 notes.append("NOTE cross_sample stimulus: disabled (--no-cross-sample-stimulus)")
                 if enable_slow:
-                    fast_pair = capture_pair(shm_dir, "fast", timing=timing)
+                    fast_pair = capture_pair(
+                        shm_dir, "fast", timing=timing, between=independent("fast")
+                    )
                     if args.cross_sample_save_dir:
                         save_snapshot_pair(fast_pair, args.cross_sample_save_dir)
                 if args.cross_sample_wait_full or not enable_slow:
-                    full_pair = capture_pair(shm_dir, "full", timing=timing)
+                    full_pair = capture_pair(
+                        shm_dir, "full", timing=timing, between=independent("full")
+                    )
                     if args.cross_sample_save_dir:
                         save_snapshot_pair(full_pair, args.cross_sample_save_dir)
         except (OSError, ValueError, TimeoutError) as exc:
@@ -316,10 +379,52 @@ def _run_cross_sample_validation(
         active_conf_note=conf_note,
         check_canaries=check_canaries,
         touched_lustre=touched_lustre,
+        sentinel_banner=sentinel_banner,
     )
     notes.extend(cs_notes)
     warnings.extend(cs_warn)
     errors.extend(cs_err)
+
+    provenance = load_provenance(args.provenance or shm_dir / "sentinels")
+    for pair in (fast_pair, full_pair):
+        if pair is None or sentinel_banner is None:
+            continue
+        persistent = check_persistent_not_updated(
+            [pair.body_a, *pair.bodies_mid, pair.body_b],
+            schema_by_type,
+            require_tier=enable_slow,
+            allowed_tier=f"@{pair.kind}" if enable_slow else None,
+            provenance=provenance,
+        )
+        errors.extend(persistent)
+        if not persistent:
+            notes.append(f"PASS sentinel persistent NOT_UPDATED ({pair.kind})")
+
+    for pair in (fast_pair, full_pair):
+        if pair is None or pair.kind not in live_reads:
+            continue
+        t_read, live = live_reads[pair.kind]
+        ir_notes, ir_err = check_independent_reads(
+            schema_by_type,
+            pair.body_a,
+            pair.body_b,
+            pair.ts_b,
+            t_read,
+            live,
+            require_tier=enable_slow,
+            allowed_tier=f"@{pair.kind}" if enable_slow else None,
+        )
+        notes.extend(ir_notes)
+        errors.extend(ir_err)
+
+    consumer_pair = full_pair or fast_pair
+    if args.consumer_parse_check and schema_body and consumer_pair is not None:
+        report = None
+        if args.report is not None:
+            report = args.report.with_name(args.report.stem + "_consumer_parse.txt")
+        cp_notes, cp_err = _run_consumer_parse(schema_body, consumer_pair, report)
+        notes.extend(cp_notes)
+        errors.extend(cp_err)
 
     updated_full = full_body
     if full_pair is not None:
@@ -424,6 +529,32 @@ def main() -> int:
         "--cross-sample-wait-full",
         action="store_true",
         help="Also wait for full-tier timestamp advance (slow-tier cadence)",
+    )
+    p.add_argument(
+        "--no-strict-sentinels",
+        action="store_true",
+        help="Sentinel outside the manifest allowed_sentinels is a WARN, not a FAIL",
+    )
+    p.add_argument(
+        "--no-sentinel-probe-check",
+        action="store_true",
+        help="Skip the NOT_PRESENT vs host probe (/proc/vmstat, IB sysfs) layer",
+    )
+    p.add_argument(
+        "--provenance",
+        type=Path,
+        default=None,
+        help="DEBUG sentinels provenance file (default: <shm-dir>/sentinels when present)",
+    )
+    p.add_argument(
+        "--consumer-parse-check",
+        action="store_true",
+        help="Feed the schema + cross-sample captures through the consumer parser (repo .venv)",
+    )
+    p.add_argument(
+        "--no-independent-read",
+        action="store_true",
+        help="Skip the live /proc + sysfs read between the two cross-sample captures",
     )
     p.add_argument(
         "--cross-sample-fixture-dir",
@@ -548,6 +679,35 @@ def main() -> int:
         sample_bodies["full"] = full_body
     validate_sample_hosts(manifest, sample_bodies, errors)
 
+    sentinel_banner = None
+    if not errors:
+        s_notes, s_warn, s_err, sentinel_banner = check_sentinel_banner(
+            schema_body,
+            {
+                kind: (body, enable_slow, f"@{kind}" if enable_slow else None)
+                for kind, body in sample_bodies.items()
+            },
+            schema_by_type,
+        )
+        notes.extend(s_notes)
+        warnings.extend(s_warn)
+        errors.extend(s_err)
+    if not errors and sentinel_banner is not None:
+        layer_bodies = {
+            kind: (body, enable_slow, f"@{kind}" if enable_slow else None)
+            for kind, body in sample_bodies.items()
+        }
+        a_notes, a_warn, a_err = check_allowed_sentinels(
+            manifest, layer_bodies, schema_by_type, strict=not args.no_strict_sentinels
+        )
+        notes.extend(a_notes)
+        warnings.extend(a_warn)
+        errors.extend(a_err)
+        if not is_fixture and not args.no_sentinel_probe_check:
+            p_notes, p_err = check_not_present_probes(layer_bodies, schema_by_type)
+            notes.extend(p_notes)
+            errors.extend(p_err)
+
     if not errors:
         papi_notes, papi_err = check_papi_schema_contract(manifest, caps=caps)
         notes.extend(papi_notes)
@@ -576,6 +736,8 @@ def main() -> int:
             is_fixture=is_fixture,
             enable_slow=enable_slow,
             full_body=full_body,
+            sentinel_banner=sentinel_banner,
+            schema_body=schema_body,
         )
         notes.extend(cs_notes)
         warnings.extend(cs_warn)

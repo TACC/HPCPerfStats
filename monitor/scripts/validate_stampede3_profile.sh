@@ -187,6 +187,18 @@ main() {
       validate_args+=(--conf "${HPCPERFSTATS_CONF}")
     fi
   fi
+  if ! env_flag_on "${STRICT_SENTINELS:-1}"; then
+    validate_args+=(--no-strict-sentinels)
+  fi
+  if ! env_flag_on "${SENTINEL_PROBE_CHECK:-1}"; then
+    validate_args+=(--no-sentinel-probe-check)
+  fi
+  if ! env_flag_on "${INDEPENDENT_READ_CHECK:-1}"; then
+    validate_args+=(--no-independent-read)
+  fi
+  if env_flag_on "${CONSUMER_PARSE_CHECK:-1}"; then
+    validate_args+=(--consumer-parse-check)
+  fi
   if test "${GOLDEN_CHECK:-0}" = "1" || test -n "${GOLDEN_DIR:-}"; then
     resolved_golden="$(
       MONITOR_DIR="${monitor_dir}" SLUG="${slug}" PROFILE="${profile}" \

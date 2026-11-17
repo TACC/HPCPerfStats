@@ -22,6 +22,7 @@ from lib.message_parse import (  # noqa: E402
     schema_key_name,
 )
 from lib.payload_parse import observed_devices_from_shm  # noqa: E402
+from lib.sentinel_validate import allowed_sentinels  # noqa: E402
 from lib.tacc_system_profiles import (  # noqa: E402
     expectations_basename,
     resolve_system,
@@ -71,6 +72,7 @@ def build_manifest(
                 entry["devices"] = devices
             types[type_name] = entry
 
+    allowed, expect_not_built = allowed_sentinels(slug, types)
     doc: dict = {
         "capability_slug": slug,
         "compile_capabilities": capabilities,
@@ -78,6 +80,8 @@ def build_manifest(
         "program_version": capabilities.get("package_version", "unknown"),
         "enable_slow_tier": enable_slow_tier,
         "types": types,
+        "allowed_sentinels": allowed,
+        "expect_not_built": expect_not_built,
     }
     if profile:
         tacc_system = resolve_system(profile, system)

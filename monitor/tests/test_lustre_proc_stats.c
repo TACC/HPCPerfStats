@@ -32,6 +32,20 @@ static void test_parse_modern_samples(void)
   assert(sum == 0ULL);
 }
 
+/* Header lines are not counters: "snapshot_time <epoch> secs.nsecs" once parsed as count
+ * <epoch> (sscanf counts the %llu before failing on the "samples" literal), which mdc/osc
+ * added to reqs on every tick. */
+static void test_parse_rejects_header_lines(void)
+{
+  unsigned long long count = 7;
+  unsigned long long sum = 7;
+
+  assert(lustre_parse_samples_count("1700000000.123456789 secs.nsecs", &count, &sum) == 0);
+  assert(lustre_parse_samples_count("1.0 secs.usecs", &count, &sum) == 0);
+  assert(lustre_parse_samples_count("12 sample", &count, &sum) == 0);
+  assert(count == 7ULL && sum == 7ULL);
+}
+
 static void test_parse_kv(void)
 {
   unsigned long long v = 0;
@@ -96,6 +110,7 @@ int main(void)
 {
   test_parse_classic_samples();
   test_parse_modern_samples();
+  test_parse_rejects_header_lines();
   test_parse_kv();
   test_fopen_prefer_modern();
   printf("test_lustre_proc_stats passed\n");

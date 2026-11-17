@@ -75,6 +75,16 @@ static int intel_gpu_lookup_mem_total_mb(xpum_device_id_t id, unsigned long long
   return -1;
 }
 
+/* Publish one realtime metric (scaled, rounded), or NOT_PRESENT when XPUM did not return it. */
+static void intel_gpu_publish_rt(struct stats *stats, const char *key,
+                                 const xpum_device_realtime_metric_t *m)
+{
+  if (m != NULL)
+    stats_set(stats, key, (unsigned long long)(intel_gpu_scaled_u64(m->value, m->scale) + 0.5));
+  else
+    stats_set_missing(stats, key, STATS_SENTINEL_NOT_PRESENT);
+}
+
 static void intel_gpu_publish_from_rt(struct stats *stats,
                                       const xpum_device_realtime_metrics_t *row,
                                       unsigned long long mem_total_mb, int gpu_count)
@@ -86,16 +96,12 @@ static void intel_gpu_publish_from_rt(struct stats *stats,
   if (stats == NULL || row == NULL)
     return;
 
-  m = intel_gpu_find_rt(row, XPUM_STATS_GPU_UTILIZATION);
-  if (m != NULL)
-    stats_set(stats, "gpu_util",
-              (unsigned long long)(intel_gpu_scaled_u64(m->value, m->scale) + 0.5));
+  intel_gpu_publish_rt(stats, "gpu_util", intel_gpu_find_rt(row, XPUM_STATS_GPU_UTILIZATION));
 
   m = intel_gpu_find_rt(row, XPUM_STATS_MEMORY_UTILIZATION);
-  if (m != NULL) {
+  if (m != NULL)
     util = intel_gpu_scaled_u64(m->value, m->scale);
-    stats_set(stats, "gpu_mem_util", (unsigned long long)(util + 0.5));
-  }
+  intel_gpu_publish_rt(stats, "gpu_mem_util", m);
 
   m = intel_gpu_find_rt(row, XPUM_STATS_MEMORY_USED);
   if (m != NULL)
@@ -105,46 +111,23 @@ static void intel_gpu_publish_from_rt(struct stats *stats,
     mem_total_mb = (unsigned long long)((used_bytes / (util / 100.0)) / (1024.0 * 1024.0) + 0.5);
   stats_set(stats, "gpu_mem_total_mb", mem_total_mb);
 
-  m = intel_gpu_find_rt(row, XPUM_STATS_POWER);
-  if (m != NULL)
-    stats_set(stats, "power_usage",
-              (unsigned long long)(intel_gpu_scaled_u64(m->value, m->scale) + 0.5));
+  intel_gpu_publish_rt(stats, "power_usage", intel_gpu_find_rt(row, XPUM_STATS_POWER));
 
   m = intel_gpu_find_rt(row, XPUM_STATS_GPU_CORE_TEMPERATURE);
   if (m == NULL)
     m = intel_gpu_find_rt(row, XPUM_STATS_MEMORY_TEMPERATURE);
-  if (m != NULL)
-    stats_set(stats, "temperature",
-              (unsigned long long)(intel_gpu_scaled_u64(m->value, m->scale) + 0.5));
+  intel_gpu_publish_rt(stats, "temperature", m);
 
-  m = intel_gpu_find_rt(row, XPUM_STATS_GPU_FREQUENCY);
-  if (m != NULL)
-    stats_set(stats, "gpu_sm_clock",
-              (unsigned long long)(intel_gpu_scaled_u64(m->value, m->scale) + 0.5));
+  intel_gpu_publish_rt(stats, "gpu_sm_clock", intel_gpu_find_rt(row, XPUM_STATS_GPU_FREQUENCY));
 
-  m = intel_gpu_find_rt(row, XPUM_STATS_EU_ACTIVE);
-  if (m != NULL)
-    stats_set(stats, "sm_active",
-              (unsigned long long)(intel_gpu_scaled_u64(m->value, m->scale) + 0.5));
+  intel_gpu_publish_rt(stats, "sm_active", intel_gpu_find_rt(row, XPUM_STATS_EU_ACTIVE));
 
-  m = intel_gpu_find_rt(row, XPUM_STATS_MEMORY_BANDWIDTH);
-  if (m != NULL)
-    stats_set(stats, "gpu_dram_active",
-              (unsigned long long)(intel_gpu_scaled_u64(m->value, m->scale) + 0.5));
+  intel_gpu_publish_rt(stats, "gpu_dram_active",
+                       intel_gpu_find_rt(row, XPUM_STATS_MEMORY_BANDWIDTH));
 
-  m = intel_gpu_find_rt(row, XPUM_STATS_PCIE_READ);
-  if (m != NULL)
-    stats_set(stats, "gpu_pcie_rx_bytes",
-              (unsigned long long)(intel_gpu_scaled_u64(m->value, m->scale) + 0.5));
-  else
-    stats_set(stats, "gpu_pcie_rx_bytes", 0);
+  intel_gpu_publish_rt(stats, "gpu_pcie_rx_bytes", intel_gpu_find_rt(row, XPUM_STATS_PCIE_READ));
 
-  m = intel_gpu_find_rt(row, XPUM_STATS_PCIE_WRITE);
-  if (m != NULL)
-    stats_set(stats, "gpu_pcie_tx_bytes",
-              (unsigned long long)(intel_gpu_scaled_u64(m->value, m->scale) + 0.5));
-  else
-    stats_set(stats, "gpu_pcie_tx_bytes", 0);
+  intel_gpu_publish_rt(stats, "gpu_pcie_tx_bytes", intel_gpu_find_rt(row, XPUM_STATS_PCIE_WRITE));
 
   m = intel_gpu_find_rt(row, XPUM_STATS_FREQUENCY_THROTTLE_REASON_GPU);
   if (m == NULL)
@@ -152,7 +135,7 @@ static void intel_gpu_publish_from_rt(struct stats *stats,
   if (m != NULL)
     stats_set(stats, "clocks_event_reasons", (unsigned long long)m->value);
   else
-    stats_set(stats, "clocks_event_reasons", 0);
+    stats_set_missing(stats, "clocks_event_reasons", STATS_SENTINEL_NOT_PRESENT);
 
   stats_set(stats, "gpu_count", (unsigned long long)gpu_count);
 }
@@ -170,8 +153,8 @@ static void intel_gpu_publish_xe_link(struct stats *stats, xpum_device_id_t id)
   if (stats == NULL)
     return;
   if (xpum_gpu_dyn_xpumGetFabricThroughputStats(id, fabric, &count, &begin, &end, 0) != XPUM_OK) {
-    stats_set(stats, "gpu_xe_link_rx_bytes", 0);
-    stats_set(stats, "gpu_xe_link_tx_bytes", 0);
+    stats_set_missing(stats, "gpu_xe_link_rx_bytes", STATS_SENTINEL_READ_FAILED);
+    stats_set_missing(stats, "gpu_xe_link_tx_bytes", STATS_SENTINEL_READ_FAILED);
     return;
   }
   for (i = 0; i < count; i++) {

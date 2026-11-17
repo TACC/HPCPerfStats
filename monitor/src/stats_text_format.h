@@ -22,6 +22,14 @@ enum stats_row_tier {
   STATS_ROW_FULL = 2,
 };
 
+/* Config `emit_value_sentinels` (default 1). At 0 every row prints s_val
+ * unchanged and the banner has no `$sentinels` line. */
+void stats_format_set_value_sentinels(int enabled);
+int stats_format_value_sentinels(void);
+
+/* Code a row prints as "-<code>" for schema index `k`, or 0 to print s_val[k]. */
+unsigned int stats_format_value_sentinel(const struct stats *stats, size_t k);
+
 size_t stats_format_schema_entry_suffix(char *buf, size_t cap, struct schema_entry *se);
 
 void stats_format_emit_property_banner(stats_format_emit_fn emit, void *opaque, int prop_char,

@@ -28,6 +28,7 @@ double sample_freq_slow = 600;
 double send_freq = 300;
 double buffer_hours = 6.0;
 int enable_slow_tier = 1;
+int emit_value_sentinels = 1;
 char *collection_profile = NULL;
 char *disable_types = NULL;
 char *intel_gpu_backend = NULL;
@@ -52,6 +53,7 @@ static void reset_defaults(void)
   port = (char *)monitor_cli_lit_port;
   max_buffer_size = 0;
   enable_slow_tier = 1;
+  emit_value_sentinels = 1;
   sample_freq = 30;
 }
 
@@ -92,6 +94,12 @@ static void test_empty_value_lines(void)
   reset_defaults();
   monitor_options_apply_daemon_conf_kv("enable_slow_tier", "");
   assert(enable_slow_tier == 0);
+
+  reset_defaults();
+  monitor_options_apply_daemon_conf_kv("emit_value_sentinels", "0");
+  assert(emit_value_sentinels == 0);
+  monitor_options_apply_daemon_conf_kv("emit_value_sentinels", "1");
+  assert(emit_value_sentinels == 1);
 
   reset_defaults();
   monitor_options_apply_daemon_conf_kv("sample_freq", "");

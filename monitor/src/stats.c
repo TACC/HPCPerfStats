@@ -118,7 +118,10 @@ static struct stats *stats_create(struct stats_type *type, const char *dev)
 {
   struct stats *stats = NULL;
   unsigned long long *val = NULL;
-  unsigned char *present = NULL;
+  unsigned char *state = NULL;
+#ifdef DEBUG
+  struct stats_sentinel_prov *prov = NULL;
+#endif
   size_t dev_len;
 
   if (type == NULL || dev == NULL)
@@ -133,23 +136,37 @@ static struct stats *stats_create(struct stats_type *type, const char *dev)
   if (val == NULL && type->st_schema.sc_len != 0)
     goto err;
 
-  present = (unsigned char *)calloc(type->st_schema.sc_len, sizeof(*present));
-  if (present == NULL && type->st_schema.sc_len != 0)
+  /* A key no collector has set yet must not print the calloc 0 as a reading. */
+  state = (unsigned char *)malloc(type->st_schema.sc_len);
+  if (state == NULL && type->st_schema.sc_len != 0)
     goto err;
+  if (state != NULL)
+    memset(state, STATS_SENTINEL_NOT_UPDATED, type->st_schema.sc_len);
+#ifdef DEBUG
+  prov = (struct stats_sentinel_prov *)calloc(type->st_schema.sc_len + 1, sizeof(*prov));
+  if (prov == NULL)
+    goto err;
+#endif
 
   memset(stats, 0, sizeof(*stats));
   stats->s_type = type;
   stats->s_val = val;
-  stats->s_val_present = present;
+  stats->s_val_state = state;
+#ifdef DEBUG
+  stats->s_val_prov = prov;
+#endif
   if (stats_copy_device_name(stats, dev) < 0)
     goto err;
 
   return stats;
 
 err:
+#ifdef DEBUG
+  free(prov);
+#endif
   free(stats);
   free(val);
-  free(present);
+  free(state);
   return NULL;
 }
 
@@ -158,7 +175,10 @@ static void stats_destroy(struct stats *stats)
   if (stats == NULL)
     return;
   free(stats->s_val);
-  free(stats->s_val_present);
+  free(stats->s_val_state);
+#ifdef DEBUG
+  free(stats->s_val_prov);
+#endif
   free(stats);
 }
 
@@ -208,58 +228,122 @@ struct stats *get_current_stats(struct stats_type *type, const char *dev)
   return stats;
 }
 
-void stats_set(struct stats *stats, const char *key, unsigned long long val)
+/* Schema index of `key` when it may be stored in the current collect phase, else -1. */
+static int stats_active_slot(struct stats *stats, const char *key)
+{
+  int i;
+
+  if (stats == NULL || key == NULL)
+    return -1;
+  i = schema_ref(&stats->s_type->st_schema, key);
+  TRACE("%s %s %s %d\n", stats->s_type->st_name, stats->s_dev, key, i);
+  return (i >= 0 && collect_tier_key_active(stats->s_type, i)) ? i : -1;
+}
+
+static void stats_store(struct stats *stats, const char *key, unsigned long long val, int add)
 {
 #ifdef MONITOR_METRIC_PROFILER
   unsigned long long wall_begin_ns = stats_now_ns(CLOCK_MONOTONIC);
   unsigned long long cpu_begin_ns = stats_now_ns(CLOCK_THREAD_CPUTIME_ID);
 #endif
-  int i;
+  int i = stats_active_slot(stats, key);
 
-  if (stats == NULL || key == NULL)
+  if (i < 0)
     return;
-
-  i = schema_ref(&stats->s_type->st_schema, key);
-
-  TRACE("%s %s %s %llu %d\n", stats->s_type->st_name, stats->s_dev, key, (unsigned long long)val,
-        i);
-
-  if (i >= 0) {
-    if (!collect_tier_key_active(stats->s_type, i))
-      return;
-    stats->s_val[i] = val;
-    if (stats->s_val_present != NULL)
-      stats->s_val_present[i] = 1;
-  }
+  stats->s_val[i] = add ? stats->s_val[i] + val : val;
+  stats->s_val_state[i] = STATS_SENTINEL_OK;
 #ifdef MONITOR_METRIC_PROFILER
   stats_record_metric_profile(stats, key, wall_begin_ns, cpu_begin_ns);
 #endif
 }
 
+void stats_set(struct stats *stats, const char *key, unsigned long long val)
+{
+  stats_store(stats, key, val, 0);
+}
+
 void stats_inc(struct stats *stats, const char *key, unsigned long long val)
 {
-#ifdef MONITOR_METRIC_PROFILER
-  unsigned long long wall_begin_ns = stats_now_ns(CLOCK_MONOTONIC);
-  unsigned long long cpu_begin_ns = stats_now_ns(CLOCK_THREAD_CPUTIME_ID);
-#endif
-  int i;
+  stats_store(stats, key, val, 1);
+}
 
-  if (stats == NULL || key == NULL)
+void stats_accumulate(struct stats *stats, const char *key, unsigned long long val)
+{
+  int i = stats_active_slot(stats, key);
+
+  if (i >= 0 && stats->s_val_state[i] <= STATS_SENTINEL_NOT_UPDATED)
+    stats_store(stats, key, val, stats->s_val_state[i] == STATS_SENTINEL_OK);
+}
+
+void(stats_set_missing)(struct stats *stats, const char *key, enum stats_sentinel code)
+{
+  int i = stats_active_slot(stats, key);
+
+  if (i >= 0)
+    stats->s_val_state[i] = (unsigned char)code;
+}
+
+/* Set `code` on the keys active in the current phase; with `only_unset`, only on those still
+ * STATS_SENTINEL_NOT_UPDATED this cycle. */
+static void stats_mark_active_keys(struct stats *stats, enum stats_sentinel code, int only_unset)
+{
+  for (size_t k = 0; k < stats->s_type->st_schema.sc_len; k++)
+    if ((!only_unset || stats->s_val_state[k] == STATS_SENTINEL_NOT_UPDATED) &&
+        collect_tier_key_active(stats->s_type, (int)k))
+      stats->s_val_state[k] = (unsigned char)code;
+}
+
+void(stats_set_missing_all)(struct stats *stats, enum stats_sentinel code)
+{
+  if (stats != NULL)
+    stats_mark_active_keys(stats, code, 1);
+}
+
+static void stats_type_mark_rows(struct stats_type *type, enum stats_sentinel code, int only_unset)
+{
+  size_t j = 0;
+  char *dev;
+
+  if (type == NULL)
     return;
+  while ((dev = dict_for_each(&type->st_current_dict, &j)) != NULL)
+    stats_mark_active_keys(key_to_stats(dev), code, only_unset);
+}
 
-  i = schema_ref(&stats->s_type->st_schema, key);
+void(stats_type_set_missing_all)(struct stats_type *type, enum stats_sentinel code)
+{
+  stats_type_mark_rows(type, code, 1);
+}
 
-  TRACE("%s %s %s %llu %d\n", stats->s_type->st_name, stats->s_dev, key, (unsigned long long)val,
-        i);
+void stats_type_mark_not_updated(struct stats_type *type)
+{
+  stats_type_mark_rows(type, STATS_SENTINEL_NOT_UPDATED, 0);
+}
 
-  if (i >= 0) {
-    if (!collect_tier_key_active(stats->s_type, i))
-      return;
-    stats->s_val[i] += val;
-    if (stats->s_val_present != NULL)
-      stats->s_val_present[i] = 1;
+/* 1 when the current phase has an active key of `stats` and none was touched this cycle. */
+static int stats_untouched(struct stats *stats)
+{
+  int active = 0;
+
+  for (size_t k = 0; k < stats->s_type->st_schema.sc_len; k++) {
+    if (!collect_tier_key_active(stats->s_type, (int)k))
+      continue;
+    if (stats->s_val_state[k] != STATS_SENTINEL_NOT_UPDATED)
+      return 0;
+    active = 1;
   }
-#ifdef MONITOR_METRIC_PROFILER
-  stats_record_metric_profile(stats, key, wall_begin_ns, cpu_begin_ns);
-#endif
+  return active;
+}
+
+void stats_type_prune_untouched(struct stats_type *type)
+{
+  size_t j = 0;
+  struct dict_entry *de;
+
+  if (type == NULL || !type->st_prune_untouched)
+    return;
+  /* Removal leaves a dummy slot, so the scan index stays valid. */
+  while ((de = dict_for_each_ref(&type->st_current_dict, &j)) != NULL)
+    if (stats_untouched(key_to_stats(de->d_key)))
+      stats_destroy(key_to_stats(dict_entry_remv(&type->st_current_dict, de, 1)));
 }
