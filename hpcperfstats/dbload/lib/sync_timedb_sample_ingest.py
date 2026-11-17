@@ -144,7 +144,7 @@ def ingest_monitor_sample_text(
         bang + message.splitlines(), carry=local_carry
       )
     else:
-      parser = IncrementalStatsParser(0)
+      parser = IncrementalStatsParser(0, delta_carry=local_carry)
       parser.schema = dict(schema)
       parser.schema_fast = dict(schema_fast)
       parser.compile_injected_schema()

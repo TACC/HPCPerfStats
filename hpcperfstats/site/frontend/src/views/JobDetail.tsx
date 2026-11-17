@@ -255,41 +255,52 @@ function fsioResourceLabel(key: string): string {
   return key;
 }
 
+/**
+ * Metric value text, or the reason it has none. The API already applies the
+ * audience split (researchers only get reasons they should see, otherwise
+ * null), so any reason present is shown as is; a valued row may carry a
+ * quality note (staff) that follows the value.
+ */
 function formatJobMetricCell(
   obj: JobMetricCell & { metric?: string },
-  isStaff: boolean,
   ncores?: string | number | null,
   gpuCount?: string | number | null,
 ): string {
-  if (obj.value != null && obj.value !== "") {
-    if (obj.metric === "max_gpu_clock_event_reasons") {
-      const decoded = formatGpuClockThrottleReasons(Number(obj.value));
-      if (decoded) return decoded;
-    }
-    const formatted = formatDecimalStandard(obj.value);
-    if (
-      obj.metric === "avg_cpuusage" &&
-      ncores != null &&
-      ncores !== "" &&
-      !Number.isNaN(Number(ncores))
-    ) {
-      return `${formatted} out of ${formatDecimalStandard(ncores)}`;
-    }
-    if (
-      (obj.metric === "detail_gpu_util_mean" || obj.metric === "detail_gpu_util_max") &&
-      gpuCount != null &&
-      gpuCount !== "" &&
-      !Number.isNaN(Number(gpuCount))
-    ) {
-      const outOf = Number(gpuCount) * 100;
-      return `${formatted} out of ${formatDecimalStandard(outOf)}`;
-    }
-    return formatted;
-  }
-  if (isStaff) {
+  if (obj.value == null || obj.value === "") {
     return obj.no_data_reason || "Data not available.";
   }
-  return "Data not available.";
+  const value = formatJobMetricValue(obj, ncores, gpuCount);
+  return obj.no_data_reason ? `${value} (${obj.no_data_reason})` : value;
+}
+
+function formatJobMetricValue(
+  obj: JobMetricCell & { metric?: string },
+  ncores?: string | number | null,
+  gpuCount?: string | number | null,
+): string {
+  if (obj.metric === "max_gpu_clock_event_reasons") {
+    const decoded = formatGpuClockThrottleReasons(Number(obj.value));
+    if (decoded) return decoded;
+  }
+  const formatted = formatDecimalStandard(obj.value);
+  if (
+    obj.metric === "avg_cpuusage" &&
+    ncores != null &&
+    ncores !== "" &&
+    !Number.isNaN(Number(ncores))
+  ) {
+    return `${formatted} out of ${formatDecimalStandard(ncores)}`;
+  }
+  if (
+    (obj.metric === "detail_gpu_util_mean" || obj.metric === "detail_gpu_util_max") &&
+    gpuCount != null &&
+    gpuCount !== "" &&
+    !Number.isNaN(Number(gpuCount))
+  ) {
+    const outOf = Number(gpuCount) * 100;
+    return `${formatted} out of ${formatDecimalStandard(outOf)}`;
+  }
+  return formatted;
 }
 
 function showMetricUnitsSuffix(
@@ -1014,7 +1025,7 @@ export default function JobDetail() {
             obj.value != null && obj.value !== "" ? "" : "text-muted-foreground",
           )}
         >
-          {formatJobMetricCell(obj, isStaff, job.ncores, gpuCountForMetrics)}
+          {formatJobMetricCell(obj, job.ncores, gpuCountForMetrics)}
         </TableCell>
       </TableRow>
     ));

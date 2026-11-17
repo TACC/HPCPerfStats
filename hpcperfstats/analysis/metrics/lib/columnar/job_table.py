@@ -39,6 +39,17 @@ from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
   is_job_scoped_host_data_type,
   sane_counter_abs_limit,
 )
+from hpcperfstats.analysis.metrics.lib.sentinel_profile import (
+  FoldQuality,
+  SentinelConfig,
+  align_gaps,
+  sentinel_fold,
+  sentinel_samples,
+)
+from hpcperfstats.analysis.metrics.lib.sentinel_reasons import (
+  SentinelRun,
+  load_sentinel_runs,
+)
 from hpcperfstats.dbload.lib.monitor_naming.canonical import GPU_STATS_TYPES
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
   canonical_event_name_for_type,
@@ -195,6 +206,11 @@ class ColumnarJobTable:
     _base_filter: ``jid_table._base_filter`` equivalent for legacy guards.
     _large_job_plot_cache_token: Cache token mirrored from ``jid_table``.
     _agg_memo: Per-table memo of aggregate results.
+    _sentinel_runs: ``host_sentinel_summary`` runs of the job window, or
+      None until :meth:`sentinel_runs` reads them from the database.
+    sentinel_sink: ``FoldQuality`` records of the sentinel-aware folds since
+      the caller last cleared it (``compute_metrics`` clears it per metric).
+    sentinel_config: ``SentinelConfig`` for this job, None until first use.
   """
 
   def __init__(
@@ -215,6 +231,7 @@ class ColumnarJobTable:
     units: dict[tuple[str, str], str] | None = None,
     coalesce_zero: bool = True,
     delta_scale: float = 1.0,
+    sentinel_runs: Sequence[SentinelRun] | None = (),
   ) -> None:
     """
     Wrap a frame with the job metadata the consumers read from ``jid_table``.
@@ -239,6 +256,9 @@ class ColumnarJobTable:
       delta_scale (float): Multiplier for summed ``delta`` totals; a thinned
         window keeps ``slot / spacing`` of the time, so totals scale back up
         by ``spacing / slot``.
+      sentinel_runs (Sequence[SentinelRun] | None): Monitor value-sentinel
+        runs of the window; None reads them from ``host_sentinel_summary``
+        on first use (live jobs), the default ``()`` means none (fixtures).
 
     Returns:
       None
@@ -308,6 +328,135 @@ class ColumnarJobTable:
     self.coalesce_zero = bool(coalesce_zero)
     self.delta_scale = float(delta_scale)
     self._agg_memo: dict[tuple[Any, ...], AggTable] = {}
+    self._sentinel_runs: list[SentinelRun] | None = (
+      None if sentinel_runs is None else list(sentinel_runs)
+    )
+    self.sentinel_sink: list[FoldQuality] = []
+    self.sentinel_config: SentinelConfig | None = None
+
+  def sentinel_fold_value(
+    self,
+    typ: str,
+    events: Sequence[str],
+    col: str,
+    conv: float,
+    *,
+    nonnegative: bool = False,
+    host_aggregate: str = "mean",
+    align_events: Sequence[str] | None = None,
+  ) -> tuple[bool, float | None]:
+    """
+    Sentinel-aware 5-minute fold of one probe type, when sentinels apply.
+
+    Rows of ``typ`` / ``events`` with a sentinel code, or covered by a
+    partial-device ``host_sentinel_summary`` run, go through
+    ``sentinel_profile`` (bridges, intersection, scaling, gap fill, static
+    hosts) and its quality record lands in :attr:`sentinel_sink`. Otherwise
+    the caller keeps the legacy fold, so sentinel-free jobs are unchanged.
+    Shared-node residual types keep the legacy fold (their hardware/``j:``
+    collapse has no sentinel path).
+
+    Args:
+      typ (str): Concrete type name.
+      events (Sequence[str]): Probe-expanded event names.
+      col (str): ``arc`` (summed per sample) or ``value`` (row means).
+      conv (float): Multiplier on bucket means.
+      nonnegative (bool): Negative rows are not valid.
+      host_aggregate (str): ``mean`` or ``sum`` across hosts.
+      align_events (Sequence[str] | None): Events of the other side of a
+        derived ratio; their sentinel gaps are gaps here too.
+
+    Returns:
+      tuple[bool, float | None]: ``(handled, value)``; ``handled`` False
+      means no sentinel evidence for this fold.
+
+    Examples:
+      >>> ColumnarJobTable(
+      ...   "1",
+      ...   JobFrame.from_records("1", []),
+      ...   host_list=[],
+      ...   acct_host_list=[],
+      ...   schema={},
+      ...   start_time=None,
+      ...   end_time=None,
+      ... ).sentinel_fold_value("host_ib", ["port_rcv_data"], "arc", 1.0)
+      (False, None)
+    """
+    if not self._base_filter or self.index.host_wide(typ):
+      return False, None
+    if self.sentinel_config is None:
+      self.sentinel_config = SentinelConfig.from_ini()
+
+    runs = self.sentinel_runs()
+    common: dict[str, Any] = {
+      "limit": sane_counter_abs_limit(col) if col == "arc" else None,
+      "nonnegative": nonnegative,
+      "per_sample_sum": col == "arc",
+      "config": self.sentinel_config,
+    }
+    other = (
+      sentinel_samples(self.index, typ, list(align_events), col, runs, **common)
+      if align_events
+      else None
+    )
+    got = sentinel_samples(
+      self.index,
+      typ,
+      list(events),
+      col,
+      runs,
+      force=other is not None,
+      **common,
+    )
+    if got is None:
+      return False, None
+    arrays, partial = got
+    if other is not None:
+      arrays = align_gaps(arrays, other[0])
+    host, time_us, values, status, codes = arrays
+    value, quality = sentinel_fold(
+      host,
+      time_us,
+      values,
+      status,
+      codes,
+      conv,
+      typename=typ,
+      host_names=self.frame.hosts,
+      host_aggregate=host_aggregate,
+      config=self.sentinel_config,
+    )
+    quality.partial_devices = partial
+    self.sentinel_sink.append(quality)
+    return True, value
+
+  def sentinel_runs(self) -> list[SentinelRun]:
+    """
+    Value-sentinel runs overlapping the job window on the accounting hosts.
+
+    Read once per table (one indexed side-table read, no ``host_data``
+    scan) and kept, so the metrics, reasons and notes share one snapshot.
+
+    Returns:
+      list[SentinelRun]: Runs (empty for fixtures and windowless jobs).
+
+    Examples:
+      >>> ColumnarJobTable(
+      ...   "1",
+      ...   JobFrame.from_records("1", []),
+      ...   host_list=[],
+      ...   acct_host_list=[],
+      ...   schema={},
+      ...   start_time=None,
+      ...   end_time=None,
+      ... ).sentinel_runs()
+      []
+    """
+    if self._sentinel_runs is None:
+      self._sentinel_runs = load_sentinel_runs(
+        self.acct_host_list, self.start_time, self.end_time
+      )
+    return self._sentinel_runs
 
   @classmethod
   def from_jid_table(
@@ -347,6 +496,7 @@ class ColumnarJobTable:
       shared=bool(getattr(jt, "_shared_node", False)),
       gpu_affinity_devs=aff() if callable(aff) else None,
       units=getattr(jt, "units", None) or {},
+      sentinel_runs=None,
     )
 
   @classmethod
@@ -623,6 +773,7 @@ class ColumnarJobTable:
     *,
     nonnegative: bool = False,
     host_aggregate: str = "mean",
+    align_events: Sequence[str] | None = None,
   ) -> float | None:
     """
     ``Metrics.job_arc`` for one concrete probe type: SQL-CTE sample sums,
@@ -634,6 +785,8 @@ class ColumnarJobTable:
       conv (float): Multiplier.
       nonnegative (bool): Drop negative ``arc`` samples.
       host_aggregate (str): ``mean`` or ``sum`` across hosts.
+      align_events (Sequence[str] | None): Other side of a derived ratio
+        (see :meth:`sentinel_fold_value`).
 
     Returns:
       float | None: Metric value or None without samples.
@@ -652,6 +805,17 @@ class ColumnarJobTable:
     """
     if not self._base_filter or not self.acct_host_list:
       return None
+    handled, value = self.sentinel_fold_value(
+      typ,
+      events,
+      "arc",
+      conv,
+      nonnegative=nonnegative,
+      host_aggregate=host_aggregate,
+      align_events=align_events,
+    )
+    if handled:
+      return value
     for mode in _JOB_ARC_SQL_FIRST:
       agg = self.index.sum_per_sample(
         typ, list(events), "arc", mode=mode, nonnegative=nonnegative

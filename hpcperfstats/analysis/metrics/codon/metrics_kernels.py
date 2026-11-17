@@ -25,6 +25,14 @@ Exports (C ABI, all ``int`` results are row/group counts or negative codes):
   (``segments._np_residual_collapse`` parity).
 * ``grid_mean_c`` — mean per dense cell, NaN where no finite sample.
 * ``join_sorted_c`` — inner join of two sorted unique key arrays.
+* ``sentinel_samples_c`` - per-sample valid / bridged / gap states of a
+  value-sentinel fold: row-order sums per ``(host, time)`` key, last gap or
+  bridge code, first row (``sentinel_profile._np_sentinel_samples`` parity).
+* ``sentinel_fold_c`` - per-host 5-minute bucket means of covered samples,
+  gap flags, first-bucket drop, interior fill and per-host state counts
+  (``sentinel_profile._np_sentinel_fold`` parity).
+* ``fill_interior_gaps_c`` - linear fill of interior gap-bucket runs
+  (``sentinel_profile._np_fill_interior_gaps`` parity).
 """
 
 # ruff: noqa: F821  (Codon builtins: Ptr, u8, u64, i32, float32, export)
@@ -544,3 +552,238 @@ def join_sorted_c(
     else:
       j += 1
   return h
+
+
+# Literal mirrors of ``sentinel_profile.SAMPLE_*`` (locked by
+# ``test_codon_metrics_bake_contract.py``).
+SAMPLE_VALID = 0
+SAMPLE_BRIDGED = 1
+SAMPLE_GAP = 2
+POS_INF = float("inf")
+
+
+@export
+def sentinel_samples_c(
+  n: int,
+  keys: Ptr[int],
+  valid: Ptr[u8],
+  bridged: Ptr[u8],
+  gap_row: Ptr[u8],
+  code: Ptr[int],
+  eff: Ptr[float],
+  scratch: Ptr[int],
+  out_first: Ptr[int],
+  out_sum: Ptr[float],
+  out_status: Ptr[int],
+  out_code: Ptr[int],
+) -> int:
+  """Per-sample states of one sentinel fold, one sample per distinct key.
+
+  Samples come out sorted by key. A sample's sum adds ``eff`` of its valid
+  or bridged rows in row order from ``0.0`` (``np.bincount`` parity); its
+  status is gap over bridged over valid; its code is the last gap row's
+  code, else the last bridged row's code, else 0; ``out_first`` is its first
+  row. Keys whose rows are neither valid, bridged nor gap are dropped.
+  Output buffers need ``n`` entries; ``scratch`` needs ``4 * n +
+  RADIX_BUCKETS``. Returns the sample count.
+  """
+  m, where = _sort_masked_rows(n, keys, 0, Ptr[u8](), scratch)
+  half = scratch + 2 * n * where
+  sk = Ptr[u64](half.as_byte())
+  sv = half + n
+  g = 0
+  j = 0
+  while j < m:
+    cur = sk[j]
+    first = sv[j]
+    any_gap = False
+    any_bridge = False
+    any_valid = False
+    total = 0.0
+    gap_code = 0
+    bridge_code = 0
+    while j < m and sk[j] == cur:
+      r = sv[j]
+      is_valid = valid[r] != u8(0)
+      is_bridged = bridged[r] != u8(0)
+      if gap_row[r] != u8(0):
+        any_gap = True
+        gap_code = code[r]
+      if is_bridged:
+        any_bridge = True
+        bridge_code = code[r]
+      if is_valid:
+        any_valid = True
+      total += eff[r] if (is_valid or is_bridged) else 0.0
+      j += 1
+    if any_gap or any_bridge or any_valid:
+      out_first[g] = first
+      out_sum[g] = total
+      if any_gap:
+        out_status[g] = SAMPLE_GAP
+        out_code[g] = gap_code
+      else:
+        out_status[g] = SAMPLE_BRIDGED if any_bridge else SAMPLE_VALID
+        out_code[g] = bridge_code
+      g += 1
+  return g
+
+
+def _is_anchor(means: Ptr[float], gaps: Ptr[u8], i: int) -> bool:
+  v = means[i]
+  return gaps[i] == u8(0) and v == v and v != POS_INF and v != -POS_INF
+
+
+def _fill_runs(
+  n: int,
+  means: Ptr[float],
+  gaps: Ptr[u8],
+  pos: Ptr[float],
+  max_gap_buckets: int,
+  apply: bool,
+) -> int:
+  """Fillable interior gap buckets; interpolates them when ``apply``."""
+  total = 0
+  i = 0
+  while i < n:
+    if gaps[i] == u8(0):
+      i += 1
+      continue
+    j = i
+    while j < n and gaps[j] != u8(0):
+      j += 1
+    if (
+      i > 0
+      and j < n
+      and _is_anchor(means, gaps, i - 1)
+      and _is_anchor(means, gaps, j)
+      and j - i <= max_gap_buckets
+    ):
+      total += j - i
+      if apply:
+        x0 = pos[i - 1]
+        x1 = pos[j]
+        y0 = means[i - 1]
+        y1 = means[j]
+        for k in range(i, j):
+          means[k] = y0 + (y1 - y0) * (pos[k] - x0) / (x1 - x0)
+    i = j
+  return total
+
+
+@export
+def fill_interior_gaps_c(
+  n: int,
+  means: Ptr[float],
+  gaps: Ptr[u8],
+  pos: Ptr[float],
+  max_gap_buckets: int,
+  max_frac: float,
+) -> int:
+  """Linearly interpolate interior gap-bucket runs of one series in place.
+
+  A run of ``gaps != 0`` buckets is fillable when a finite non-gap bucket
+  bounds it on both sides and it spans at most ``max_gap_buckets``. When
+  the fillable buckets exceed ``max_frac * n`` nothing is written. Returns
+  the interpolated bucket count (0 when nothing was filled).
+  """
+  total = _fill_runs(n, means, gaps, pos, max_gap_buckets, False)
+  if total == 0 or float(total) > max_frac * float(n):
+    return 0
+  _fill_runs(n, means, gaps, pos, max_gap_buckets, True)
+  return total
+
+
+@export
+def sentinel_fold_c(
+  n: int,
+  host: Ptr[int],
+  bucket: Ptr[int],
+  values: Ptr[float],
+  status: Ptr[int],
+  max_gap_buckets: int,
+  max_frac: float,
+  scratch: Ptr[int],
+  perm: Ptr[int],
+  out_hi: Ptr[int],
+  out_mean: Ptr[float],
+  out_gap: Ptr[u8],
+  out_pos: Ptr[float],
+) -> int:
+  """Per-host 5-minute bucket fold of per-sample sentinel states.
+
+  Rows are grouped by host, then bucket (stable, so each bucket adds its
+  covered values in row order from ``0.0``, ``np.bincount`` parity). A
+  bucket's mean is its covered sum over its covered count, NaN with gap
+  flag 1 when no sample is covered. A host with more than one bucket drops
+  its first; its remaining buckets go through ``fill_interior_gaps_c`` at
+  their bucket positions. Per host ``h`` (hosts ascending), ``out_hi[k * n
+  + h]`` holds, for ``k`` 0..6: host id, valid / bridged / gap sample
+  counts, first bucket offset, bucket count, filled bucket count. Bucket
+  outputs are packed by host. ``scratch`` needs ``4 * n + RADIX_BUCKETS``,
+  ``perm`` ``2 * n``, every other output ``n``. Returns the host count.
+  """
+  m, where = _sort_masked_rows(n, bucket, 0, Ptr[u8](), scratch)
+  half = scratch + 2 * n * where
+  for i in range(m):
+    perm[i] = half[n + i]
+    perm[n + i] = host[perm[i]]
+  m, where = _sort_masked_rows(n, perm + n, 0, Ptr[u8](), scratch)
+  sv = scratch + 2 * n * where + n
+  nan = float("nan")
+  nh = 0
+  nb = 0
+  j = 0
+  while j < m:
+    h = host[perm[sv[j]]]
+    bstart = nb
+    n_valid = 0
+    n_bridged = 0
+    n_gap = 0
+    while j < m and host[perm[sv[j]]] == h:
+      b = bucket[perm[sv[j]]]
+      cnt = 0
+      total = 0.0
+      while j < m:
+        r = perm[sv[j]]
+        if host[r] != h or bucket[r] != b:
+          break
+        st = status[r]
+        covered = st != SAMPLE_GAP
+        if covered:
+          cnt += 1
+        total += values[r] if covered else 0.0
+        if st == SAMPLE_VALID:
+          n_valid += 1
+        elif st == SAMPLE_BRIDGED:
+          n_bridged += 1
+        elif st == SAMPLE_GAP:
+          n_gap += 1
+        j += 1
+      out_pos[nb] = float(b)
+      out_mean[nb] = total / float(cnt) if cnt > 0 else nan
+      out_gap[nb] = u8(1) if cnt == 0 else u8(0)
+      nb += 1
+    if nb - bstart > 1:
+      for k in range(bstart, nb - 1):
+        out_pos[k] = out_pos[k + 1]
+        out_mean[k] = out_mean[k + 1]
+        out_gap[k] = out_gap[k + 1]
+      nb -= 1
+    filled = fill_interior_gaps_c(
+      nb - bstart,
+      out_mean + bstart,
+      out_gap + bstart,
+      out_pos + bstart,
+      max_gap_buckets,
+      max_frac,
+    )
+    out_hi[nh] = h
+    out_hi[n + nh] = n_valid
+    out_hi[2 * n + nh] = n_bridged
+    out_hi[3 * n + nh] = n_gap
+    out_hi[4 * n + nh] = bstart
+    out_hi[5 * n + nh] = nb - bstart
+    out_hi[6 * n + nh] = filled
+    nh += 1
+  return nh

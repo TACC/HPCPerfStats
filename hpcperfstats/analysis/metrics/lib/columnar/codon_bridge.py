@@ -3,8 +3,9 @@ Bridge to the baked Codon kernels of the columnar update_metrics path.
 
 The pyext ``hpcperfstats_codon_metrics`` (built from
 ``hpcperfstats/analysis/metrics/codon/`` in the Dockerfile ``codon-build``
-stage, shipped at :data:`CODON_METRICS_DIR`) exports the segment reductions
-and the COPY decoder used by :mod:`segments` and :mod:`k0_decode`. This
+stage, shipped at :data:`CODON_METRICS_DIR`) exports the segment reductions,
+the COPY decoder and the value-sentinel fold reductions used by
+:mod:`segments`, :mod:`k0_decode` and ``sentinel_profile``. This
 module loads it once, keeps every array handed to it C-contiguous with the
 documented dtype, and turns any kernel failure into
 :class:`CodonKernelError` so the job hard-fails into failure-memory backoff
@@ -13,7 +14,8 @@ documented dtype, and turns any kernel failure into
 On the pipeline interpreter (``/opt/python3.14t``) the kernel is required:
 :func:`require_codon_metrics` refuses scheduler start when the ``.so`` is
 missing. Host test runs (the ``.venv`` interpreter) use the NumPy reference
-implementations in :mod:`segments` and :mod:`k0_decode`.
+implementations in :mod:`segments`, :mod:`k0_decode` and
+``sentinel_profile``.
 
 Attributes:
   CODON_METRICS_DIR: Baked pyext directory in the image.
@@ -28,6 +30,8 @@ Attributes:
   _KERNEL_METHODS: Methods the pyext must export to count as loaded.
   RADIX_BUCKETS: Count-array length the kernel's radix sort needs in scratch.
   BANK_RETAIN_ROWS: Largest per-thread scratch bank kept between calls.
+  SENTINEL_FOLD_HOST_ROWS: Rows of the ``sentinel_fold`` per-host output
+    (host, valid, bridged, gap, bucket offset, bucket count, filled).
   _state: Load cache (module, probe flag, GIL flag, failure reason).
   _load_lock: Serializes the first import.
   _gc_tls: Per-thread Boehm registration depth.
@@ -61,6 +65,9 @@ _KERNEL_METHODS = (
   "residual_collapse",
   "grid_mean",
   "join_sorted",
+  "sentinel_samples",
+  "sentinel_fold",
+  "fill_interior_gaps",
 )
 
 
@@ -449,6 +456,7 @@ def call(name: str, *args: Any) -> Any:
 
 RADIX_BUCKETS = 1 << 16
 BANK_RETAIN_ROWS = 4_000_000
+SENTINEL_FOLD_HOST_ROWS = 7
 _bank = threading.local()
 
 
@@ -752,3 +760,165 @@ def copy_decode(
     for i in range(n_names)
   ]
   return cols, n_col[:n_names].copy(), names
+
+
+def sentinel_samples(
+  keys: np.ndarray,
+  valid: np.ndarray,
+  bridged: np.ndarray,
+  gap_row: np.ndarray,
+  code: np.ndarray,
+  eff: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+  """
+  Codon ``sentinel_samples``: per-sample states of one sentinel fold.
+
+  Args:
+    keys (np.ndarray): int64 ``(host, time)`` sample key per row.
+    valid (np.ndarray): Row is a measured value.
+    bridged (np.ndarray): Row is a bridged sentinel.
+    gap_row (np.ndarray): Row is an unrecovered sentinel.
+    code (np.ndarray): int64 sentinel code per row.
+    eff (np.ndarray): float64 effective value per row.
+
+  Returns:
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: ``(first_row,
+    sums, status, codes)`` per kept sample, sorted by key.
+
+  Examples:
+    >>> sentinel_samples(
+    ...   np.array([1]),
+    ...   np.array([True]),
+    ...   np.array([False]),
+    ...   np.array([False]),
+    ...   np.array([0]),
+    ...   np.array([2.0]),
+    ... )  # doctest: +SKIP
+  """
+  n = int(keys.shape[0])
+  first = np.empty(n, dtype=np.int64)
+  sums = np.empty(n, dtype=np.float64)
+  status = np.empty(n, dtype=np.int64)
+  codes = np.empty(n, dtype=np.int64)
+  g = int(
+    call(
+      "sentinel_samples",
+      n,
+      _c(keys, np.int64),
+      _mask_u8(valid),
+      _mask_u8(bridged),
+      _mask_u8(gap_row),
+      _c(code, np.int64),
+      _c(eff, np.float64),
+      _thread_bank(n).scratch,
+      first,
+      sums,
+      status,
+      codes,
+    )
+  )
+  return first[:g], sums[:g], status[:g], codes[:g]
+
+
+def sentinel_fold(
+  host: np.ndarray,
+  bucket: np.ndarray,
+  values: np.ndarray,
+  status: np.ndarray,
+  max_gap_buckets: int,
+  max_frac: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+  """
+  Codon ``sentinel_fold``: per-host 5-minute bucket fold of sample states.
+
+  Args:
+    host (np.ndarray): int64 host id per sample.
+    bucket (np.ndarray): int64 5-minute bucket index per sample.
+    values (np.ndarray): float64 sample value (ignored for gap samples).
+    status (np.ndarray): int64 ``SAMPLE_*`` state per sample.
+    max_gap_buckets (int): Longest fillable run of gap buckets.
+    max_frac (float): Largest fillable share of a host's buckets.
+
+  Returns:
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: ``(per_host,
+    means, gaps, positions)``: an int64 ``(SENTINEL_FOLD_HOST_ROWS,
+    hosts)`` array (host id, valid / bridged / gap counts, bucket offset,
+    bucket count, filled count; hosts ascending), then the filled bucket
+    means, gap flags and bucket positions packed by host after the
+    first-bucket drop.
+
+  Examples:
+    >>> sentinel_fold(
+    ...   np.array([0]), np.array([0]), np.array([1.0]), np.array([0]), 3, 0.1
+    ... )  # doctest: +SKIP
+  """
+  n = int(host.shape[0])
+  per_host = np.empty(SENTINEL_FOLD_HOST_ROWS * n, dtype=np.int64)
+  means = np.empty(n, dtype=np.float64)
+  gaps = np.empty(n, dtype=np.uint8)
+  pos = np.empty(n, dtype=np.float64)
+  nh = int(
+    call(
+      "sentinel_fold",
+      n,
+      _c(host, np.int64),
+      _c(bucket, np.int64),
+      _c(values, np.float64),
+      _c(status, np.int64),
+      int(max_gap_buckets),
+      float(max_frac),
+      _thread_bank(n).scratch,
+      np.empty(2 * n, dtype=np.int64),
+      per_host,
+      means,
+      gaps,
+      pos,
+    )
+  )
+  per_host = per_host.reshape(SENTINEL_FOLD_HOST_ROWS, n)[:, :nh]
+  nb = int(per_host[4, -1] + per_host[5, -1]) if nh else 0
+  return per_host, means[:nb], gaps[:nb].view(np.bool_), pos[:nb]
+
+
+def fill_interior_gaps(
+  bucket_means: np.ndarray,
+  gap_mask: np.ndarray,
+  positions: np.ndarray,
+  max_gap_buckets: int,
+  max_frac: float,
+) -> tuple[np.ndarray, int]:
+  """
+  Codon ``fill_interior_gaps`` on a copy of ``bucket_means``.
+
+  Args:
+    bucket_means (np.ndarray): Bucket means in time order (NaN in gaps).
+    gap_mask (np.ndarray): True where a bucket is a sentinel gap.
+    positions (np.ndarray): Bucket positions for the distance weights.
+    max_gap_buckets (int): Longest fillable run of gap buckets.
+    max_frac (float): Largest fillable share of the buckets.
+
+  Returns:
+    tuple[np.ndarray, int]: ``(filled copy, interpolated bucket count)``.
+
+  Examples:
+    >>> fill_interior_gaps(
+    ...   np.array([1.0, np.nan, 3.0]),
+    ...   np.array([False, True, False]),
+    ...   np.arange(3.0),
+    ...   3,
+    ...   0.5,
+    ... )  # doctest: +SKIP
+  """
+  means = np.array(bucket_means, dtype=np.float64)
+  filled = int(
+    call(
+      "fill_interior_gaps",
+      int(means.shape[0]),
+      means,
+      _mask_u8(np.asarray(gap_mask, dtype=bool)),
+      _c(positions, np.float64),
+      int(max_gap_buckets),
+      float(max_frac),
+    )
+  )
+  return means, filled

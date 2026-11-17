@@ -35,6 +35,16 @@ Attributes:
     (``host_power_socket``); summed per ``dev``.
   _JOB_STAMP_DEV_SEP: Separator between a shared ``j:<jid>`` stamp and the
     hardware ``dev`` it carries until collapse, so deltas stay per device.
+  _CARRY_BUILD_KEY: Reserved carry key prefix (+ host) holding ``[1.0]`` when
+    the host's ``$build`` proves ``host_cpu_hw`` bridges, else ``[0.0]``.
+  _CARRY_RESTART_KEY: Reserved carry key prefix (+ host) holding the times of
+    the first sample after each ``$`` header (daemon start or rotation).
+  _CARRY_RESTART_KEEP: Header-sample times kept per host in the carry.
+  _CARRY_HEADER_PENDING_KEY: Reserved carry key prefix (+ host) set by
+    ``note_monitor_header`` until the host's next sample header.
+  _SENTINEL_BRIDGEABLE_CODES: Catalog codes a counter delta may bridge.
+  _SENTINEL_KEY_COLS: Collapsed-key columns used to match pre-collapse
+    sentinel rows to their collapsed row.
   _NVIDIA_GPU_KNOWN_EVENTS: Attribute.
   _NVIDIA_GPU_MAX_EVENTS: Attribute.
   _NVIDIA_GPU_MEAN_EVENTS: Attribute.
@@ -91,6 +101,7 @@ from hpcperfstats.dbload.lib.monitor_naming.legacy import (
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
   schema_needs_legacy_hardware_decode,
 )
+from hpcperfstats.lib import monitor_sentinel
 from hpcperfstats.lib.dcgm_blank import (
   DCGM_FP64_BLANK,
   is_dcgm_numeric_blank,
@@ -871,6 +882,18 @@ _NVIDIA_GROUP_KEY_EVENT_INDEX = _COLLAPSE_GROUP_COLS_WITH_DEV.index("event")
 
 _SLOW_TIER_OPT = "R=S"
 _TIER_MARKERS = frozenset({"@fast", "@full"})
+
+# Reserved ``DeltaCarryState.raw`` keys. Counter keys are tuples of group
+# columns, so a string key starting with NUL never collides with one; the
+# Codon twin uses the same strings in its ``dict[str, list[float]]`` carry.
+_CARRY_BUILD_KEY = "\0build\0"
+_CARRY_RESTART_KEY = "\0restart\0"
+_CARRY_RESTART_KEEP = 8
+_CARRY_HEADER_PENDING_KEY = "\0header\0"
+_SENTINEL_BRIDGEABLE_CODES = np.array(
+  sorted(c for c, e in monitor_sentinel.CATALOG.items() if e.bridge),
+  dtype=np.float64,
+)
 
 
 def _schema_token_is_slow_tier(token: str) -> bool:
@@ -2457,12 +2480,17 @@ class IncrementalStatsParser:
     _pending_marks: Marks still waiting for a digit sample header.
     _below_gate: True while the open sample header sits below ``start_idx``
       (resume prefix): its marks were ingested with it and are dropped.
+    header_raw: Reserved build/restart carry keys from ``$`` headers; the
+      ``delta_carry.raw`` dict when one was given, else a private dict.
+    _header_pending: True after a ``$`` line until the next sample header.
+    _header_build: ``$build`` slug of the pending header, or None.
   """
 
   def __init__(
     self,
     start_idx: int = 0,
     exclude_types_list: Any | None = None,
+    delta_carry: Any | None = None,
   ) -> None:
     """
     Initialize a new instance.
@@ -2470,6 +2498,9 @@ class IncrementalStatsParser:
     Args:
       start_idx (int): Integer value for start idx.
       exclude_types_list (Any | None): One of ``Any``, ``None``.
+      delta_carry (Any | None): ``DeltaCarryState`` whose ``raw`` dict
+        receives the per-host ``$build`` / restart keys the sentinel delta
+        rules read; None keeps them on the parser only.
 
     Returns:
       None
@@ -2498,6 +2529,75 @@ class IncrementalStatsParser:
     self.marks: list[dict[str, Any]] = []
     self._pending_marks: list[dict[str, Any]] = []
     self._below_gate = False
+    self.header_raw: dict[Any, Any] = (
+      delta_carry.raw if delta_carry is not None else {}
+    )
+    self._header_pending = False
+    self._header_build: str | None = None
+
+  def _note_header_line(self, s: str) -> None:
+    """
+    Remember a ``$`` header line until the sample header that follows it.
+
+    A header without a ``$build`` line comes from an old daemon, so the slug
+    resets to None at the first ``$`` line of each header block.
+
+    Args:
+      s (str): Stripped line starting with ``$``.
+
+    Returns:
+      None
+
+    Examples:
+      >>> p = IncrementalStatsParser(0)
+      >>> p._note_header_line("$build x86_64-ver3.1-hw-likwid-full")
+      >>> p._header_build
+      'x86_64-ver3.1-hw-likwid-full'
+    """
+    if not self._header_pending:
+      self._header_pending = True
+      self._header_build = None
+    if s.startswith("$build"):
+      parts = s.split()
+      self._header_build = parts[1] if len(parts) > 1 else None
+
+  def _record_header_sample(self, host: str, when: str) -> None:
+    """
+    Store the pending header's build flag and restart time for ``host``.
+
+    Args:
+      host (str): Host token of the first sample header after ``$`` lines.
+      when (str): That sample's time token.
+
+    Returns:
+      None
+
+    Examples:
+      >>> p = IncrementalStatsParser(0)
+      >>> p._note_header_line("$build aarch64-ver3.1-hw-arm-full")
+      >>> p._record_header_sample("h", "100")
+      >>> (
+      ...   p.header_raw[_CARRY_BUILD_KEY + "h"],
+      ...   p.header_raw[_CARRY_RESTART_KEY + "h"],
+      ... )
+      ([1.0], [100.0])
+    """
+    if self._header_pending:
+      self._header_pending = False
+      proven = monitor_sentinel.bridge_proven(
+        HOST_CPU_HW_TYPE, self._header_build
+      )
+      self.header_raw[_CARRY_BUILD_KEY + host] = [1.0 if proven else 0.0]
+    # A ``$`` message seen by listend (``note_monitor_header``) left the build
+    # flag already set; this sample only adds the restart time.
+    self.header_raw.pop(_CARRY_HEADER_PENDING_KEY + host, None)
+    try:
+      t = float(when)
+    except ValueError:
+      return
+    times = self.header_raw.setdefault(_CARRY_RESTART_KEY + host, [])
+    times.append(t)
+    del times[:-_CARRY_RESTART_KEEP]
 
   @property
   def proc_stats(self) -> list[dict[str, Any]]:
@@ -2973,6 +3073,10 @@ class IncrementalStatsParser:
       parsed = _digit_line_identity(s)
       if parsed is None:
         return
+      if self._header_pending or (
+        _CARRY_HEADER_PENDING_KEY + parsed[2] in self.header_raw
+      ):
+        self._record_header_sample(parsed[2], parsed[0])
       self._below_gate = i < self.start_idx
       if self._below_gate:
         # Resume prefix: the sample opens nothing; marks waiting on it were
@@ -3012,6 +3116,8 @@ class IncrementalStatsParser:
       )
     elif s[0] == "%":
       self._note_percent_mark(s)
+    elif s[0] == "$":
+      self._note_header_line(s)
 
   def feed_lines(self, lines: Any) -> None:
     """
@@ -3309,6 +3415,42 @@ class DeltaCarryState:
     self.codon_parsed_host_rows: int | None = None
 
 
+def note_monitor_header(message: str, host: str, carry: Any) -> None:
+  """
+  Record a ``$`` header message for the live (per-message) parse path.
+
+  listend parses each sample message separately, so the ``$`` header never
+  reaches that parser. This stores the host's ``$build`` bridge flag in
+  ``carry.raw`` now and marks the next sample header of ``host`` as the
+  first one after a restart or rotation.
+
+  Args:
+    message (str): Whole ``$`` message text.
+    host (str): Host the message came from.
+    carry (Any): That host's ``DeltaCarryState``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> c = DeltaCarryState()
+    >>> note_monitor_header(
+    ...   "$hostname h\n$build aarch64-ver3.1-hw-arm-full", "h", c
+    ... )
+    >>> c.raw[_CARRY_BUILD_KEY + "h"]
+    [1.0]
+  """
+  slug = None
+  for line in message.splitlines():
+    if line.startswith("$build"):
+      parts = line.split()
+      slug = parts[1] if len(parts) > 1 else None
+      break
+  proven = monitor_sentinel.bridge_proven(HOST_CPU_HW_TYPE, slug)
+  carry.raw[_CARRY_BUILD_KEY + host] = [1.0 if proven else 0.0]
+  carry.raw[_CARRY_HEADER_PENDING_KEY + host] = [1.0]
+
+
 def _empty_delta_arc_frame() -> Any:
   """
   Internal helper to handle empty delta arc DataFrame.
@@ -3347,6 +3489,229 @@ def _stats_df_has_required_delta_cols(stats_df: Any) -> Any:
     "mult",
   }
   return not stats_df.empty and required_cols.issubset(stats_df.columns)
+
+
+def _sentinel_bridge_max_missed_samples() -> int:
+  """
+  Read ``ingest_sentinel_bridge_max_missed_samples`` from the INI.
+
+  Returns:
+    int: Max consecutive sentinel samples a delta may bridge.
+
+  Examples:
+    >>> _sentinel_bridge_max_missed_samples() >= 0  # doctest: +SKIP
+    True
+  """
+  from hpcperfstats.dbload.lib.conf_parser import (
+    get_ingest_sentinel_bridge_max_missed_samples,
+  )
+
+  return get_ingest_sentinel_bridge_max_missed_samples()
+
+
+def _sentinel_chain_breaks(
+  stats_df: Any, values: np.ndarray, sent: np.ndarray, raw: dict[Any, Any]
+) -> np.ndarray:
+  """
+  Mark sentinel rows whose code does not let a delta span the gap.
+
+  Catalog chain-breaking codes and unknown codes break. Bridgeable codes on
+  ``host_cpu_hw`` also break unless the host's ``$build`` flag in ``raw``
+  proves the bridge (``monitor_sentinel.bridge_proven``).
+
+  Args:
+    stats_df (Any): Frame in delta order with ``type`` and ``host``.
+    values (np.ndarray): ``value`` column as float64.
+    sent (np.ndarray): True where ``values`` is a sentinel (negative).
+    raw (dict[Any, Any]): Carry dict holding the reserved build keys.
+
+  Returns:
+    np.ndarray: Boolean mask, True on chain-breaking sentinel rows.
+
+  Examples:
+    >>> df = pd.DataFrame({"type": ["host_ib"], "host": ["h"]})
+    >>> v = np.array([-2.0])
+    >>> _sentinel_chain_breaks(df, v, v < 0, {}).tolist()
+    [True]
+  """
+  breaks = sent & ~np.isin(values, _SENTINEL_BRIDGEABLE_CODES)
+  hw = sent & ~breaks & stats_df["type"].isin(_HOST_CPU_HW_TYPES).to_numpy()
+  if hw.any():
+    rows = np.flatnonzero(hw)
+    hosts = stats_df["host"].to_numpy()[rows]
+    proven = np.fromiter(
+      ((raw.get(_CARRY_BUILD_KEY + str(h)) or (0.0,))[0] == 1.0 for h in hosts),
+      dtype=bool,
+      count=len(rows),
+    )
+    breaks[rows[~proven]] = True
+  return breaks
+
+
+def _restart_between(
+  raw: dict[Any, Any], host: Any, t0: float, t1: float
+) -> bool:
+  """
+  Report whether a ``$`` header sample for ``host`` fell in ``(t0, t1]``.
+
+  Args:
+    raw (dict[Any, Any]): Carry dict holding the reserved restart keys.
+    host (Any): Host name.
+    t0 (float): Time of the last valid sample before the gap.
+    t1 (float): Time of the valid sample after the gap.
+
+  Returns:
+    bool: True when the daemon restarted or rotated inside the gap.
+
+  Examples:
+    >>> _restart_between({_CARRY_RESTART_KEY + "h": [15.0]}, "h", 10.0, 20.0)
+    True
+  """
+  return any(t0 < h <= t1 for h in raw.get(_CARRY_RESTART_KEY + str(host), ()))
+
+
+def _sentinel_deltas(
+  stats_df: Any,
+  gid: np.ndarray,
+  sent: np.ndarray,
+  carry: Any | None,
+) -> tuple[np.ndarray, np.ndarray]:
+  """
+  Unscaled per-device deltas when some values are sentinels.
+
+  Rows are in ``(group, time)`` order. Each valid row diffs against the last
+  valid row of its group (within this flush, else ``carry.raw``). A gap of
+  sentinel rows bridges only when it holds at most
+  ``ingest_sentinel_bridge_max_missed_samples`` rows, none chain-breaking,
+  and no ``$`` header sample; otherwise the delta is NaN. Sentinel rows get
+  NaN. The carry is updated here with the last valid value per group plus
+  the trailing sentinel count and chain-break flag.
+
+  Args:
+    stats_df (Any): Frame in delta order (``value``/``time``/``wid``/``mult``).
+    gid (np.ndarray): Group id per row (equal ids are one counter).
+    sent (np.ndarray): True where ``value`` is a sentinel.
+    carry (Any | None): ``DeltaCarryState`` or None.
+
+  Returns:
+    tuple[np.ndarray, np.ndarray]: ``(delta, bridge_dt)``; ``bridge_dt`` is
+    the real elapsed time of a bridged delta and NaN elsewhere.
+
+  Examples:
+    >>> df = pd.DataFrame(
+    ...   {
+    ...     "host": ["h"] * 3,
+    ...     "type": ["host_ib"] * 3,
+    ...     "value": [10.0, -3.0, 40.0],
+    ...     "time": [0.0, 10.0, 20.0],
+    ...     "wid": [64] * 3,
+    ...     "mult": [1.0] * 3,
+    ...   }
+    ... )
+    >>> d, dt = _sentinel_deltas(
+    ...   df, np.zeros(3, np.int64), df.value.to_numpy() < 0, None
+    ... )
+    >>> d[2], dt[2]
+    (30.0, 20.0)
+  """
+  raw = carry.raw if carry is not None else {}
+  max_missed = _sentinel_bridge_max_missed_samples()
+  values = stats_df["value"].to_numpy(dtype=np.float64, copy=False)
+  times = stats_df["time"].to_numpy(dtype=np.float64, copy=False)
+  hosts = stats_df["host"].to_numpy()
+  n = len(values)
+  idx = np.arange(n)
+  is_first = np.ones(n, dtype=bool)
+  is_first[1:] = gid[1:] != gid[:-1]
+  is_last = np.ones(n, dtype=bool)
+  is_last[:-1] = gid[:-1] != gid[1:]
+  start = np.maximum.accumulate(np.where(is_first, idx, 0))
+  last_valid = np.maximum.accumulate(np.where(~sent, idx, -1))
+  prev = np.full(n, -1, dtype=np.int64)
+  prev[1:] = last_valid[:-1]
+  prev[prev < start] = -1
+  breaks = _sentinel_chain_breaks(stats_df, values, sent, raw)
+  # cum_breaks[k] = chain-breaking rows in [0, k).
+  cum_breaks = np.zeros(n + 1, dtype=np.int64)
+  np.cumsum(breaks, out=cum_breaks[1:])
+
+  delta = np.full(n, np.nan, dtype=np.float64)
+  bridge_dt = np.full(n, np.nan, dtype=np.float64)
+
+  rows = np.flatnonzero(~sent & (prev >= 0))
+  p = prev[rows]
+  gap = rows - p - 1
+  ok = (gap == 0) | (
+    (gap <= max_missed) & (cum_breaks[rows] == cum_breaks[p + 1])
+  )
+  for k in np.flatnonzero(ok & (gap > 0)):
+    i = rows[k]
+    if _restart_between(raw, hosts[i], times[p[k]], times[i]):
+      ok[k] = False
+  delta[rows[ok]] = values[rows[ok]] - values[p[ok]]
+  bridged = ok & (gap > 0)
+  bridge_dt[rows[bridged]] = times[rows[bridged]] - times[p[bridged]]
+
+  keys = None
+  if carry is not None:
+    keys = list(
+      zip(
+        *(stats_df[col].tolist() for col in _COUNTER_GROUP_COLS),
+        strict=True,
+      )
+    )
+  if raw:
+    for i in np.flatnonzero(~sent & (prev < 0)):
+      carried = raw.get(keys[i]) if keys is not None else None
+      if carried is None or not np.isfinite(carried[0]):
+        continue
+      lead = int(i - start[i])
+      missed = (carried[4] if len(carried) > 4 else 0.0) + lead
+      broken = (carried[5] if len(carried) > 5 else 0.0) > 0 or (
+        cum_breaks[i] != cum_breaks[start[i]]
+      )
+      if missed > 0 and (
+        missed > max_missed
+        or broken
+        or _restart_between(raw, hosts[i], carried[3], times[i])
+      ):
+        continue
+      delta[i] = values[i] - carried[0]
+      if missed > 0:
+        bridge_dt[i] = times[i] - carried[3]
+
+  if carry is not None:
+    wids = stats_df["wid"].to_numpy(dtype=np.float64, copy=False)
+    mults = stats_df["mult"].to_numpy(dtype=np.float64, copy=False)
+    for last in np.flatnonzero(is_last):
+      lv = int(last_valid[last])
+      seen = int(last - start[last] + 1)
+      if lv >= start[last]:
+        trail = int(last - lv)
+        raw[keys[last]] = (
+          float(values[lv]),
+          int(wids[last]),
+          float(mults[last]),
+          float(times[lv]),
+          float(trail),
+          float(cum_breaks[last + 1] != cum_breaks[lv + 1]),
+        )
+        continue
+      carried = raw.get(keys[last])
+      if carried is None or not np.isfinite(carried[0]):
+        continue
+      raw[keys[last]] = (
+        carried[0],
+        carried[1],
+        carried[2],
+        carried[3],
+        (carried[4] if len(carried) > 4 else 0.0) + seen,
+        float(
+          (carried[5] if len(carried) > 5 else 0.0) > 0
+          or cum_breaks[last + 1] != cum_breaks[start[last]]
+        ),
+      )
+  return delta, bridge_dt
 
 
 def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
@@ -3427,64 +3792,57 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
     order = np.lexsort((times, gid))
     stats_df = stats_df.iloc[order].reset_index(drop=True)
     gid = gid[order]
-    n = len(gid)
-    values = stats_df["value"].to_numpy(dtype=np.float64, copy=False)
-    same = np.ones(n, dtype=bool)
-    if n > 1:
-      same[1:] = gid[1:] == gid[:-1]
-    delta = np.empty(n, dtype=np.float64)
-    delta[0] = np.nan
-    if n > 1:
-      delta[1:] = np.where(same[1:], values[1:] - values[:-1], np.nan)
-    stats_df["delta"] = delta
-    is_first = np.ones(n, dtype=bool)
-    if n > 1:
-      is_first[1:] = gid[1:] != gid[:-1]
-    is_last = np.ones(n, dtype=bool)
-    if n > 1:
-      is_last[:-1] = gid[:-1] != gid[1:]
   else:
     stats_df = stats_df.sort_values(by=[*_COUNTER_GROUP_COLS, "time"])
-    stats_df["delta"] = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True)[
-      "value"
-    ].diff()
-    is_first = is_last = None
-
-  if carry is not None and carry.raw:
-    if is_first is not None:
-      first = stats_df.loc[is_first]
-    else:
-      first = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).head(1)
-    if not first.empty:
-      keys = list(
-        zip(
-          *(first[col].tolist() for col in _COUNTER_GROUP_COLS),
-          strict=True,
-        )
-      )
-      values = first["value"].to_numpy(dtype=np.float64, copy=False)
-      idxs = first.index.to_numpy()
-      raw = carry.raw
-      no_prev = (np.nan,)
-      prev_vals = np.fromiter(
-        (
-          (prev[0] if isinstance(prev, tuple) else prev["value"])
-          for prev in (raw.get(key, no_prev) for key in keys)
-        ),
-        dtype=np.float64,
-        count=len(keys),
-      )
-      hit = np.isfinite(prev_vals)
-      if hit.any():
-        stats_df.loc[idxs[hit], "delta"] = values[hit] - prev_vals[hit]
-
+    stats_df = stats_df.reset_index(drop=True)
+    gid = (
+      stats_df.groupby(_COUNTER_GROUP_COLS, observed=True, sort=False)
+      .ngroup()
+      .to_numpy()
+    )
+  n = len(gid)
   values = stats_df["value"].to_numpy(dtype=np.float64, copy=False)
-  wid = stats_df["wid"].to_numpy(dtype=np.float64, copy=False)
-  delta = np.array(
-    stats_df["delta"].to_numpy(dtype=np.float64, copy=False),
-    dtype=np.float64,
-    copy=True,
+  is_first = np.ones(n, dtype=bool)
+  is_first[1:] = gid[1:] != gid[:-1]
+  is_last = np.ones(n, dtype=bool)
+  is_last[:-1] = gid[:-1] != gid[1:]
+  sent = values < 0
+  raw = carry.raw if carry is not None else None
+
+  first_keys: list[Any] = []
+  carried_first: list[Any] = []
+  if raw:
+    first = stats_df.loc[is_first]
+    first_keys = list(
+      zip(
+        *(first[col].tolist() for col in _COUNTER_GROUP_COLS),
+        strict=True,
+      )
+    )
+    carried_first = [raw.get(key) for key in first_keys]
+  # A carried gap (the previous flush ended on sentinels) needs the sentinel
+  # rules even when this flush has none.
+  gap_pending = any(
+    c is not None and len(c) > 4 and c[4] > 0 for c in carried_first
   )
+  bridge_dt = None
+  if sent.any() or gap_pending:
+    delta, bridge_dt = _sentinel_deltas(stats_df, gid, sent, carry)
+  else:
+    delta = np.full(n, np.nan, dtype=np.float64)
+    if n > 1:
+      delta[1:] = np.where(is_first[1:], np.nan, values[1:] - values[:-1])
+    if carried_first:
+      prev_vals = np.fromiter(
+        (np.nan if c is None else c[0] for c in carried_first),
+        dtype=np.float64,
+        count=len(carried_first),
+      )
+      first_idx = np.flatnonzero(is_first)
+      hit = np.isfinite(prev_vals)
+      delta[first_idx[hit]] = values[first_idx[hit]] - prev_vals[hit]
+
+  wid = stats_df["wid"].to_numpy(dtype=np.float64, copy=False)
   finite_neg = (delta < 0) & np.isfinite(delta)
   if finite_neg.any():
     modulus = np.power(2.0, wid)
@@ -3499,12 +3857,11 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
     delta[finite_neg & ~one_wrap] = np.nan
   mult = stats_df["mult"].to_numpy(dtype=np.float64, copy=False)
   stats_df["delta"] = delta * mult
+  if bridge_dt is not None:
+    stats_df["_bridge_dt"] = bridge_dt
 
-  if carry is not None:
-    if is_last is not None:
-      last = stats_df.loc[is_last]
-    else:
-      last = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).tail(1)
+  if carry is not None and bridge_dt is None:
+    last = stats_df.loc[is_last]
     if not last.empty:
       keys = list(
         zip(
@@ -3520,6 +3877,8 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
             last["wid"].to_numpy(dtype=np.int64, copy=False).tolist(),
             last["mult"].to_numpy(dtype=np.float64, copy=False).tolist(),
             last["time"].to_numpy(dtype=np.float64, copy=False).tolist(),
+            [0.0] * len(keys),
+            [0.0] * len(keys),
             strict=True,
           ),
           strict=True,
@@ -3528,6 +3887,465 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
 
   stats_df.drop(columns=["wid", "mult"], inplace=True)
   return stats_df
+
+
+_SENTINEL_KEY_COLS = ("host", "type", "dev", "event", "unit", "time")
+
+
+def _collapse_out_dev(stats_df: Any) -> np.ndarray:
+  """
+  The ``dev`` each row has after ``_collapse_stats_with_deltas``.
+
+  ``j:`` stamps keep the stamp without the hardware device, keep-``dev``
+  types keep ``dev``, and every other type sums to ``''``.
+
+  Args:
+    stats_df (Any): Frame with ``type`` and ``dev`` columns.
+
+  Returns:
+    np.ndarray: Object array of collapsed device strings.
+
+  Examples:
+    >>> df = pd.DataFrame(
+    ...   {"type": ["cpu", "nvidia_gpu", "cpu"], "dev": ["0", "1", "j:9\\x1f3"]}
+    ... )
+    >>> _collapse_out_dev(df).tolist()
+    ['', '1', 'j:9']
+  """
+  dev = stats_df["dev"].astype(object).where(stats_df["dev"].notna(), "")
+  dev = dev.astype(str)
+  stamped = dev.str.startswith("j:")
+  keep = stats_df["type"].isin(KEEP_DEV_COLLAPSE_TYPES).to_numpy()
+  out = np.where(keep, dev.to_numpy(), "").astype(object)
+  if bool(stamped.any()):
+    cut = dev[stamped].str.split(_JOB_STAMP_DEV_SEP, n=1).str[0]
+    out[np.flatnonzero(stamped.to_numpy())] = cut.to_numpy()
+  return out
+
+
+def _collapse_is_sum_kind(typ: str, event: str) -> bool:
+  """
+  Report whether collapse sums ``delta`` across devices for this key.
+
+  Args:
+    typ (str): Stats type.
+    event (str): Event name.
+
+  Returns:
+    bool: False for the DCGM CPU-power cluster mean and NVIDIA max/mean
+    events, whose collapsed delta is not a sum of device deltas.
+
+  Examples:
+    >>> (
+    ...   _collapse_is_sum_kind("cpu", "user"),
+    ...   _collapse_is_sum_kind("nvidia_gpu", "temperature"),
+    ... )
+    (True, False)
+  """
+  if typ in _HOST_CPU_HW_TYPES and event in _DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS:
+    return False
+  if typ == "nvidia_gpu":
+    return _NVIDIA_EVENT_TO_CLASS.get(event) not in (
+      _NVIDIA_EVENT_CLASS_MAX,
+      _NVIDIA_EVENT_CLASS_MEAN,
+    )
+  return True
+
+
+def _sentinel_collapse_prep(
+  stats_df: Any, carry: Any | None = None
+) -> tuple[Any, Any]:
+  """
+  Take sentinel values out of collapse and record what collapse must restore.
+
+  Sentinel ``value`` becomes NaN, so every collapse kind sums or reduces the
+  valid devices only. For each collapsed key with no valid row the side record
+  keeps the modal code (ties go to the smallest magnitude) so the collapsed
+  row survives as that code; for keys with a bridged device delta it keeps
+  the bridged delta sum, the bridged rate sum and whether the key is
+  sum-kind.
+
+  Args:
+    stats_df (Any): Output of ``_apply_counter_deltas``.
+    carry (Any | None): ``DeltaCarryState`` whose ``arc`` holds each series'
+      previous sample time (run marks), or None.
+
+  Returns:
+    tuple[Any, Any]: ``(stats_df, side)``; ``side`` is None when the flush
+    took the plain delta path (no ``_bridge_dt`` column).
+
+  Examples:
+    >>> df = pd.DataFrame({"value": [1.0]})
+    >>> _sentinel_collapse_prep(df)[1] is None
+    True
+  """
+  if "_bridge_dt" not in stats_df.columns:
+    return stats_df, None
+  bridge_dt = stats_df.pop("_bridge_dt").to_numpy(dtype=np.float64)
+  values = stats_df["value"].to_numpy(dtype=np.float64, copy=True)
+  delta = stats_df["delta"].to_numpy(dtype=np.float64, copy=False)
+  sent = values < 0
+  bridged = np.isfinite(bridge_dt)
+  keys = DataFrame(
+    {
+      "host": stats_df["host"].astype(str).to_numpy(),
+      "type": stats_df["type"].astype(str).to_numpy(),
+      "dev": _collapse_out_dev(stats_df),
+      "event": stats_df["event"].astype(str).to_numpy(),
+      "unit": stats_df["unit"].astype(str).to_numpy(),
+      "time": stats_df["time"].to_numpy(dtype=np.float64),
+    }
+  )
+  key_id = (
+    keys.groupby(list(_SENTINEL_KEY_COLS), sort=False).ngroup().to_numpy()
+  )
+  n_keys = int(key_id.max()) + 1 if len(key_id) else 0
+  valid_n = np.bincount(key_id[~sent], minlength=n_keys)
+
+  restore: list[dict[str, Any]] = []
+  empty_keys = np.unique(key_id[sent])
+  empty_keys = empty_keys[valid_n[empty_keys] == 0]
+  if empty_keys.size:
+    rows = np.flatnonzero(sent & np.isin(key_id, empty_keys))
+    cand = DataFrame({"k": key_id[rows], "code": values[rows], "row": rows})
+    counts = cand.groupby(["k", "code"], sort=False).agg(
+      n=("row", "size"), row=("row", "first")
+    )
+    counts = counts.reset_index().sort_values(
+      ["k", "n", "code"], ascending=[True, False, False]
+    )
+    has_jid = "jid" in stats_df.columns
+    for _k, code, row in counts.drop_duplicates("k")[
+      ["k", "code", "row"]
+    ].itertuples(index=False):
+      rec = keys.iloc[int(row)].to_dict()
+      rec["value"] = float(code)
+      rec["delta"] = np.nan
+      if has_jid:
+        rec["jid"] = stats_df["jid"].iat[int(row)]
+      restore.append(rec)
+
+  bridge: dict[tuple, tuple[float, float, bool]] = {}
+  if bridged.any():
+    rows = np.flatnonzero(bridged)
+    sums = (
+      DataFrame(
+        {
+          "k": key_id[rows],
+          "bdelta": delta[rows],
+          "brate": delta[rows] / bridge_dt[rows],
+          "row": rows,
+        }
+      )
+      .groupby("k", sort=False)
+      .agg(
+        bdelta=("bdelta", "sum"), brate=("brate", "sum"), row=("row", "first")
+      )
+    )
+    for bdelta, brate, row in sums.itertuples(index=False):
+      rec = keys.iloc[int(row)]
+      key = tuple(rec[c] for c in _SENTINEL_KEY_COLS)
+      bridge[key] = (
+        float(bdelta),
+        float(brate),
+        _collapse_is_sum_kind(rec["type"], rec["event"]),
+      )
+
+  marks = _sentinel_run_marks(keys, sent, values, carry)
+  if sent.any():
+    stats_df["value"] = np.where(sent, np.nan, values)
+  return stats_df, {"restore": restore, "bridge": bridge, "marks": marks}
+
+
+def _sentinel_run_marks(
+  keys: Any, sent: np.ndarray, values: np.ndarray, carry: Any | None
+) -> list[dict[str, str]]:
+  """
+  Run-length ``host_sentinel_summary`` records for this flush, as marks.
+
+  Per collapsed series ``(host, type, dev, event)`` with any sentinel row, a
+  run of one code extends while consecutive samples keep that code with the
+  same device count and total device rows, and closes on a code change, a
+  count change or recovery. Records ride the side-mark channel (the Codon
+  twin returns the same 8-field marks) as ``kind="sentinel"``, ``host``,
+  ``time`` = run start and ``jids`` = tab-joined ``type, dev, event, code,
+  end, device_count, total_devices, prev_sample_time`` (empty when the
+  series has no earlier sample).
+
+  Args:
+    keys (Any): Per-row collapsed key frame (``_SENTINEL_KEY_COLS``).
+    sent (np.ndarray): Sentinel mask per row.
+    values (np.ndarray): Row values (codes on sentinel rows).
+    carry (Any | None): Carry whose ``arc`` holds each series' last time.
+
+  Returns:
+    list[dict[str, str]]: Marks, sorted by series, code and start.
+
+  Examples:
+    >>> k = pd.DataFrame(
+    ...   {
+    ...     "host": ["h"],
+    ...     "type": ["cpu"],
+    ...     "dev": [""],
+    ...     "event": ["user"],
+    ...     "unit": [""],
+    ...     "time": [10.0],
+    ...   }
+    ... )
+    >>> _sentinel_run_marks(k, np.array([True]), np.array([-2.0]), None)[0][
+    ...   "jids"
+    ... ]
+    'cpu\t\tuser\t-2\t10.0\t1\t1\t'
+  """
+  if not sent.any():
+    return []
+  arc = carry.arc if carry is not None else {}
+  sid = keys.groupby(["host", "type", "dev", "event"], sort=False).ngroup()
+  sid = sid.to_numpy()
+  hit = np.isin(sid, np.unique(sid[sent]))
+  times = keys["time"].to_numpy(dtype=np.float64)
+  per: dict[int, dict[float, dict[float, int]]] = {}
+  totals: dict[tuple[int, float], int] = {}
+  first_row: dict[int, int] = {}
+  for i in np.flatnonzero(hit):
+    s = int(sid[i])
+    t = float(times[i])
+    first_row.setdefault(s, int(i))
+    totals[(s, t)] = totals.get((s, t), 0) + 1
+    codes = per.setdefault(s, {}).setdefault(t, {})
+    if sent[i]:
+      codes[float(values[i])] = codes.get(float(values[i]), 0) + 1
+  out: list[dict[str, str]] = []
+  for s, by_time in per.items():
+    rec = keys.iloc[first_row[s]]
+    host, typ, dev, event = rec["host"], rec["type"], rec["dev"], rec["event"]
+    prev_t = arc.get((host, typ, dev, event))
+    prev_t = float(prev_t) if prev_t is not None else float("nan")
+    open_runs: dict[float, list[float]] = {}
+
+    def emit(code: float, run: list[float]) -> None:
+      """
+      Append one closed run of ``code`` as a ``kind=sentinel`` mark.
+
+      Args:
+        code (float): Sentinel code of the run.
+        run (list[float]): ``[start, end, device_count, total, prev]``.
+
+      Returns:
+        None
+
+      Examples:
+        >>> callable(emit)  # doctest: +SKIP
+        True
+      """
+      prev = "" if np.isnan(run[4]) else repr(run[4])
+      payload = [typ, dev, event, str(int(code)), repr(run[1])]
+      payload += [str(int(run[2])), str(int(run[3])), prev]
+      out.append(
+        {
+          "kind": "sentinel",
+          "jids": "\t".join(payload),
+          "jid": "",
+          "cpus": "",
+          "gpus": "",
+          "cg": "",
+          "time": repr(run[0]),
+          "host": host,
+        }
+      )
+
+    for t in sorted(by_time):
+      total = totals[(s, t)]
+      present = by_time[t]
+      for code in [c for c in open_runs if c not in present]:
+        emit(code, open_runs.pop(code))
+      for code, n in present.items():
+        run = open_runs.get(code)
+        if (
+          run is not None
+          and run[2] == n
+          and run[3] == total
+          and run[1] == prev_t
+        ):
+          run[1] = t
+          continue
+        if run is not None:
+          emit(code, run)
+        open_runs[code] = [t, t, float(n), float(total), prev_t]
+      prev_t = t
+    for code, run in open_runs.items():
+      emit(code, run)
+  out.sort(
+    key=lambda m: (m["host"], m["jids"].split("\t")[:4], float(m["time"]))
+  )
+  return out
+
+
+def _sentinel_restore_rows(collapsed: Any, side: Any) -> tuple[Any, dict]:
+  """
+  Add all-sentinel keys back as code rows and split off bridged deltas.
+
+  The returned map holds, per collapsed row label with a bridged device, the
+  original delta, the bridged rate and the sum-kind flag. That row's delta
+  is temporarily the non-bridged part, so arc divides only that part by the
+  row interval.
+
+  Args:
+    collapsed (Any): Output of ``_collapse_stats_with_deltas``.
+    side (Any): Second value from ``_sentinel_collapse_prep``.
+
+  Returns:
+    tuple[Any, dict]: ``(frame, fix)`` with ``fix`` = label ->
+    ``(delta, brate, sum_kind)``.
+
+  Examples:
+    >>> out, fix = _sentinel_restore_rows(
+    ...   pd.DataFrame(columns=list(_SENTINEL_KEY_COLS) + ["value", "delta"]),
+    ...   {"restore": [], "bridge": {}},
+    ... )
+    >>> fix
+    {}
+  """
+  if side["restore"]:
+    extra = DataFrame(side["restore"])
+    collapsed = collapsed.astype(
+      {
+        c: object
+        for c in ("host", "type", "dev", "event", "unit")
+        if c in collapsed.columns
+      }
+    )
+    # A reducer may still emit a row for an all-missing key (the NVIDIA OR
+    # class yields 0.0); the restored code row replaces it.
+    restored = {
+      tuple(r[c] for c in _SENTINEL_KEY_COLS) for r in side["restore"]
+    }
+    near = collapsed["time"].isin({k[5] for k in restored}).to_numpy()
+    if near.any():
+      sub = collapsed.loc[near, list(_SENTINEL_KEY_COLS)]
+      drop = [
+        label
+        for label, rec in zip(
+          sub.index, sub.itertuples(index=False), strict=True
+        )
+        if (
+          str(rec[0]),
+          str(rec[1]),
+          str(rec[2] or ""),
+          str(rec[3]),
+          str(rec[4]),
+          float(rec[5]),
+        )
+        in restored
+      ]
+      collapsed = collapsed.drop(index=drop)
+    collapsed = concat([collapsed, extra], ignore_index=True)
+    collapsed = collapsed.sort_values(by=[*_ARC_GROUP_COLS, "time"])
+  fix: dict[Any, tuple[float, float, bool]] = {}
+  bridge = side["bridge"]
+  if bridge and not collapsed.empty:
+    times = {k[5] for k in bridge}
+    cand = collapsed.index[collapsed["time"].isin(times).to_numpy()]
+    deltas = collapsed["delta"].to_numpy(dtype=np.float64, copy=True)
+    pos = collapsed.index.get_indexer(cand)
+    sub = collapsed.loc[cand, list(_SENTINEL_KEY_COLS)]
+    for label, p, rec in zip(
+      cand, pos, sub.itertuples(index=False), strict=True
+    ):
+      key = (
+        str(rec[0]),
+        str(rec[1]),
+        str(rec[2] or ""),
+        str(rec[3]),
+        str(rec[4]),
+        float(rec[5]),
+      )
+      hit = bridge.get(key)
+      if hit is None:
+        continue
+      bdelta, brate, sum_kind = hit
+      fix[label] = (deltas[p], brate, sum_kind)
+      deltas[p] = deltas[p] - bdelta
+    collapsed["delta"] = deltas
+  return collapsed, fix
+
+
+def _sentinel_bridge_arc(out: Any, fix: dict) -> Any:
+  """
+  Finish arc for rows with bridged devices and put their full delta back.
+
+  ``arc = (delta - bridged)/dt + sum(bridged_delta / bridged_dt)``: the
+  non-bridged part over the row interval plus each bridged device's rate over
+  its own gap. A row whose only contribution is bridged keeps the bridged
+  rate even without a row interval. Non-sum collapse kinds get NaN.
+
+  Args:
+    out (Any): Output of ``_apply_arc_and_finalize``.
+    fix (dict): Map from ``_sentinel_restore_rows``.
+
+  Returns:
+    Any: ``out`` with corrected ``arc`` and ``delta``.
+
+  Examples:
+    >>> _sentinel_bridge_arc(
+    ...   pd.DataFrame({"delta": [1.0], "arc": [1.0]}), {}
+    ... ).arc[0]
+    1.0
+  """
+  if not fix:
+    return out
+  labels = [lab for lab in fix if lab in out.index]
+  if not labels:
+    return out
+  arc = out.loc[labels, "arc"].to_numpy(dtype=np.float64, copy=True)
+  resid = out.loc[labels, "delta"].to_numpy(dtype=np.float64, copy=True)
+  full = np.array([fix[lab][0] for lab in labels], dtype=np.float64)
+  brate = np.array([fix[lab][1] for lab in labels], dtype=np.float64)
+  sum_kind = np.array([fix[lab][2] for lab in labels], dtype=bool)
+  part = np.where(resid == 0.0, 0.0, arc)
+  out.loc[labels, "arc"] = np.where(sum_kind, part + brate, np.nan)
+  out.loc[labels, "delta"] = full
+  return out
+
+
+def _compute_deltas_and_arc_impl(stats_df: Any, carry: Any | None) -> Any:
+  """
+  Delta, collapse and arc for one frame; shared by the whole-file and chunk APIs.
+
+  Args:
+    stats_df (Any): Parsed host rows with ``wid``/``mult``.
+    carry (Any | None): ``DeltaCarryState`` for chunked ingest, or None.
+
+  Returns:
+    Any: Collapsed rows with ``delta`` and ``arc``.
+
+  Examples:
+    >>> _compute_deltas_and_arc_impl(
+    ...   pd.DataFrame(), None
+    ... ).empty  # doctest: +SKIP
+    True
+  """
+  if not _stats_df_has_required_delta_cols(stats_df):
+    _warn_nonempty_stats_collapsed_to_empty(stats_df)
+    return _empty_delta_arc_frame()
+  with _held_parse_stage("delta_s"):
+    stats_df = _apply_counter_deltas(stats_df, carry=carry)
+  stats_df, side = _sentinel_collapse_prep(stats_df, carry)
+  stats_df = _collapse_stats_with_deltas(stats_df)
+  fix: dict = {}
+  if side is not None:
+    stats_df, fix = _sentinel_restore_rows(stats_df, side)
+  if stats_df.empty:
+    return stats_df
+  with _held_parse_stage("arc_s"):
+    stats_df = _apply_arc_and_finalize(stats_df, carry=carry)
+  if side is not None and side["marks"]:
+    from hpcperfstats.dbload.lib.monitor_mark_side_ingest import (
+      persist_monitor_marks,
+    )
+
+    persist_monitor_marks(side["marks"])
+  return _sentinel_bridge_arc(stats_df, fix)
 
 
 def _normalize_collapse_dev_column(stats_df: Any) -> Any:
@@ -3785,16 +4603,7 @@ def compute_deltas_and_arc(stats_df: Any) -> Any:
   Examples:
     >>> compute_deltas_and_arc(None)  # doctest: +SKIP
   """
-  if not _stats_df_has_required_delta_cols(stats_df):
-    _warn_nonempty_stats_collapsed_to_empty(stats_df)
-    return _empty_delta_arc_frame()
-  with _held_parse_stage("delta_s"):
-    stats_df = _apply_counter_deltas(stats_df)
-  stats_df = _collapse_stats_with_deltas(stats_df)
-  if stats_df.empty:
-    return stats_df
-  with _held_parse_stage("arc_s"):
-    return _apply_arc_and_finalize(stats_df)
+  return _compute_deltas_and_arc_impl(stats_df, None)
 
 
 def compute_deltas_and_arc_chunk(stats_df: Any, *, carry: Any) -> Any:
@@ -3817,16 +4626,7 @@ def compute_deltas_and_arc_chunk(stats_df: Any, *, carry: Any) -> Any:
   """
   if carry is None:
     raise ValueError("carry is required for incremental delta computation")
-  if not _stats_df_has_required_delta_cols(stats_df):
-    _warn_nonempty_stats_collapsed_to_empty(stats_df)
-    return _empty_delta_arc_frame()
-  with _held_parse_stage("delta_s"):
-    stats_df = _apply_counter_deltas(stats_df, carry=carry)
-  stats_df = _collapse_stats_with_deltas(stats_df)
-  if stats_df.empty:
-    return stats_df
-  with _held_parse_stage("arc_s"):
-    return _apply_arc_and_finalize(stats_df, carry=carry)
+  return _compute_deltas_and_arc_impl(stats_df, carry)
 
 
 def _line_starts_time_sample(line: Any, line_index: Any, start_idx: Any) -> Any:
@@ -3909,9 +4709,10 @@ def parse_stats_file_streaming_incremental(
     delta_carry (Any | None): ``DeltaCarryState`` (or compatible object with
       ``.raw``/``.arc`` dicts) passed to ``try_codon_parse_file_stream`` for
       marks and parsed-row counts on the Codon path.
-      Ignored on the CPython ``IncrementalStatsParser`` path, where the
-      caller's own ``compute_deltas_and_arc_chunk(..., carry=...)`` call
-      owns that continuity instead.
+      On the CPython ``IncrementalStatsParser`` path the parser writes the
+      ``$build`` / restart keys into it; the caller's own
+      ``compute_deltas_and_arc_chunk(..., carry=...)`` call owns counter
+      continuity.
 
   Returns:
     None
@@ -3966,7 +4767,9 @@ def parse_stats_file_streaming_incremental(
       )
     return
 
-  parser = IncrementalStatsParser(emission_start, exclude_types_list)
+  parser = IncrementalStatsParser(
+    emission_start, exclude_types_list, delta_carry=delta_carry
+  )
   pending_flush = False
   advise_sequential_read_for_paths(stats_file)
   try:

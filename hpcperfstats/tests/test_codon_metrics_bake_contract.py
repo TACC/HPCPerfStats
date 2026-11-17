@@ -25,20 +25,34 @@ def _stage_body(dockerfile: str, stage_name: str) -> str:
   return match.group(1)
 
 
+_EXPORTS = (
+  "copy_count_rows_c",
+  "copy_decode_c",
+  "group_reduce_c",
+  "residual_collapse_c",
+  "grid_mean_c",
+  "join_sorted_c",
+  "sentinel_samples_c",
+  "sentinel_fold_c",
+  "fill_interior_gaps_c",
+)
+
+
 def test_compile_unit_is_class_free_and_buffer_only() -> None:
   src = (_CODON / "metrics_kernels.py").read_text(encoding="utf-8")
   assert "\nclass " not in src
   assert "import numpy" not in src
-  for sym in (
-    "def copy_count_rows_c(",
-    "def copy_decode_c(",
-    "def group_reduce_c(",
-    "def residual_collapse_c(",
-    "def grid_mean_c(",
-    "def join_sorted_c(",
-  ):
-    assert sym in src, sym
-  assert src.count("\n@export\ndef ") == 6
+  for sym in _EXPORTS:
+    assert f"\n@export\ndef {sym}(" in src, sym
+  assert src.count("\n@export\ndef ") == len(_EXPORTS)
+
+
+def test_sentinel_sample_state_literals_match_python() -> None:
+  from hpcperfstats.analysis.metrics.lib import sentinel_profile as sp
+
+  src = (_CODON / "metrics_kernels.py").read_text(encoding="utf-8")
+  for name in ("SAMPLE_VALID", "SAMPLE_BRIDGED", "SAMPLE_GAP"):
+    assert f"\n{name} = {getattr(sp, name)}\n" in src, name
 
 
 def test_pyext_declares_gil_not_used_and_keeps_no_state() -> None:
@@ -63,14 +77,8 @@ def test_build_script_bakes_native_thinlto_with_ft_smoke_gate() -> None:
   assert "codon_metrics_pyext_314t_gil_off=pass" in text
   assert "codon_metrics_pyext_314t=pass" in text
   assert "RTLD_DEEPBIND" in text
-  for sym in (
-    "copy_count_rows_c",
-    "copy_decode_c",
-    "group_reduce_c",
-    "residual_collapse_c",
-    "grid_mean_c",
-    "join_sorted_c",
-  ):
+  assert "codon_metrics_sentinel_smoke=pass" in text
+  for sym in _EXPORTS:
     assert sym in text, sym
 
 

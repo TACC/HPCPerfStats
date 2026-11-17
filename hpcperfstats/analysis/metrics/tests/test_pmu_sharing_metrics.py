@@ -185,7 +185,7 @@ def test_sharing_metrics_are_catalog_rows_in_percent():
 
 def test_metrics_contract_version_bumped_for_sharing_metrics():
   """New catalog metrics recompute older jobs (contract 9)."""
-  assert metrics.METRICS_CONTRACT_VERSION == 9
+  assert metrics.METRICS_CONTRACT_VERSION >= 9
 
 
 def test_monitor_naming_resolves_pmu_sharing_keys():
@@ -213,7 +213,8 @@ def test_sharing_metrics_are_staff_only_but_stay_in_the_catalog():
     {"metric": "avg_pmu_running_pct"},
     {"metric": "avg_pmu_outside_pct"},
   ]
-  assert metrics.filter_staff_only_job_metrics(rows, True) is rows
+  # Staff keep every row (as new dicts: internal no_data_codes are dropped).
+  assert metrics.filter_staff_only_job_metrics(rows, True) == rows
   assert [
     r["metric"] for r in metrics.filter_staff_only_job_metrics(rows, False)
   ] == ["avg_flops"]

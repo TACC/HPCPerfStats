@@ -1057,12 +1057,17 @@ def codon_worker_parse_file_frames(
       "Codon pyext missing parse_stats_file_codon_open/next "
       "(file-owned parse requires baked kernel)"
     )
+  from hpcperfstats.dbload.lib.conf_parser import (
+    get_ingest_sentinel_bridge_max_missed_samples,
+  )
+
   opened = open_fn(
     path,
     int(flush_max_bytes),
     int(start_idx),
     int(slot),
     list(exclude) if exclude else None,
+    bridge_max=get_ingest_sentinel_bridge_max_missed_samples(),
   )
   if not opened:
     return

@@ -214,6 +214,13 @@ def plan_series(
   """
   fixes: list[RowFix] = []
   for time, time_s, value, old_delta, old_arc in rows:
+    # A negative value is a monitor value sentinel: ingest already set the
+    # sentinel row's and the next row's delta/arc (bridge or chain break).
+    if (value is not None and value < 0) or (
+      carry is not None and carry.value is not None and carry.value < 0
+    ):
+      carry = SeriesCarry(time_s, value)
+      continue
     delta = None
     arc = None
     if carry is not None:

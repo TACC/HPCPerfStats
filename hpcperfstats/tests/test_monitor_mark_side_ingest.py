@@ -224,3 +224,117 @@ def test_jobs_mark_without_affinity_writes_no_affinity_row(monkeypatch):
   monkeypatch.setattr(models.job_affinity, "objects", _Objects)
   persist_monitor_marks(marks)
   assert written == [("111", "hosta", ["0"])]
+
+
+def _sentinel_mark(start=100.0, end=110.0):
+  return {
+    "kind": "sentinel",
+    "jids": "\t".join(["cpu", "", "user", "-2", repr(end), "1", "2", ""]),
+    "time": start,
+    "host": "hostA",
+  }
+
+
+class _FakeQuerySet:
+  """Chainable stand-in for host_sentinel_summary.objects."""
+
+  def __init__(self, *, create_exc=None):
+    self.create_exc = create_exc
+    self.created = 0
+
+  def select_for_update(self):
+    return self
+
+  def filter(self, **_kw):
+    return self
+
+  def order_by(self, *_a):
+    return self
+
+  def first(self):
+    return None
+
+  def create(self, **_kw):
+    if self.create_exc is not None:
+      raise self.create_exc
+    self.created += 1
+
+
+def _patch_sentinel_db(monkeypatch, objects):
+  import contextlib
+
+  from django.db import transaction
+
+  from hpcperfstats.site.lib.machine import models
+
+  monkeypatch.setattr(models.host_sentinel_summary, "objects", objects)
+  monkeypatch.setattr(transaction, "atomic", contextlib.nullcontext)
+
+
+def test_sentinel_run_db_failure_is_logged_as_error_not_raised(
+  monkeypatch, caplog
+):
+  """Regression: a failed host_sentinel_summary write was swallowed by the
+  affinity try at WARNING with a generic message."""
+  from django.db import OperationalError
+
+  from hpcperfstats.dbload.lib.monitor_mark_side_ingest import (
+    persist_monitor_marks,
+  )
+
+  _patch_sentinel_db(
+    monkeypatch, _FakeQuerySet(create_exc=OperationalError("db down"))
+  )
+  with caplog.at_level("ERROR"):
+    persist_monitor_marks([_sentinel_mark()])
+  errors = [r for r in caplog.records if r.levelname == "ERROR"]
+  assert any(
+    "host_sentinel_summary write failed for 1 sentinel runs" in r.getMessage()
+    for r in errors
+  )
+
+
+def test_sentinel_run_lost_to_repeated_conflicts_is_reported(
+  monkeypatch, caplog
+):
+  from django.db import IntegrityError
+
+  from hpcperfstats.dbload.lib.monitor_mark_side_ingest import (
+    persist_monitor_marks,
+  )
+
+  _patch_sentinel_db(
+    monkeypatch, _FakeQuerySet(create_exc=IntegrityError("dup"))
+  )
+  with caplog.at_level("ERROR"):
+    persist_monitor_marks([_sentinel_mark()])
+  assert any(
+    "merge incomplete: written=0 malformed=0 lost=1 of 1 runs" in r.getMessage()
+    for r in caplog.records
+  )
+
+
+def test_affinity_failure_does_not_skip_sentinel_runs(monkeypatch):
+  from hpcperfstats.dbload.lib.monitor_mark_side_ingest import (
+    persist_monitor_marks,
+  )
+  from hpcperfstats.site.lib.machine import models
+
+  objects = _FakeQuerySet()
+  _patch_sentinel_db(monkeypatch, objects)
+
+  def boom(**_kw):
+    raise RuntimeError("affinity table broken")
+
+  monkeypatch.setattr(models.job_affinity.objects, "update_or_create", boom)
+  aff = {
+    "kind": "affinity",
+    "jid": "9",
+    "cpus": "0",
+    "gpus": "-",
+    "cg": "sched",
+    "time": 100.0,
+    "host": "hostA",
+  }
+  persist_monitor_marks([aff, _sentinel_mark()])
+  assert objects.created == 1

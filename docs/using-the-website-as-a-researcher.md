@@ -113,6 +113,13 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 
 On the page, rows are grouped under source subsections in fixed order **CPU → GPU → File System → Network → Misc**. Memory and NUMA metrics appear under **CPU**. Fabric metrics (InfiniBand, Omni-Path, Ethernet, LNET) appear under **Network**, which stays visible even when no network rows exist. GPU, File System, and Misc headings appear only when that section has at least one row. Within each subsection, order follows the API catalog (valued metrics before insufficient / not-computed).
 
+**Why a metric has no value.** A row without a value says **Data not available.** unless the page can tell you something you can act on. Two explanations are shown to everyone:
+
+- **"<collector> collector not found on this node's monitor"** (for example `host_ib collector not found on this node's monitor`): the monitoring on your job's nodes does not collect that family at all, such as a node without an InfiniBand adapter. Nothing went wrong with your job; that metric simply does not exist there.
+- **"<collector>: counter not present (n/N hosts)"**: the collector runs, but the specific hardware counter does not exist on n of your N nodes (for example a counter that this CPU model or adapter does not provide). Compare with jobs on other node types before reading anything into the gap.
+
+Other causes (a read that failed, counters busy with another tool, a monitor update in progress) are temporary site-side conditions. They are shown as **Data not available.**, and the site team sees the details. When such a gap is short, the value is still computed from the time the counters were readable, so you see the number without a note.
+
 | Metric key | Short label | What it summarizes | Diagnostic / performance interpretation |
 | ---------- | ----------- | ------------------ | --------------------------------------- |
 | `avg_blockbw` | Average local block-device throughput | Mean local block-device throughput | High values indicate local scratch/checkpoint pressure; unexpected nonzero can reveal spill to local disk. |
@@ -282,6 +289,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 
 - Signals: gaps in expected plot/metric continuity.
 - Check: `Device data` event coverage for expected signal families and compare with similar jobs.
+- Check: a **Metrics** row reading "collector not found" or "counter not present (n/N hosts)" means that signal does not exist on those nodes; it is not a gap in your job.
 
 ---
 
@@ -351,4 +359,5 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-10-19 | Shared-node jobs: metrics/plots job-scoped; `mem_hwm`/Summary mem prefer `host_mem_job`; red host-wide `?` footer when shared. |
 | 2026-10-20 | Shared-node `?` footer: CPU/GPU/job memory job-scoped when affinity/cgroup present; residual counters may still be host-wide. |
 | 2026-11-13 | CPU Multiprecision Mix pie shows the share of FP64 / FP32 / FP16 / INT16 / INT8 instructions (new `avg_fp64_instr`, `avg_fp32_instr`, `avg_fp16_instr`; INT rates now in Ginstr/s); `avg_flops64b` / `avg_flops32b` stay for older jobs only. Idle jobs say the telemetry is present but idle instead of missing. From monitor 3.1 on, Grace instruction and cycle rates are higher than before for the same work, because earlier releases under-counted them: about 3.3× on GB200 nodes (measured). Other Grace nodes have not been measured and may also rise, so compare jobs from before and after the upgrade with care. |
+| 2026-11-16 | Metrics tab no-data rows: everyone sees "collector not found on this node's monitor" and "counter not present (n/N hosts)"; other missing-value causes stay **Data not available.**, and short monitor read gaps no longer lower or zero a value. |
 | 2026-11-05 | Node power estimate on Grace nodes reads per-socket power meters (`host_power_socket`): GH200 module power when present, otherwise whole-socket power summed over sockets plus GPU power (socket power alone on GPU-less Grace/Grace and Vera nodes). Horizon GB200 CPU power read 0 before this monitor release, and GB200 and Grace/Grace estimates are now higher by the SoC and memory share. The retired per-CPU / per-GPU power copies only appear in older jobs, which keep the old estimate. |

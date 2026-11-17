@@ -27,8 +27,9 @@ def parse_stats_lines_codon(
 
 
 def parse_stats_file_codon_open(
-  path, flush, _start_idx=0, slot=0, exclude=None
+  path, flush, _start_idx=0, slot=0, exclude=None, bridge_max=-1
 ):
+  del bridge_max
   with open(path, encoding="utf-8") as fh:
     lines = fh.read().splitlines()
   _sessions[slot] = {"lines": lines, "i": 0, "exclude": ",".join(exclude or [])}

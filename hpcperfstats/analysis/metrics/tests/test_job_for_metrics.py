@@ -770,6 +770,7 @@ def test_job_arc_skips_orm_when_schema_rules_out_type(monkeypatch):
   t0 = django_tz.now()
   jt = SimpleNamespace(
     schema={"cpu": ["user", "system", "idle"]},
+    sentinel_sink=[],
     _base_filter={
       "time__gte": t0,
       "time__lte": t0,

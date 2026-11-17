@@ -92,6 +92,27 @@ def _pmu_sharing_oracle(table, metric):
   return 100.0 * min(1.0, max(0.0, 1.0 - ratio))
 
 
+def _schema_absence_reason_ok(table, row):
+  """
+  Contract 10 maps the generic no-sample reason of a metric whose type the
+  job schema never carried to "<type> collector not found ..." (value None,
+  ``no_data_codes.schema_absent``). True only when the row says so and the
+  named type really is absent from the table schema; values never map.
+  """
+  from hpcperfstats.analysis.metrics.lib.sentinel_reasons import (
+    schema_absence_reason,
+  )
+
+  codes = row.get("no_data_codes") or {}
+  if row.get("value") is not None or not codes.get("schema_absent"):
+    return False
+  typ = str(row["no_data_reason"]).split(" ", 1)[0]
+  return (
+    row["no_data_reason"] == schema_absence_reason(typ)
+    and typ not in table.schema
+  )
+
+
 _CPU_BUSY_EVENTS = ("user", "system", "nice")
 _CPU_IDLE_EVENTS = ("idle", "iowait", "irq", "softirq")
 
@@ -423,7 +444,7 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
       assert row["no_data_reason"] in (
         metrics_mod.NO_SIMPLE_SAMPLES_MSG,
         metrics_mod.NO_TIME_SERIES_MSG,
-      ), f"jid={jid} {key} reason"
+      ) or _schema_absence_reason_ok(table, row), f"jid={jid} {key} reason"
     _record_deviation("metrics_post_golden_catalog", key[1], 1.0)
   assert sorted(got) == sorted(exp), f"jid={jid} metric row keys differ"
   assert int(payload["distinct_time_count"]) == int(
@@ -450,6 +471,14 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
         f"jid={jid} {key}: {b['value']} vs oracle {oracle}"
       )
       _record_deviation("metrics_golden_null_defect", key[1], 1.0)
+      continue
+    if g.get(
+      "no_data_reason"
+    ) == metrics_mod.NO_SIMPLE_SAMPLES_MSG and _schema_absence_reason_ok(
+      table, b
+    ):
+      assert g["value"] is None, f"jid={jid} {key}: golden had a value"
+      _record_deviation("metrics_schema_absence_reason", key[1], 1.0)
       continue
     assert b.get("no_data_reason") == g.get("no_data_reason"), (
       f"jid={jid} {key} reason"

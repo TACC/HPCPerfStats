@@ -2,16 +2,18 @@
 
 Codon compile unit for the columnar update_metrics path (plan
 `update-metrics-codon-columnar`, Stage 6). CPython keeps the ORM, COPY I/O,
-probe orders, name resolution and Bokeh; this unit holds the two hot loops:
+probe orders, name resolution, sentinel classification and Bokeh; this unit
+holds the hot loops:
 
 | Path | Role |
 |------|------|
-| `metrics_kernels.py` | Class-free Codon kernels over caller buffers: `copy_count_rows_c` / `copy_decode_c` (K0 binary COPY decode with chunk-local name tables), `group_reduce_c` (count/sum/max per int64 key, stable row-order sums), `residual_collapse_c` (shared-node hardware SUM else `j:` MAX per key), `grid_mean_c`, `join_sorted_c` |
+| `metrics_kernels.py` | Class-free Codon kernels over caller buffers: `copy_count_rows_c` / `copy_decode_c` (K0 binary COPY decode with chunk-local name tables), `group_reduce_c` (count/sum/max per int64 key, stable row-order sums), `residual_collapse_c` (shared-node hardware SUM else `j:` MAX per key), `grid_mean_c`, `join_sorted_c`, and the value-sentinel folds `sentinel_samples_c` (per-sample valid/bridged/gap states, row-order sums), `sentinel_fold_c` (per-host 5-minute bucket means, gap flags, first-bucket drop, interior fill) and `fill_interior_gaps_c` |
 | `pyext_metrics_init.c` | Multi-phase `Py_MOD_GIL_NOT_USED` module `hpcperfstats_codon_metrics`; borrows NumPy buffers (buffer protocol), no state |
 | `build_codon_metrics_ext.sh` | In-image bake helper (Dockerfile `codon-build` stage only) |
 
 Bridge and NumPy reference: `hpcperfstats/analysis/metrics/lib/columnar/codon_bridge.py`,
-`segments.py`, `k0_decode.py`. Contract rule:
+`segments.py`, `k0_decode.py`, `hpcperfstats/analysis/metrics/lib/sentinel_profile.py`.
+Contract rule:
 `hpcperfstats/cursor-rules/update-metrics-columnar-codon-contract.mdc`.
 
 ## In-Dockerfile bake (only supported path)

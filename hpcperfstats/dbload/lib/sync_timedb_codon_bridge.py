@@ -11,6 +11,8 @@ locks). ``N`` is ``sync_ingest_pool_processes`` from the INI, capped at
 process-wide serialize lock.
 
 Attributes:
+  CODON_CARRY_BRIDGE_MAX_KEY: Reserved carry key holding the INI sentinel
+    bridge limit for the kernel.
   logger: Module logger for import/runtime Codon bridge diagnostics.
   CODON_EXT_ENV: Legacy env override for extension module import name (tests).
   CODON_FORCE_DISABLE_ENV: When set to a truthy value, always use CPython.
@@ -68,6 +70,9 @@ CODON_PROCESS_POOL_ENV = "HPCPERFSTATS_CODON_PROCESS_POOL"
 # Dockerfile codon-build install dir (supervisord PYTHONPATH; also self-wired).
 CODON_PARSE_DIR = "/opt/hpcperfstats/codon_parse"
 MAX_CODON_SLOTS = 128
+# Reserved carry key the kernel reads its sentinel bridge limit from
+# (``feed_collapse.CARRY_BRIDGE_MAX_KEY``).
+CODON_CARRY_BRIDGE_MAX_KEY = "\0cfg\0bridge_max"
 DEFAULT_CONTEXT_POOL_FRACTION = 1.0
 _sticky_codon_slot = threading.local()
 
@@ -1381,6 +1386,16 @@ def _normalize_codon_marks(raw_marks: Any) -> list[dict[str, Any]]:
           "host": str(host),
         }
       )
+    elif kind == "sentinel":
+      # Value-sentinel run (``host_sentinel_summary``); payload in ``jids``.
+      out.append(
+        {
+          "kind": "sentinel",
+          "jids": str(rec.get("jids") or ""),
+          "time": when,
+          "host": str(host),
+        }
+      )
   return out
 
 
@@ -1535,6 +1550,13 @@ def try_codon_parse_collapse(
   carry_raw = (
     dict(getattr(carry, "raw", None) or {}) if carry is not None else {}
   )
+  from hpcperfstats.dbload.lib.conf_parser import (
+    get_ingest_sentinel_bridge_max_missed_samples,
+  )
+
+  carry_raw[CODON_CARRY_BRIDGE_MAX_KEY] = [
+    float(get_ingest_sentinel_bridge_max_missed_samples())
+  ]
   carry_arc = (
     dict(getattr(carry, "arc", None) or {}) if carry is not None else {}
   )

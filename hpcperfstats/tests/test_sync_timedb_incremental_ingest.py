@@ -89,6 +89,8 @@ def _apply_counter_deltas_rowwise_ref(stats_df, carry=None):
         int(last["wid"]),
         float(last["mult"]),
         float(last["time"]),
+        0.0,  # sentinel samples missed since the last valid value
+        0.0,  # chain broken by a sentinel in that gap
       )
 
   stats_df.drop(columns=["wid", "mult"], inplace=True)

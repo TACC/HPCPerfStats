@@ -327,3 +327,94 @@ def test_pyext_file_session_gate_and_window_arm_match_source(
       c = ln.split("\t")
       got[(c[3], c[4], c[5])] += 1
   assert got == _source_shape(lines, start_idx)
+
+
+def test_pyext_line_batch_carry_keys_survive_round_trip(pyext: Any) -> None:
+  """Regression: carry keys join fields with NUL; the pyext used to copy them
+  NUL-terminated, so ``h\\0cpu\\0...`` arrived as ``h`` and every carried
+  delta/arc on the live (line-batch) path came back NULL."""
+  key = "h\0cpu\x000\0user"
+  reserved = "\0restart\0h"
+  lines = ["!cpu user,E,W=64,U=cs", "20.0 J1 h", "cpu 0 150"]
+  out = pyext.parse_stats_lines_codon(
+    lines,
+    0,
+    carry_raw={
+      key: [100.0, 64.0, 1.0, 10.0, 0.0, 0.0],
+      reserved: [1.0, 2.0, 3.0],
+    },
+    carry_arc={"h\0cpu\0\0user": 10.0},
+  )
+  assert out["stats"]["delta"] == [50.0]
+  assert out["stats"]["arc"] == [5.0]
+  assert out["carry_raw"][key] == [150.0, 64.0, 1.0, 20.0, 0.0, 0.0]
+  assert out["carry_raw"][reserved] == [1.0, 2.0, 3.0]
+  assert "h" not in out["carry_raw"]
+
+
+def _pyext_sentinel_rows(pyext: Any, flushes: list[list[str]]) -> dict:
+  carry_raw: dict = {"\0cfg\0bridge_max": [3.0]}
+  carry_arc: dict = {}
+  rows: dict = {}
+  for lines in flushes:
+    out = pyext.parse_stats_lines_codon(
+      list(lines), 0, carry_raw=carry_raw, carry_arc=carry_arc
+    )
+    carry_raw, carry_arc = out["carry_raw"], out["carry_arc"]
+    s = out["stats"]
+    for i in range(len(s["type"])):
+      key = (s["host"][i], s["type"][i], s["dev"][i], s["event"][i])
+      t = s["time"][i]
+      rows[(*key, t.timestamp() if hasattr(t, "timestamp") else float(t))] = (
+        s["value"][i],
+        s["delta"][i],
+        s["arc"][i],
+      )
+  return rows
+
+
+def test_pyext_sentinel_corpora_match_source(pyext: Any) -> None:
+  from hpcperfstats.tests.test_codon_feed_delta_collapse_arc import (
+    _assert_rows_match,
+    _codon_sentinel_rows,
+    _sentinel_corpora,
+  )
+
+  mod = _load_feed_collapse()
+  for name, flushes in _sentinel_corpora().items():
+    want = _codon_sentinel_rows(mod, flushes)
+    got = _pyext_sentinel_rows(pyext, flushes)
+    assert want, name
+    _assert_rows_match(
+      {
+        k: tuple(float("nan") if x is None else x for x in v)
+        for k, v in got.items()
+      },
+      want,
+    )
+
+
+def test_pyext_file_session_seeds_bridge_max(
+  pyext: Any, tmp_path: Path
+) -> None:
+  """``bridge_max`` seeds the cleared slot carry: 3 missed samples bridge at
+  3 and break at 2."""
+  lines = ["!host_ib rx_bytes,E,W=64,U=B", "$hostname hostA"]
+  for t, v in ((100, 0), (110, -3), (120, -3), (130, -3), (140, 40)):
+    lines += [f"{t} J1 hostA", f"host_ib mlx5_0.1 {v}"]
+  path = tmp_path / "stats.txt"
+  path.write_text("\n".join(lines) + "\n")
+
+  def delta_at_140(bridge_max: int) -> str:
+    assert pyext.parse_stats_file_codon_open(
+      str(path), 1 << 20, 0, 0, bridge_max=bridge_max
+    )
+    deltas = {}
+    while (frame := pyext.parse_stats_file_codon_next(0, 0)) is not None:
+      for ln in frame["stats"]["host_copy"].decode().splitlines():
+        c = ln.split("\t")  # HOST_DATA_COPY_COLUMNS: delta is column 8
+        deltas[float(c[7])] = c[8]
+    return deltas[40.0]
+
+  assert float(delta_at_140(3)) == 40.0
+  assert delta_at_140(2) == "\\N"

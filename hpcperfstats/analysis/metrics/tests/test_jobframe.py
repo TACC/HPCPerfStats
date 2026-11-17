@@ -141,3 +141,20 @@ def test_interner_is_stable_across_calls():
   assert [ni.host("a"), ni.host("b"), ni.host("a")] == [0, 1, 0]
   assert [ni.dev(""), ni.dev("0"), ni.dev("j:1"), ni.dev("0")] == [0, 1, -2, 1]
   assert ni.devs == ["", "0", "j:1"]
+
+
+def test_build_job_frame_takes_sentinel_codes_out_of_value():
+  """Monitor value sentinels are missing data for every reader; the code is
+  kept beside the value for coverage and reason building."""
+  f = JobFrame.from_records(
+    "1",
+    [
+      (1_000_000, "h", "host_ib", "rx_bytes", "", True, 10.0, None, None),
+      (2_000_000, "h", "host_ib", "rx_bytes", "", True, -3.0, None, None),
+      (3_000_000, "h", "host_ib", "rx_bytes", "", True, 0.0, None, None),
+    ],
+  )
+  f.check_contract()
+  assert f.sentinel.tolist() == [0, -3, 0]
+  assert np.isnan(f.value[1])
+  assert f.value[[0, 2]].tolist() == [10.0, 0.0]

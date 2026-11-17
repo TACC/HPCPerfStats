@@ -266,7 +266,8 @@ def test_packed_carry_tuple_matches_full_file_delta():
   )
   raw_val = next(iter(carry.raw.values()))
   assert isinstance(raw_val, tuple)
-  assert len(raw_val) == 4
+  # (value, wid, mult, time, missed sentinel samples, chain broken)
+  assert len(raw_val) == 6
 
 
 def test_incremental_flush_holds_compiled_schema(tmp_path):

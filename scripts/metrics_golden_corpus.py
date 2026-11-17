@@ -532,6 +532,7 @@ def _save_frame_npz(path: Path, frame: Any) -> None:
     value=frame.value,
     arc=frame.arc,
     delta=frame.delta,
+    sentinel=frame.sentinel,
     hosts=np.array(list(frame.hosts), dtype=object),
     series_type=np.array([t for t, _e in frame.series], dtype=object),
     series_event=np.array([e for _t, e in frame.series], dtype=object),
@@ -557,6 +558,12 @@ def load_frame_npz(path: Path) -> Any:
   from hpcperfstats.analysis.metrics.lib.columnar.jobframe import JobFrame
 
   with np.load(path, allow_pickle=True) as z:
+    # Captures before monitor value sentinels carry none: all-zero codes.
+    sentinel = (
+      z["sentinel"]
+      if "sentinel" in z.files
+      else np.zeros(z["value"].shape, dtype=np.int16)
+    )
     return JobFrame(
       jid=str(z["jid"]),
       time_us=z["time_us"],
@@ -567,6 +574,7 @@ def load_frame_npz(path: Path) -> Any:
       value=z["value"],
       arc=z["arc"],
       delta=z["delta"],
+      sentinel=sentinel,
       hosts=[str(h) for h in z["hosts"].tolist()],
       series=list(
         zip(

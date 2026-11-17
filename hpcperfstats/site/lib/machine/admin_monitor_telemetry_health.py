@@ -16,7 +16,12 @@ Attributes:
   HOST_SAMPLE_LIMIT: Max Valkey FQDNs included in the aggregate scan.
   INFORMATIONAL_ALL_ZERO_CAP: Cap for low-severity all-zero findings retained.
   STATEMENT_TIMEOUT_MS: Per-query PostgreSQL statement_timeout (milliseconds).
+  TRANSIENT_SENTINEL_CODES: Flapping-source codes behind
+    ``transient_sentinel_rate`` (read failed, failure backoff).
+  TRANSIENT_SENTINEL_RATE_FRAC: Window share of those codes' runs that raises
+    ``transient_sentinel_rate`` for a host's type/event.
   WINDOW_HOURS: Lookback window for the aggregate scan.
+  _SENTINEL_CODE_SQL: Per-row sentinel bucket (the negative code, else 0).
   logger: Module logger for soft-fail warnings.
 """
 
@@ -39,6 +44,7 @@ from hpcperfstats.dbload.lib.monitor_naming.canonical import (
   HOST_NET_TYPE,
   HOST_NUMA_TYPE,
 )
+from hpcperfstats.lib import monitor_sentinel
 from hpcperfstats.lib.monitor_identity import load_monitor_identities_for_hosts
 from hpcperfstats.site.lib.machine.cache_utils import (
   KEY_ADMIN_TELEMETRY_HEALTH,
@@ -78,6 +84,17 @@ EXPECTED_CORE_TYPES: tuple[str, ...] = (
   HOST_NUMA_TYPE,
 )
 
+# host_data ``value < 0`` is a monitor value sentinel, never data.
+_SENTINEL_CODE_SQL = "CASE WHEN value < 0 THEN value::int ELSE 0 END"
+
+TRANSIENT_SENTINEL_CODES: frozenset[int] = frozenset(
+  c.code
+  for c in monitor_sentinel.CATALOG.values()
+  if c.slug in ("READ_FAILED", "BACKOFF")
+)
+
+TRANSIENT_SENTINEL_RATE_FRAC = 0.05
+
 ACTIONABLE_FINDING_KINDS: frozenset[str] = frozenset(
   {
     "incomplete_scan",
@@ -100,6 +117,7 @@ def _finding(
   event_name: str | None = None,
   row_count: int | None = None,
   fqdn: str | None = None,
+  sentinel_codes: Mapping[int, int] | None = None,
 ) -> dict[str, Any]:
   """
   Build one severity-classified finding for the telemetry_health payload.
@@ -112,6 +130,8 @@ def _finding(
     event_name (str | None): Optional event name.
     row_count (int | None): Optional row count for all-zero findings.
     fqdn (str | None): Optional host FQDN for per-host findings.
+    sentinel_codes (Mapping[int, int] | None): Optional sentinel code ->
+      row count, emitted as ``{slug: count}``.
 
   Returns:
     dict[str, Any]: Finding mapping (omits None optional fields).
@@ -130,6 +150,11 @@ def _finding(
     "severity": severity,
     "message": message,
   }
+  if sentinel_codes:
+    out["sentinel_codes"] = {
+      monitor_sentinel.lookup(int(c)).slug: int(n)
+      for c, n in sorted(sentinel_codes.items(), reverse=True)
+    }
   if type_name is not None:
     out["type"] = type_name
   if event_name is not None:
@@ -323,6 +348,7 @@ def build_telemetry_health_payload(
   hosts_sampled: int | None = None,
   hosts_sampled_fqdns: Sequence[str] | None = None,
   monitor_identities: Sequence[Mapping[str, Any]] | None = None,
+  sentinel_run_shares: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
   """
   Build the Admin Monitor ``telemetry_health`` response from aggregate rows.
@@ -351,6 +377,10 @@ def build_telemetry_health_payload(
     hosts_sampled (int | None): Count of Valkey FQDNs included in the scan;
       included in ``ok_summary`` when not None.
     hosts_sampled_fqdns (Sequence[str] | None): Sampled FQDN list.
+    sentinel_run_shares (Sequence[Mapping[str, Any]] | None): Rows of
+      :func:`_fetch_sentinel_run_shares` (``fqdn``, ``type``, ``event``,
+      ``code``, ``share``) for the ``persistent_not_updated`` and
+      ``transient_sentinel_rate`` findings.
     monitor_identities (Sequence[Mapping[str, Any]] | None): Valkey identity
       documents for sampled hosts.
 
@@ -495,8 +525,27 @@ def build_telemetry_health_payload(
     type_name = str(row.get("type") or "")
     if type_name:
       observed_types.add(type_name)
+    codes = dict(row.get("sentinel_codes") or {})
+    if codes and type_name in core_set:
+      findings.append(
+        _finding(
+          kind="sentinel_core_event",
+          severity="medium",
+          message=(
+            "Core type/event has monitor value sentinels (values the "
+            "monitor could not read) in the sampled window."
+          ),
+          type_name=type_name,
+          event_name=str(row.get("event") or ""),
+          row_count=int(row.get("row_count") or 0),
+          sentinel_codes=codes,
+        )
+      )
     if bool(row.get("has_nonzero")):
       nonzero_pairs += 1
+      continue
+    # Rows that are all sentinels are unreadable, not all-zero.
+    if codes and sum(codes.values()) >= int(row.get("row_count") or 0):
       continue
     zero_rows.append(row)
 
@@ -591,6 +640,7 @@ def build_telemetry_health_payload(
         )
       )
 
+  findings.extend(sentinel_run_findings(sentinel_run_shares or ()))
   actionable_findings = [
     f for f in findings if str(f.get("kind") or "") in ACTIONABLE_FINDING_KINDS
   ]
@@ -652,6 +702,178 @@ def build_telemetry_health_payload(
   }
 
 
+def sentinel_run_findings(
+  shares: Sequence[Mapping[str, Any]],
+  *,
+  not_updated_frac: float | None = None,
+) -> list[dict[str, Any]]:
+  """
+  Staff findings from ``host_sentinel_summary`` window shares.
+
+  ``persistent_not_updated``: ``NOT_UPDATED`` (-1) runs cover more than
+  ``[PORTAL] telemetry_persistent_not_updated_frac`` of the window for a
+  host's type/event. Every monitor failure site sets an explicit code, so a
+  persistent ``-1`` is an uncovered failure path (a monitor bug); a brief
+  ``-1`` (one tick after a restart) is normal. ``transient_sentinel_rate``:
+  read-failed / backoff runs cover more than ``TRANSIENT_SENTINEL_RATE_FRAC``,
+  which points at flapping hardware or drivers before they fail for good.
+
+  Args:
+    shares (Sequence[Mapping[str, Any]]): ``fqdn``, ``type``, ``event``,
+      ``code``, ``share`` rows.
+    not_updated_frac (float | None): Threshold override; None reads INI.
+
+  Returns:
+    list[dict[str, Any]]: Findings, by host, type and event.
+
+  Examples:
+    >>> sentinel_run_findings(
+    ...   [
+    ...     {
+    ...       "fqdn": "h",
+    ...       "type": "host_ib",
+    ...       "event": "rx",
+    ...       "code": -1,
+    ...       "share": 0.9,
+    ...     }
+    ...   ],
+    ...   not_updated_frac=0.5,
+    ... )[0]["kind"]
+    'persistent_not_updated'
+  """
+  if not_updated_frac is None:
+    import hpcperfstats.dbload.lib.conf_parser as cfg
+
+    not_updated_frac = cfg.get_telemetry_persistent_not_updated_frac()
+  out: list[dict[str, Any]] = []
+  flapping: dict[tuple[str, str, str], dict[int, float]] = {}
+  for row in shares:
+    code, share = int(row["code"]), float(row["share"])
+    key = (str(row["fqdn"]), str(row["type"]), str(row["event"]))
+    if code == -1 and share > not_updated_frac:
+      out.append(
+        _finding(
+          kind="persistent_not_updated",
+          severity="medium",
+          message=(
+            f"NOT_UPDATED (-1) covers {round(100 * share)}% of the window: "
+            "a monitor failure path sets no reason code (instrumentation "
+            "gap)."
+          ),
+          type_name=key[1],
+          event_name=key[2],
+          fqdn=key[0],
+        )
+      )
+    elif code in TRANSIENT_SENTINEL_CODES:
+      flapping.setdefault(key, {})[code] = share
+  for (fqdn, type_name, event_name), by_code in sorted(flapping.items()):
+    total = sum(by_code.values())
+    if total <= TRANSIENT_SENTINEL_RATE_FRAC:
+      continue
+    out.append(
+      _finding(
+        kind="transient_sentinel_rate",
+        severity="medium",
+        message=(
+          f"Read failures / backoff cover {round(100 * total)}% of the "
+          "window: flapping hardware or driver."
+        ),
+        type_name=type_name,
+        event_name=event_name,
+        fqdn=fqdn,
+        sentinel_codes={c: round(100 * v) for c, v in by_code.items()},
+      )
+    )
+  return out
+
+
+def _covered_seconds(intervals: Sequence[tuple[float, float]]) -> float:
+  """
+  Length of the union of ``[start, end]`` intervals (seconds).
+
+  Archive and live ingest can write overlapping runs, so shares union them.
+
+  Args:
+    intervals (Sequence[tuple[float, float]]): Clipped intervals.
+
+  Returns:
+    float: Covered seconds.
+
+  Examples:
+    >>> _covered_seconds([(0, 10), (5, 20), (30, 31)])
+    21.0
+  """
+  total = 0.0
+  cur_lo = cur_hi = None
+  for lo, hi in sorted(intervals):
+    if cur_hi is None or lo > cur_hi:
+      if cur_hi is not None:
+        total += cur_hi - cur_lo
+      cur_lo, cur_hi = lo, hi
+    else:
+      cur_hi = max(cur_hi, hi)
+  if cur_hi is not None:
+    total += cur_hi - cur_lo
+  return float(total)
+
+
+def _fetch_sentinel_run_shares(
+  fqdns: Sequence[str],
+  *,
+  window_hours: int,
+  now: datetime,
+  host_batch_size: int | None = None,
+) -> list[dict[str, Any]]:
+  """
+  Window share of each host/type/event/code's sentinel runs.
+
+  Reads only ``host_sentinel_summary`` (runs overlapping the window, host
+  batches on its ``(host, start_time, end_time)`` index): share = union of
+  run time inside the window / window time. No ``host_data`` scan.
+
+  Args:
+    fqdns (Sequence[str]): Sampled hosts.
+    window_hours (int): Lookback hours.
+    now (datetime): Window end.
+    host_batch_size (int | None): Hosts per query; ``HOST_BATCH_SIZE`` when
+      None.
+
+  Returns:
+    list[dict[str, Any]]: ``fqdn``, ``type``, ``event``, ``code``, ``share``.
+
+  Examples:
+    >>> _fetch_sentinel_run_shares([], window_hours=12, now=dj_timezone.now())
+    []
+  """
+  from hpcperfstats.site.lib.machine.models import host_sentinel_summary
+
+  window_s = max(1, int(window_hours)) * 3600.0
+  hi = now.timestamp()
+  lo = hi - window_s
+  start = datetime.fromtimestamp(lo, tz=UTC)
+  batch = max(1, int(host_batch_size or HOST_BATCH_SIZE))
+  spans: dict[tuple[str, str, str, int], list[tuple[float, float]]] = {}
+  hosts = list(fqdns)
+  for i in range(0, len(hosts), batch):
+    rows = host_sentinel_summary.objects.filter(
+      host__in=hosts[i : i + batch], end_time__gte=start, start_time__lte=now
+    ).values_list("host", "type", "event", "code", "start_time", "end_time")
+    for host, typ, event, code, t0, t1 in rows:
+      span = (max(lo, t0.timestamp()), min(hi, t1.timestamp()))
+      spans.setdefault((host, typ, event, int(code)), []).append(span)
+  return [
+    {
+      "fqdn": host,
+      "type": typ,
+      "event": event,
+      "code": code,
+      "share": _covered_seconds(iv) / window_s,
+    }
+    for (host, typ, event, code), iv in sorted(spans.items())
+  ]
+
+
 def _is_statement_timeout(exc: BaseException) -> bool:
   """
   Return True when ``exc`` looks like a PostgreSQL statement timeout.
@@ -680,7 +902,8 @@ def _merge_type_event_batches(
   batches: Sequence[Sequence[Mapping[str, Any]]],
 ) -> list[dict[str, Any]]:
   """
-  Merge per-batch (type, event) aggregates by summing counts and OR-ing nonzero.
+  Merge per-batch (type, event) aggregates: sum counts, OR nonzero, and sum
+  per-code sentinel row counts.
 
   Args:
     batches (Sequence[Sequence[Mapping[str, Any]]]): Rows from each
@@ -710,7 +933,7 @@ def _merge_type_event_batches(
     ...     ],
     ...   ]
     ... )
-    [{'type': 'a', 'event': 'e', 'row_count': 3, 'has_nonzero': True}]
+    [{'type': 'a', 'event': 'e', 'row_count': 3, 'has_nonzero': True, 'sentinel_codes': {}}]
   """
   merged: dict[tuple[str, str], dict[str, Any]] = {}
   for batch in batches:
@@ -721,16 +944,22 @@ def _merge_type_event_batches(
       existing = merged.get(key)
       row_count = int(row.get("row_count") or 0)
       has_nonzero = bool(row.get("has_nonzero"))
+      codes = dict(row.get("sentinel_codes") or {})
       if existing is None:
         merged[key] = {
           "type": type_name,
           "event": event_name,
           "row_count": row_count,
           "has_nonzero": has_nonzero,
+          "sentinel_codes": codes,
         }
       else:
         existing["row_count"] = int(existing["row_count"]) + row_count
         existing["has_nonzero"] = bool(existing["has_nonzero"]) or has_nonzero
+        for code, n in codes.items():
+          existing["sentinel_codes"][code] = (
+            existing["sentinel_codes"].get(code, 0) + n
+          )
   return [merged[k] for k in sorted(merged.keys())]
 
 
@@ -787,19 +1016,20 @@ def _fetch_type_event_aggregates(
     )
   sampled = fqdns[:sample_limit]
 
-  sql = """
+  sql = f"""
         SELECT type,
                event,
+               {_SENTINEL_CODE_SQL} AS code,
                COUNT(*)::bigint AS row_count,
                BOOL_OR(
-                 COALESCE(value, 0) <> 0 OR COALESCE(arc, 0) <> 0
+                 (value >= 0 AND value <> 0) OR COALESCE(arc, 0) <> 0
                ) AS has_nonzero
         FROM host_data
         WHERE host = ANY(%s::text[])
           AND time >= now() - (%s * INTERVAL '1 hour')
           AND type NOT ILIKE '%%error%%'
           AND event NOT ILIKE '%%error%%'
-        GROUP BY type, event
+        GROUP BY type, event, code
         ORDER BY type, event
     """
   batches: list[list[dict[str, Any]]] = []
@@ -817,6 +1047,7 @@ def _fetch_type_event_aggregates(
       for (
         type_name,
         event_name,
+        code,
         row_count,
         has_nonzero,
       ) in cursor.fetchall():
@@ -826,6 +1057,9 @@ def _fetch_type_event_aggregates(
             "event": event_name,
             "row_count": int(row_count or 0),
             "has_nonzero": bool(has_nonzero),
+            "sentinel_codes": (
+              {int(code): int(row_count or 0)} if code else {}
+            ),
           }
         )
       batches.append(batch_rows)
@@ -889,6 +1123,9 @@ def compute_telemetry_health(*, force_refresh: bool = False) -> dict[str, Any]:
         hosts_sampled=len(sampled_fqdns),
         hosts_sampled_fqdns=sampled_fqdns,
         monitor_identities=identities,
+        sentinel_run_shares=_fetch_sentinel_run_shares(
+          sampled_fqdns, window_hours=WINDOW_HOURS, now=computed_at
+        ),
       )
   except EmptyRecentHostInventory as exc:
     logger.warning("admin_monitor telemetry_health skipped: %s", exc)

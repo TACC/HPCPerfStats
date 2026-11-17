@@ -23,6 +23,8 @@ Attributes:
   _COMPLEX_NO_DATA_REASONS: Attribute.
   _COMPLEX_PLACEHOLDER_TYPE_UNITS: Attribute.
   _GPU_JOB_DETAIL_CATALOG: Attribute.
+  _GPU_VALUE_REASON_TYPES: GPU types the vendor-ordered GPU gauge metrics
+    read; none in the schema means no GPU collector.
   _HOST_DATA_ROWS_MEMO_MAX_TIME_IN: Attribute.
   _MAX_FABRIC_BW_SANITY_MB_S: Attribute.
   _MAX_SANE_GPU_LINK_GBPS: Attribute.
@@ -81,6 +83,12 @@ from hpcperfstats.analysis.metrics.lib.job_detail_fsio import (
 )
 from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
   LLITE_METADATA_IOPS_EVENTS,
+)
+from hpcperfstats.analysis.metrics.lib.sentinel_reasons import (
+  no_data_reason as sentinel_no_data_reason,
+  quality_codes,
+  quality_note,
+  researcher_visible,
 )
 from hpcperfstats.dbload.lib.db_unavailable import DatabaseUnavailableExit
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
@@ -409,6 +417,7 @@ def _sanitize_metrics_compute_rows(rows: Any) -> Any:
         "units": _coerce_metrics_identity_str(row.get("units")),
         "value": row.get("value"),
         "no_data_reason": row.get("no_data_reason"),
+        "no_data_codes": row.get("no_data_codes"),
       }
     )
   return out
@@ -668,7 +677,12 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # avg_pmu_outside_pct (100 x (1 - running / pmu_solo_running_time), clamped
 # 0-100) on host_cpu_hw. Jobs without the keys (monitor 3.1 and older) store
 # NO_SIMPLE_SAMPLES_MSG for both.
-METRICS_CONTRACT_VERSION = 9
+# 10 (2026-11-16): monitor value sentinels. A metric without a value
+# explains itself from the host_sentinel_summary runs ("<type>: <reason>
+# (n/N hosts)") or, when the schema lacks the type, "collector not found";
+# the codes are stored in metrics_data.no_data_codes for the Job Detail
+# audience split.
+METRICS_CONTRACT_VERSION = 10
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.
@@ -683,6 +697,82 @@ _GPU_JOB_DETAIL_CATALOG = (
 )
 
 NO_GPU_AGGREGATE_TELEMETRY = "No usable GPU aggregate telemetry for job detail"
+_GPU_VALUE_REASON_TYPES = (
+  *type_probe_names("nvidia_gpu"),
+  *type_probe_names("amd_gpu"),
+)
+
+
+def _metric_reason_fields(
+  jt: Any,
+  value: Any,
+  types: Any,
+  events: Any,
+  legacy_reason: str,
+  check_schema: bool,
+) -> dict[str, Any]:
+  """
+  ``no_data_reason`` / ``no_data_codes`` of one metric row.
+
+  A row without a value is explained by the schema-absence text or by its
+  sentinel evidence: the job's ``host_sentinel_summary`` runs plus the hosts
+  the fold excluded as static (``jt.sentinel_sink``), else the coverage note
+  of a fold under the floor; jobs without either keep ``legacy_reason`` and
+  no codes. A valued row the sentinel rules touched carries the staff
+  quality note and its codes; other valued rows carry neither.
+
+  Args:
+    jt (Any): ``ColumnarJobTable`` of the job.
+    value (Any): Metric value, or None.
+    types (Any): Probe-expanded type names (sequence of str); the first
+      names the type in the reason.
+    events (Any): Probe-expanded event names, or None / empty for every
+      event of ``types``.
+    legacy_reason (str): Generic reason without sentinel evidence.
+    check_schema (bool): The metric reads only ``types``, so their absence
+      from ``jt.schema`` means the collector is missing.
+
+  Returns:
+    dict[str, Any]: ``{"no_data_reason": str, "no_data_codes": dict | None}``.
+
+  Examples:
+    >>> from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    ...   table_from_records,
+    ... )
+    >>> jt = table_from_records(
+    ...   [(1, "h", "host_cpu", "user", None, 1.0, 1.0, None)]
+    ... )
+    >>> _metric_reason_fields(jt, None, ["host_ib"], None, "x", True)[
+    ...   "no_data_codes"
+    ... ]
+    {'codes': {}, 'schema_absent': True}
+  """
+  records = [q for q in jt.sentinel_sink if not q.clean]
+  if value is not None:
+    if not records:
+      return {"no_data_reason": None, "no_data_codes": None}
+    return {
+      "no_data_reason": quality_note(records),
+      "no_data_codes": quality_codes(records),
+    }
+  frame_histogram: dict[int, set[str]] = {}
+  for q in records:
+    for host, code in q.excluded.items():
+      frame_histogram.setdefault(code, set()).add(host)
+  reason, codes = sentinel_no_data_reason(
+    schema=getattr(jt, "schema", None),
+    runs=jt.sentinel_runs(),
+    types=list(types),
+    events=events,
+    n_hosts=len(jt.acct_host_list or jt.host_list),
+    legacy_reason=legacy_reason,
+    check_schema=check_schema,
+    frame_histogram=frame_histogram,
+  )
+  if codes is None and records:
+    reason = quality_note(records) or legacy_reason
+    codes = quality_codes(records)
+  return {"no_data_reason": reason, "no_data_codes": codes}
 
 
 def _per_interval_rate(values: Any, t: Any) -> Any:
@@ -1538,6 +1628,7 @@ def _persist_metrics_batch(
         units=_coerce_metrics_identity_str(item["units"]),
         value=item["value"],
         no_data_reason=item.get("no_data_reason"),
+        no_data_codes=item.get("no_data_codes"),
       )
       for item in by_key.values()
     ]
@@ -1546,7 +1637,7 @@ def _persist_metrics_batch(
       metrics_data.objects.bulk_create(
         rows,
         update_conflicts=True,
-        update_fields=["units", "value", "no_data_reason"],
+        update_fields=["units", "value", "no_data_reason", "no_data_codes"],
         unique_fields=["jid", "type", "metric"],
       )
     if distinct_time_count is not None and jids:
@@ -2278,6 +2369,7 @@ class Metrics:
     rows_cache: Any | None = None,
     nonnegative_rate: bool = False,
     host_aggregate: str = "mean",
+    align_events: Any | None = None,
   ) -> Any:
     """
     Aggregate ``arc`` by host and 5-minute bucket from the job's JobFrame.
@@ -2302,6 +2394,8 @@ class Metrics:
       rows_cache (Any | None): Unused; the signature is kept stable.
       nonnegative_rate (bool): Drop negative samples.
       host_aggregate (str): ``mean`` or ``sum`` across hosts.
+      align_events (Any | None): Event names of the other side of a derived
+        ratio; a sample that is a sentinel gap there is a gap here too.
 
     Returns:
       Any: Metric value, or None without samples.
@@ -2324,9 +2418,12 @@ class Metrics:
         float(conv),
         bool(nonnegative_rate),
         agg,
+        _hashable_metric_events_signature(align_events),
       )
       if cache_key in cache:
+        jt.sentinel_sink.extend(cache[("q", *cache_key)])
         return cache[cache_key]
+    sink_mark = len(jt.sentinel_sink)
     schema = getattr(jt, "schema", None)
     value = None
     if _metric_type_events_feasible(schema, typename, events):
@@ -2340,11 +2437,17 @@ class Metrics:
           float(conv),
           nonnegative=nonnegative_rate,
           host_aggregate=agg,
+          align_events=_flatten_event_names_for_host_data_query(
+            align_events, typ=typ
+          )
+          if align_events
+          else None,
         )
         if value is not None:
           break
     if cache is not None:
       cache[cache_key] = value
+      cache[("q", *cache_key)] = jt.sentinel_sink[sink_mark:]
     return value
 
   def job_value_mean(
@@ -2365,8 +2468,11 @@ class Metrics:
     Raw samples (NULL kept as NaN) are averaged per ``(host, bucket)``; a
     bucket of only NaN samples still counts for the first-bucket drop.
     ``reject_dcgm_blank`` NaNs out DCGM blank-family gauges and drops
-    non-finite rows first. ``max_sane`` (after ``conv``) rejects impossible
-    magnitudes as missing.
+    non-finite rows first (those GPU gauges keep this fold); otherwise a
+    probe type with monitor value sentinels folds through
+    ``jt.sentinel_fold_value`` (static hosts excluded, interior gaps
+    filled), its quality landing in ``jt.sentinel_sink``. ``max_sane``
+    (after ``conv``) rejects impossible magnitudes as missing.
 
     Args:
       jt (Any): ``ColumnarJobTable`` of the job.
@@ -2401,36 +2507,45 @@ class Metrics:
         None if max_sane is None else float(max_sane),
       )
       if cache_key in cache:
+        jt.sentinel_sink.extend(cache[("q", *cache_key)])
         return cache[cache_key]
+    sink_mark = len(jt.sentinel_sink)
     schema = getattr(jt, "schema", None)
     if not _metric_type_events_feasible(schema, typename, events):
       if cache is not None:
         cache[cache_key] = None
+        cache[("q", *cache_key)] = []
       return None
     host_id = time_us = vals = None
+    handled = False
+    value = None
     for typ in type_probe_names(typename):
       if not _metric_type_events_feasible(schema, typ, events):
         continue
       ev = _flatten_event_names_for_host_data_query(events, typ=typ)
+      if not reject_dcgm_blank:
+        handled, value = jt.sentinel_fold_value(typ, ev, "value", float(conv))
+        if handled:
+          break
       host_id, time_us, vals = jt.raw_rows(typ, ev, "value")
       if host_id.shape[0]:
         break
-    value = None
-    if host_id is not None and host_id.shape[0]:
+    if not handled and host_id is not None and host_id.shape[0]:
       if reject_dcgm_blank:
         vals = nan_out_dcgm_numeric_blanks(vals)
         keep = np.isfinite(vals)
         host_id, time_us, vals = host_id[keep], time_us[keep], vals[keep]
       if host_id.shape[0]:
         value = bucketed_job_value(host_id, time_us, vals, float(conv))
-      if (
-        value is not None
-        and max_sane is not None
-        and (not np.isfinite(value) or abs(value) > float(max_sane))
-      ):
-        value = None
+    if (
+      value is not None
+      and max_sane is not None
+      and (not np.isfinite(value) or abs(value) > float(max_sane))
+    ):
+      value = None
     if cache is not None:
       cache[cache_key] = value
+      cache[("q", *cache_key)] = jt.sentinel_sink[sink_mark:]
     return value
 
   def _job_avg_cpuusage_allocated(
@@ -2594,11 +2709,22 @@ class Metrics:
     """
     enabled_ev, running_ev, solo_ev = pmu_sharing_event_names()
     denom_ev = enabled_ev if metric_name == "avg_pmu_running_pct" else solo_ev
+    # Both sides skip the samples where either key is a sentinel gap.
     running = self.job_arc(
-      jt, typename=HOST_CPU_HW_TYPE, events=[running_ev], conv=1.0, cache=cache
+      jt,
+      typename=HOST_CPU_HW_TYPE,
+      events=[running_ev],
+      conv=1.0,
+      cache=cache,
+      align_events=[denom_ev],
     )
     denom = self.job_arc(
-      jt, typename=HOST_CPU_HW_TYPE, events=[denom_ev], conv=1.0, cache=cache
+      jt,
+      typename=HOST_CPU_HW_TYPE,
+      events=[denom_ev],
+      conv=1.0,
+      cache=cache,
+      align_events=[running_ev],
     )
     if running is None or denom is None or not float(denom) > 0.0:
       return None
@@ -3170,6 +3296,11 @@ class Metrics:
         }
 
       for metric_name, metric_obj in self.simple_metrics_list.items():
+        # Metrics that read only their own type(s) report a type missing from
+        # the schema as "collector not found"; vendor cascades do not.
+        reason_types = None
+        check_schema = False
+        jt.sentinel_sink.clear()
         if metric_name == "avg_cpuusage":
           value = self._job_avg_cpuusage_allocated(
             jt,
@@ -3277,6 +3408,7 @@ class Metrics:
           }[metric_name]
           value = None
           row_type = "nvidia_gpu"
+          reason_types, check_schema = _GPU_VALUE_REASON_TYPES, True
           for gt in ("nvidia_gpu", "amd_gpu"):
             v = self.job_value_mean(
               jt,
@@ -3294,6 +3426,7 @@ class Metrics:
         elif metric_name == "avg_gpu_mem_bw_gbps":
           value = None
           row_type = "nvidia_gpu"
+          reason_types, check_schema = _GPU_VALUE_REASON_TYPES, True
           for gt in ("nvidia_gpu", "amd_gpu"):
             v = self.job_value_mean(
               jt,
@@ -3348,6 +3481,7 @@ class Metrics:
             jt, metric_name, cache=simple_metric_cache
           )
           row_type = metric_obj["typename"]
+          check_schema = True
         else:
           value = self.job_arc(
             jt,
@@ -3356,29 +3490,27 @@ class Metrics:
             **metric_obj,
           )
           row_type = metric_obj["typename"]
+          check_schema = True
 
-        if value is None:
-          results.append(
-            {
-              "jid": job,
-              "type": row_type,
-              "metric": metric_name,
-              "units": metric_obj["units"],
-              "value": None,
-              "no_data_reason": NO_SIMPLE_SAMPLES_MSG,
-            }
-          )
-        else:
-          results.append(
-            {
-              "jid": job,
-              "type": row_type,
-              "metric": metric_name,
-              "units": metric_obj["units"],
-              "value": value,
-              "no_data_reason": None,
-            }
-          )
+        results.append(
+          {
+            "jid": job,
+            "type": row_type,
+            "metric": metric_name,
+            "units": metric_obj["units"],
+            "value": value,
+            **_metric_reason_fields(
+              jt,
+              value,
+              reason_types or type_probe_names(row_type),
+              _flatten_event_names_for_host_data_query(
+                metric_obj["events"], typ=row_type
+              ),
+              NO_SIMPLE_SAMPLES_MSG,
+              check_schema,
+            ),
+          }
+        )
 
       gpu_active, gpu_max, gpu_mean, gpu_count = gpu_summary_tuple(jt)
       detail_values = (gpu_active, gpu_max, gpu_mean, gpu_count)
@@ -3448,6 +3580,7 @@ class Metrics:
       u = utils(job_view) if job_view is not None else None
 
       for metric_name in self.complex_metrics_list:
+        jt.sentinel_sink.clear()
         if metric_name == "max_node_power_est_w":
           value = max_node_power_est_w(jt)
           typename, units = "job", "W"
@@ -3463,9 +3596,6 @@ class Metrics:
           )().compute_metric(u)
 
         if value is None:
-          reason = _COMPLEX_NO_DATA_REASONS.get(
-            metric_name, "Insufficient data to compute this metric"
-          )
           results.append(
             {
               "jid": job,
@@ -3473,7 +3603,16 @@ class Metrics:
               "metric": metric_name,
               "units": units,
               "value": None,
-              "no_data_reason": reason,
+              **_metric_reason_fields(
+                jt,
+                None,
+                type_probe_names(typename),
+                None,
+                _COMPLEX_NO_DATA_REASONS.get(
+                  metric_name, "Insufficient data to compute this metric"
+                ),
+                False,
+              ),
             }
           )
         else:
@@ -3597,20 +3736,26 @@ def filter_staff_only_job_metrics(
   rows: list[dict[str, Any]], is_staff: bool
 ) -> list[dict[str, Any]]:
   """
-  Drop staff-only metric rows unless the viewer is staff.
+  Apply the Job Detail audience split to metric rows, per request.
 
   Used by every user-facing metrics surface (Job Detail ``metrics_list``,
-  Extended Search metric options) so the persisted catalog stays complete
-  while ``STAFF_ONLY_JOB_METRICS`` reach staff sessions only.
+  Extended Search metric options). Staff get every row with its full
+  ``no_data_reason`` (sentinel causes, ``-1`` and "estimated" notes
+  included). Researchers lose the ``STAFF_ONLY_JOB_METRICS`` rows, and a
+  reason is kept only when its ``no_data_codes`` are researcher-visible
+  (counter not present, collector not found); every other reason becomes
+  None, which the SPA shows as "Data not available.". The internal
+  ``no_data_codes`` never leave this function, and the input rows are not
+  modified, so nothing collapsed is cached or persisted.
 
   Args:
     rows (list[dict[str, Any]]): Metric rows that carry a ``metric`` key
-      (catalog entries or ``build_job_metrics_display_list`` rows).
+      (catalog entries or ``build_job_metrics_display_list`` rows with
+      ``no_data_reason`` / ``no_data_codes``).
     is_staff (bool): True when the viewing session is staff.
 
   Returns:
-    list[dict[str, Any]]: ``rows`` unchanged for staff; otherwise a new list
-      without the staff-only metrics, order preserved.
+    list[dict[str, Any]]: New row dicts, order preserved.
 
   Examples:
     >>> rows = [{"metric": "avg_flops"}, {"metric": "avg_pmu_outside_pct"}]
@@ -3618,17 +3763,35 @@ def filter_staff_only_job_metrics(
     ['avg_flops']
     >>> len(filter_staff_only_job_metrics(rows, True))
     2
+    >>> row = {
+    ...   "metric": "avg_ibbw",
+    ...   "no_data_reason": "host_ib: PMU busy (1/1 hosts)",
+    ...   "no_data_codes": {"codes": {"-5": 1}},
+    ... }
+    >>> filter_staff_only_job_metrics([row], False)[0]["no_data_reason"]
+    >>> filter_staff_only_job_metrics([row], True)[0]["no_data_reason"]
+    'host_ib: PMU busy (1/1 hosts)'
   """
-  if is_staff:
-    return rows
-  return [r for r in rows if r.get("metric") not in STAFF_ONLY_JOB_METRICS]
+  out = []
+  for r in rows:
+    if not is_staff and r.get("metric") in STAFF_ONLY_JOB_METRICS:
+      continue
+    row = {k: v for k, v in r.items() if k != "no_data_codes"}
+    if (
+      not is_staff
+      and row.get("no_data_reason") is not None
+      and not researcher_visible(r.get("no_data_codes"))
+    ):
+      row["no_data_reason"] = None
+    out.append(row)
+  return out
 
 
 def build_job_metrics_display_list(job: Any) -> Any:
   """
-  API: full metrics_list with a row per catalog metric (value or.
-
-    no_data_reason).
+  API: full metrics_list with a row per catalog metric (value or
+  no_data_reason), carrying the internal ``no_data_codes`` that
+  :func:`filter_staff_only_job_metrics` reads and drops.
 
   Args:
     job (Any): Job record (Django ``job_data`` or job-like mapping).
@@ -3664,6 +3827,7 @@ def build_job_metrics_display_list(job: Any) -> Any:
           "units": _coerce_metrics_identity_str(row.units),
           "value": row.value,
           "no_data_reason": row.no_data_reason,
+          "no_data_codes": row.no_data_codes,
         }
       )
 

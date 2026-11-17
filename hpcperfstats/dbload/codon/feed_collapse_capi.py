@@ -658,30 +658,52 @@ def codon_carry_clear_c(slot: int):
   _cache_carry_arc_keys[slot] = empty_cak
 
 
+def _carry_key_from_c(key_ptr: Ptr[byte], key_len: int) -> str:
+  """Own a copy of a carry key passed with an explicit length.
+
+  Counter keys join host/type/dev/event with NUL and reserved keys start with
+  NUL, so a NUL-terminated read (``str.from_ptr``) would cut them short; the
+  caller frees its buffer after the call, so the bytes are copied.
+  """
+  buf = Ptr[byte](key_len)
+  for i in range(key_len):
+    buf[i] = key_ptr[i]
+  return str(buf, key_len)
+
+
 @export
 def codon_carry_raw_set_c(
   slot: int,
-  key_ptr: Ptr[cobj],
-  value: float,
-  wid: float,
-  mult: float,
-  time_val: float,
+  key_ptr: Ptr[byte],
+  key_len: int,
+  n: int,
+  vals_ptr: Ptr[float],
 ):
-  """Set one ``carry_raw`` entry (one-element ``key_ptr`` array) pre-run."""
+  """Set one ``carry_raw`` entry (key bytes + length) pre-run.
+
+  ``vals_ptr`` holds ``n`` floats: a counter entry is ``[value, wid, mult,
+  time, missed, broken]``; reserved ``\0``-prefixed keys (``$build`` flag,
+  restart times, bridge limit) carry their own lengths.
+  """
   _ensure_slot_banks()
   if slot < 0 or slot >= MAX_CODON_SLOTS:
     return
-  key = str.from_ptr(key_ptr[0])
-  _cache_carry_raw[slot][key] = [value, wid, mult, time_val]
+  key = _carry_key_from_c(key_ptr, key_len)
+  vals: list[float] = []
+  for k in range(n):
+    vals.append(vals_ptr[k])
+  _cache_carry_raw[slot][key] = vals
 
 
 @export
-def codon_carry_arc_set_c(slot: int, key_ptr: Ptr[cobj], value: float):
-  """Set one ``carry_arc`` entry (one-element ``key_ptr`` array) pre-run."""
+def codon_carry_arc_set_c(
+  slot: int, key_ptr: Ptr[byte], key_len: int, value: float
+):
+  """Set one ``carry_arc`` entry (key bytes + length) pre-run."""
   _ensure_slot_banks()
   if slot < 0 or slot >= MAX_CODON_SLOTS:
     return
-  key = str.from_ptr(key_ptr[0])
+  key = _carry_key_from_c(key_ptr, key_len)
   _cache_carry_arc[slot][key] = value
 
 
@@ -766,8 +788,15 @@ def codon_carry_raw_out_key_c(slot: int, i: int) -> str:
 
 
 @export
+def codon_carry_raw_out_len_c(slot: int, i: int) -> int:
+  """Number of floats in carry_raw entry ``i`` of ``slot`` after a run."""
+  key = _cache_carry_raw_keys[slot][i]
+  return len(_cache_carry_raw[slot][key])
+
+
+@export
 def codon_carry_raw_out_value_c(slot: int, i: int, idx: int) -> float:
-  """Component ``idx`` (0=value,1=wid,2=mult,3=time) of carry_raw entry ``i``."""
+  """Component ``idx`` of carry_raw entry ``i`` (see ``codon_carry_raw_set_c``)."""
   key = _cache_carry_raw_keys[slot][i]
   vals = _cache_carry_raw[slot][key]
   if idx < 0 or idx >= len(vals):

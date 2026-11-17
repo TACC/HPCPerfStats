@@ -107,6 +107,9 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Development-only hidden test-login; default no.
 # separate_test_login = no
 
+# Admin Monitor persistent_not_updated: -1 sentinel run share of the scan window that flags a host's type/event (default 0.5).
+# telemetry_persistent_not_updated_frac = 0.5
+
 [PIPELINE]
 # Directory for Slurm accounting logs.
 # acct_path = %(data_dir)s/accounting
@@ -198,6 +201,21 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Watchdog on metrics phase wall time per batch seconds (default 120).
 # metrics_compute_watchdog_s = 120
 
+# Sentinel coverage floor: a host series with less valid sample share is excluded from the metric (default 0.5).
+# metrics_sentinel_min_coverage = 0.5
+
+# Scale a host-summed metric by hosts/remaining hosts when some hosts are static (default no: value None).
+# metrics_sentinel_scale_partial_sums = no
+
+# Largest unreadable-device share a collapsed sample is scaled up for; above it the sample is a gap (default 0.30).
+# metrics_sentinel_partial_device_max_frac = 0.30
+
+# Longest interior sentinel gap in seconds that metrics interpolate (default 900).
+# metrics_sentinel_fill_max_gap_s = 900
+
+# Largest share of a host series' buckets metrics may interpolate (default 0.10).
+# metrics_sentinel_fill_max_frac = 0.10
+
 # Watchdog on full batch wall; 0 uses metrics-only watchdog (default 0).
 # metrics_compute_total_watchdog_s = 0
 
@@ -263,6 +281,9 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 
 # Codon file-session flush window cap in MiB (default 1); effective window is min(this, sync_ingest_parse_flush_max_mib). Large windows slow Codon's GC.
 # sync_codon_parse_flush_max_mib = 1
+
+# Max consecutive monitor value-sentinel samples (-n tokens) a counter delta may bridge (default 3; 0 = never bridge).
+# ingest_sentinel_bridge_max_missed_samples = 3
 
 # Concurrent daily-tar append slots / archive spawn pool size (default 4).
 # sync_archive_pool_processes = 4

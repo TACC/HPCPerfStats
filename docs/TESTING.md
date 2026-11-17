@@ -156,6 +156,7 @@ COPY BINARY fetch per job → `JobFrame` → NumPy reference reductions
 |---|---|---|
 | Unit kernels + bridge | `pytest -q hpcperfstats/analysis/metrics/tests/test_columnar_segments.py …/test_columnar_kernels.py …/test_columnar_bridge.py …/test_jobframe.py …/test_copy_decode.py …/test_copy_fetch.py` | host |
 | No pandas on the path | `pytest -q hpcperfstats/tests/test_update_metrics_import_graph.py` | host |
+| Monitor value sentinels (reasons, transient/static folds, gap fill, audience split, Admin Monitor findings) | `pytest -q hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_reasons.py …/test_sentinel_classify_series.py …/test_metrics_sentinel_aggregation.py …/test_fill_interior_gaps.py hpcperfstats/site/lib/machine/tests/test_metrics.py hpcperfstats/site/lib/machine/tests/test_job_detail_openapi_wire_contract.py hpcperfstats/site/lib/machine/tests/test_admin_monitor_telemetry_health.py` | host |
 | Bake contract (Dockerfile / supervisord / runner) | `pytest -q hpcperfstats/tests/test_codon_metrics_bake_contract.py` | host |
 | Golden parity (series, metric rows, detail, Bokeh JSON) | `HPCPERFSTATS_METRICS_GOLDEN_REQUIRED=1 pytest -q hpcperfstats/analysis/metrics/tests/test_columnar_golden.py hpcperfstats/analysis/metrics/tests/test_bokeh_from_arrays.py` | host (corpus mounted) |
 | Codon vs NumPy, GIL off, threads, golden frames | `HPCPERFSTATS_CODON_METRICS_REQUIRED=1 tests/run_dev_container_pytest.sh --ft hpcperfstats/analysis/metrics/tests/test_codon_kernels.py -q` | dev container (3.14t) |

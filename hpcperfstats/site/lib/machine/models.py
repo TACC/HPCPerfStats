@@ -214,6 +214,10 @@ class metrics_data(models.Model):
   # When value is null after a metrics run, explains why (distinguishes
   # "computed, no data" from legacy incomplete rows that still need update_metrics).
   no_data_reason = models.CharField(max_length=512, blank=True, null=True)
+  # Machine-readable monitor value-sentinel evidence behind no_data_reason
+  # (per-code host counts, partial devices, bridged/filled shares); the API
+  # decides the researcher/staff audience from it, never by parsing text.
+  no_data_codes = models.JSONField(blank=True, null=True)
 
   class Meta:
     """
@@ -307,6 +311,70 @@ class host_data(models.Model):
         fields=["dev"],
         name="host_data_dev_j_prefix_idx",
         condition=Q(dev__startswith="j:"),
+      ),
+    ]
+
+
+class host_sentinel_summary(models.Model):
+  """
+  Run-length intervals of monitor value sentinels per series and code.
+
+  One row is a contiguous run of samples in which ``device_count`` of the
+  ``total_devices`` device rows of ``(host, type, dev, event)`` carried the
+  sentinel ``code`` (``hpcperfstats.lib.monitor_sentinel``). A run is extended
+  in place while the same code and counts persist on consecutive samples and
+  closes on a code change, a count change or recovery, so the table grows with
+  transitions, not time. Shares are run time overlapping a window divided by
+  the window time. ``dev`` is the collapsed ``host_data`` dev (``''`` for
+  host-summed types).
+
+  Attributes:
+    host: Sample host name.
+    type: Monitor type name.
+    dev: Collapsed device (``''`` for host-summed types).
+    event: Event name.
+    code: Negative sentinel code.
+    start_time: First sample of the run.
+    end_time: Last sample of the run.
+    device_count: Devices carrying ``code`` in each sample of the run.
+    total_devices: Device rows of the series in each sample of the run.
+  """
+
+  host = models.CharField(max_length=64)
+  type = models.CharField(max_length=32)
+  dev = models.CharField(max_length=64, default="", blank=True)
+  event = models.CharField(max_length=64)
+  code = models.SmallIntegerField()
+  start_time = models.DateTimeField()
+  end_time = models.DateTimeField()
+  device_count = models.IntegerField()
+  total_devices = models.IntegerField()
+
+  class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
+
+    db_table = "host_sentinel_summary"
+    constraints = [
+      models.UniqueConstraint(
+        fields=[
+          "host",
+          "type",
+          "dev",
+          "event",
+          "code",
+          "device_count",
+          "total_devices",
+          "start_time",
+        ],
+        name="host_sentinel_summary_run_uniq",
+      ),
+    ]
+    indexes = [
+      models.Index(
+        fields=["host", "start_time", "end_time"],
+        name="host_sentinel_host_window_idx",
       ),
     ]
 

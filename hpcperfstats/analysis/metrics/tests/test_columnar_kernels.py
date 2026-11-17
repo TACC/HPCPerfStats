@@ -84,6 +84,9 @@ def _df(recs, frame):
     ],
   )
   df["dev"] = df["dev"].fillna("")
+  # host_data ``value`` < 0 is a monitor value sentinel, never data: every
+  # reader applies ``value >= 0`` (``arc``/``delta`` keep their sign).
+  df["value"] = df["value"].where(~(df["value"] < 0))
   df["host_id"] = df["host"].map({h: i for i, h in enumerate(frame.hosts)})
   return df
 
@@ -181,7 +184,8 @@ def test_sum_per_sample_orm_blank_filter_by_dev_and_coalesce_zero():
     reject_dcgm_blank=True,
   )
   assert t.time_us.tolist() == [1 * US, 2 * US, 3 * US]
-  assert t.sum_val.tolist() == [10.0, 5.0, 2.0]
+  # -4.0 is a monitor value sentinel (PERMISSION_DENIED), not data.
+  assert t.sum_val.tolist() == [10.0, 5.0, 6.0]
   # Per-device grouping keeps a NULL-only group with Coalesce 0.
   d = idx.sum_per_sample(
     "nvidia_gpu", ["gpu_util"], "value", mode=kn.MODE_ORM, by_dev=True
@@ -195,7 +199,8 @@ def test_sum_per_sample_orm_blank_filter_by_dev_and_coalesce_zero():
     (3 * US, "0"),
     (3 * US, "1"),
   ]
-  assert d.sum_val.tolist() == [10.0, DCGM_FP64_BLANK, 0.0, 5.0, -4.0, 6.0]
+  # The sentinel-only (3 s, dev 0) group is empty: Coalesce 0, like NULL.
+  assert d.sum_val.tolist() == [10.0, DCGM_FP64_BLANK, 0.0, 5.0, 0.0, 6.0]
   # Nonnegative FILTER keeps the group, sums only >= 0.
   nn = idx.sum_per_sample(
     "nvidia_gpu", ["gpu_util"], "value", mode=kn.MODE_ORM, nonnegative=True

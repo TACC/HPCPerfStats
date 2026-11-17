@@ -64,6 +64,7 @@ def table_from_records(
   shared: bool = False,
   gpu_affinity_devs: Sequence[str] | dict[str, list[str]] | None = None,
   time_in: Sequence[Any] | None = None,
+  sentinel_runs: Sequence[Any] = (),
 ) -> ColumnarJobTable:
   """
   Build a table from ``(time, host, type, event, dev, value, arc, delta)``
@@ -86,6 +87,7 @@ def table_from_records(
       every host, or None.
     time_in (Sequence[Any] | None): Sampled time axis (large-job
       ``time__in`` filter) instead of the window.
+    sentinel_runs (Sequence[Any]): ``SentinelRun`` side-table runs.
 
   Returns:
     ColumnarJobTable: Table.
@@ -142,6 +144,7 @@ def table_from_records(
     else None,
     shared=shared,
     gpu_affinity_devs=gpu_affinity_devs,
+    sentinel_runs=sentinel_runs,
   )
 
 

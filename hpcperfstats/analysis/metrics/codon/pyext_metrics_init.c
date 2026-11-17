@@ -79,6 +79,45 @@ extern long join_sorted_c(
   int64_t *out_ri
 );
 
+extern long sentinel_samples_c(
+  long n,
+  const int64_t *keys,
+  const uint8_t *valid,
+  const uint8_t *bridged,
+  const uint8_t *gap_row,
+  const int64_t *code,
+  const double *eff,
+  int64_t *scratch,
+  int64_t *out_first,
+  double *out_sum,
+  int64_t *out_status,
+  int64_t *out_code
+);
+extern long fill_interior_gaps_c(
+  long n,
+  double *means,
+  const uint8_t *gaps,
+  const double *pos,
+  long max_gap_buckets,
+  double max_frac
+);
+extern long sentinel_fold_c(
+  long n,
+  const int64_t *host,
+  const int64_t *bucket,
+  const double *values,
+  const int64_t *status,
+  long max_gap_buckets,
+  double max_frac,
+  int64_t *scratch,
+  int64_t *perm,
+  int64_t *out_hi,
+  double *out_mean,
+  uint8_t *out_gap,
+  double *out_pos
+);
+#define SENTINEL_FOLD_HOST_ROWS 7
+
 #define ERR_NAME_CAP (-4)
 #define MAX_VIEWS 16
 
@@ -388,6 +427,171 @@ join_sorted_py(PyObject *self, PyObject *args)
   return PyLong_FromLong(rc);
 }
 
+static PyObject *
+sentinel_samples_py(PyObject *self, PyObject *args)
+{
+  PyObject *o_keys, *o_valid, *o_bridged, *o_gap, *o_code, *o_eff, *o_scratch,
+    *o_first, *o_sum, *o_status, *o_ocode;
+  Py_ssize_t n;
+  if (!PyArg_ParseTuple(
+        args,
+        "nOOOOOOOOOOO:sentinel_samples",
+        &n,
+        &o_keys,
+        &o_valid,
+        &o_bridged,
+        &o_gap,
+        &o_code,
+        &o_eff,
+        &o_scratch,
+        &o_first,
+        &o_sum,
+        &o_status,
+        &o_ocode
+      )) {
+    return NULL;
+  }
+  if (n < 0) {
+    PyErr_SetString(PyExc_ValueError, "n must be >= 0");
+    return NULL;
+  }
+  views vs = {.n = 0};
+  const int64_t *keys = take_buffer(&vs, o_keys, 0, n * 8, "keys");
+  const uint8_t *valid = take_buffer(&vs, o_valid, 0, n, "valid");
+  const uint8_t *bridged = take_buffer(&vs, o_bridged, 0, n, "bridged");
+  const uint8_t *gap = take_buffer(&vs, o_gap, 0, n, "gap_row");
+  const int64_t *code = take_buffer(&vs, o_code, 0, n * 8, "code");
+  const double *eff = take_buffer(&vs, o_eff, 0, n * 8, "eff");
+  int64_t *scratch =
+    take_buffer(&vs, o_scratch, 1, (4 * n + RADIX_BUCKETS) * 8, "scratch");
+  int64_t *first = take_buffer(&vs, o_first, 1, n * 8, "out_first");
+  double *sum = take_buffer(&vs, o_sum, 1, n * 8, "out_sum");
+  int64_t *status = take_buffer(&vs, o_status, 1, n * 8, "out_status");
+  int64_t *ocode = take_buffer(&vs, o_ocode, 1, n * 8, "out_code");
+  if (PyErr_Occurred()) {
+    release_views(&vs);
+    return NULL;
+  }
+  long rc = sentinel_samples_c(
+    (long)n,
+    keys,
+    valid,
+    bridged,
+    gap,
+    code,
+    eff,
+    scratch,
+    first,
+    sum,
+    status,
+    ocode
+  );
+  release_views(&vs);
+  return PyLong_FromLong(rc);
+}
+
+static PyObject *
+fill_interior_gaps_py(PyObject *self, PyObject *args)
+{
+  PyObject *o_means, *o_gaps, *o_pos;
+  Py_ssize_t n, max_gap;
+  double max_frac;
+  if (!PyArg_ParseTuple(
+        args,
+        "nOOOnd:fill_interior_gaps",
+        &n,
+        &o_means,
+        &o_gaps,
+        &o_pos,
+        &max_gap,
+        &max_frac
+      )) {
+    return NULL;
+  }
+  if (n < 0) {
+    PyErr_SetString(PyExc_ValueError, "n must be >= 0");
+    return NULL;
+  }
+  views vs = {.n = 0};
+  double *means = take_buffer(&vs, o_means, 1, n * 8, "means");
+  const uint8_t *gaps = take_buffer(&vs, o_gaps, 0, n, "gaps");
+  const double *pos = take_buffer(&vs, o_pos, 0, n * 8, "pos");
+  if (PyErr_Occurred()) {
+    release_views(&vs);
+    return NULL;
+  }
+  long rc =
+    fill_interior_gaps_c((long)n, means, gaps, pos, (long)max_gap, max_frac);
+  release_views(&vs);
+  return PyLong_FromLong(rc);
+}
+
+static PyObject *
+sentinel_fold_py(PyObject *self, PyObject *args)
+{
+  PyObject *o_host, *o_bucket, *o_values, *o_status, *o_scratch, *o_perm,
+    *o_hi, *o_mean, *o_gap, *o_pos;
+  Py_ssize_t n, max_gap;
+  double max_frac;
+  if (!PyArg_ParseTuple(
+        args,
+        "nOOOOndOOOOOO:sentinel_fold",
+        &n,
+        &o_host,
+        &o_bucket,
+        &o_values,
+        &o_status,
+        &max_gap,
+        &max_frac,
+        &o_scratch,
+        &o_perm,
+        &o_hi,
+        &o_mean,
+        &o_gap,
+        &o_pos
+      )) {
+    return NULL;
+  }
+  if (n < 0) {
+    PyErr_SetString(PyExc_ValueError, "n must be >= 0");
+    return NULL;
+  }
+  views vs = {.n = 0};
+  const int64_t *host = take_buffer(&vs, o_host, 0, n * 8, "host");
+  const int64_t *bucket = take_buffer(&vs, o_bucket, 0, n * 8, "bucket");
+  const double *values = take_buffer(&vs, o_values, 0, n * 8, "values");
+  const int64_t *status = take_buffer(&vs, o_status, 0, n * 8, "status");
+  int64_t *scratch =
+    take_buffer(&vs, o_scratch, 1, (4 * n + RADIX_BUCKETS) * 8, "scratch");
+  int64_t *perm = take_buffer(&vs, o_perm, 1, 2 * n * 8, "perm");
+  int64_t *hi =
+    take_buffer(&vs, o_hi, 1, SENTINEL_FOLD_HOST_ROWS * n * 8, "out_hi");
+  double *mean = take_buffer(&vs, o_mean, 1, n * 8, "out_mean");
+  uint8_t *gap = take_buffer(&vs, o_gap, 1, n, "out_gap");
+  double *pos = take_buffer(&vs, o_pos, 1, n * 8, "out_pos");
+  if (PyErr_Occurred()) {
+    release_views(&vs);
+    return NULL;
+  }
+  long rc = sentinel_fold_c(
+    (long)n,
+    host,
+    bucket,
+    values,
+    status,
+    (long)max_gap,
+    max_frac,
+    scratch,
+    perm,
+    hi,
+    mean,
+    gap,
+    pos
+  );
+  release_views(&vs);
+  return PyLong_FromLong(rc);
+}
+
 static PyMethodDef metrics_methods[] = {
   {
     "copy_count_rows",
@@ -429,6 +633,29 @@ static PyMethodDef metrics_methods[] = {
     join_sorted_py,
     METH_VARARGS,
     "join_sorted(nl, left, nr, right, out_li, out_ri) -> hit count",
+  },
+  {
+    "sentinel_samples",
+    sentinel_samples_py,
+    METH_VARARGS,
+    "sentinel_samples(n, keys, valid, bridged, gap_row, code, eff, scratch, "
+    "out_first, out_sum, out_status, out_code) -> sample count (scratch as "
+    "group_reduce)",
+  },
+  {
+    "sentinel_fold",
+    sentinel_fold_py,
+    METH_VARARGS,
+    "sentinel_fold(n, host, bucket, values, status, max_gap_buckets, "
+    "max_frac, scratch, perm, out_hi, out_mean, out_gap, out_pos) -> host "
+    "count (perm: 2*n int64, out_hi: 7*n int64)",
+  },
+  {
+    "fill_interior_gaps",
+    fill_interior_gaps_py,
+    METH_VARARGS,
+    "fill_interior_gaps(n, means, gaps, pos, max_gap_buckets, max_frac) -> "
+    "filled bucket count (means written in place)",
   },
   {NULL, NULL, 0, NULL},
 };

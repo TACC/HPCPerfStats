@@ -371,7 +371,8 @@ def test_codon_bridge_skip_finished(monkeypatch: pytest.MonkeyPatch) -> None:
     carry_arc: dict | None = None,
   ) -> dict:
     assert lines == ["row"]
-    assert carry_raw == {}
+    # The bridge seeds only the INI sentinel bridge limit into a new carry.
+    assert carry_raw == {"\0cfg\0bridge_max": [3.0]}
     assert carry_arc == {}
     return {
       "stats": [

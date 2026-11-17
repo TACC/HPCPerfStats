@@ -1118,7 +1118,8 @@ describe("JobDetail", () => {
     expect(valueCell?.className).toMatch(/overflow-wrap:anywhere|\[overflow-wrap:anywhere\]/);
   });
 
-  it("shows generic no-data text for non-staff when metric value is missing", async () => {
+  it("shows generic no-data text for non-staff when the API withholds the reason", async () => {
+    // The API sends researchers a null reason for causes they should not see.
     const detailWithMetricMessage = {
       ...minimalJobDetailResponse,
       metrics_list: [
@@ -1127,7 +1128,7 @@ describe("JobDetail", () => {
           type: "pmc",
           units: "GHz",
           value: null,
-          no_data_reason: "No usable PMC telemetry for average CPU frequency",
+          no_data_reason: null,
         },
       ],
     };
@@ -1145,9 +1146,72 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getAllByText("Data not available.").length).toBeGreaterThan(0);
     });
-    expect(
-      screen.queryByText("No usable PMC telemetry for average CPU frequency"),
-    ).not.toBeInTheDocument();
+  });
+
+  it("shows a researcher-visible sentinel reason (counter not present) to non-staff", async () => {
+    const reason = "host_ib: counter not present (2/2 hosts)";
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        metrics_list: [
+          {
+            metric: "avg_ibbw",
+            type: "host_ib",
+            units: "MB/s",
+            value: null,
+            no_data_reason: reason,
+          },
+        ],
+      },
+    });
+
+    renderJobDetail("12345", { is_staff: false });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Metrics not computed \(1\.00\)/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText(/Metrics not computed \(1\.00\)/));
+    await waitFor(() => {
+      expect(screen.getByText(reason)).toBeInTheDocument();
+    });
+  });
+
+  it("shows the decoded sentinel cause and the quality note to staff", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        metrics_list: [
+          {
+            metric: "avg_ibbw",
+            type: "host_ib",
+            units: "MB/s",
+            value: 12.5,
+            no_data_reason: "estimated: 3/64 devices unreadable (read failed), scaled",
+          },
+          {
+            metric: "avg_freq",
+            type: "pmc",
+            units: "GHz",
+            value: null,
+            no_data_reason: "host_cpu_hw: not updated this cycle (1/1 hosts)",
+          },
+        ],
+      },
+    });
+
+    renderJobDetail("12345", { is_staff: true });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("12.50 (estimated: 3/64 devices unreadable (read failed), scaled)"),
+      ).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText(/Metrics not computed \(1\.00\)/));
+    await waitFor(() => {
+      expect(
+        screen.getByText("host_cpu_hw: not updated this cycle (1/1 hosts)"),
+      ).toBeInTheDocument();
+    });
   });
 
   it("keeps valued metrics visible and collapses non-value rows under Metrics not computed", async () => {

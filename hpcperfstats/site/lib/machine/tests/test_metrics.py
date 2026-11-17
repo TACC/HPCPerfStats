@@ -1026,6 +1026,7 @@ def test_build_job_metrics_display_list_hides_duplicate_avg_gpuutil():
       self.type = type_
       self.units = units
       self.no_data_reason = None
+      self.no_data_codes = None
 
   class Job:
     def __init__(self):
@@ -1916,6 +1917,7 @@ def test_job_arc_skips_orm_when_schema_rules_out_type(monkeypatch):
   t0 = django_tz.now()
   jt = SimpleNamespace(
     schema={"cpu": ["user", "system", "idle"]},
+    sentinel_sink=[],
     _base_filter={
       "time__gte": t0,
       "time__lte": t0,
@@ -1939,3 +1941,104 @@ def test_job_arc_skips_orm_when_schema_rules_out_type(monkeypatch):
     m.job_arc(jt, typename="amd64_pmc", events=["FLOPS"], conv=1e-9) is None
   )
   assert filter_calls == []
+
+
+def _sentinel_job(reason, codes, *, metric="avg_ibbw", value=None):
+  """Job mock with one persisted metrics_data row carrying sentinel codes."""
+  row = MagicMock()
+  row.metric = metric
+  row.type = "host_ib"
+  row.units = "MB/s"
+  row.value = value
+  row.no_data_reason = reason
+  row.no_data_codes = codes
+  job = MagicMock()
+  job.metrics_data_set.all.return_value = [row]
+  return job
+
+
+def _shown(job, is_staff, metric="avg_ibbw"):
+  from hpcperfstats.analysis.metrics.lib.metrics import (
+    filter_staff_only_job_metrics,
+  )
+
+  rows = filter_staff_only_job_metrics(
+    build_job_metrics_display_list(job), is_staff
+  )
+  out = next(r for r in rows if r["metric"] == metric)
+  assert "no_data_codes" not in out
+  return out["no_data_reason"]
+
+
+@pytest.mark.machine_unit_mock
+def test_audience_non_staff_sees_not_present_and_schema_absence():
+  """Researchers see NOT_PRESENT (-2) and "collector not found" reasons."""
+  absent = _sentinel_job(
+    "host_ib: counter not present (2/4 hosts)", {"codes": {"-2": 2}}
+  )
+  assert _shown(absent, False) == "host_ib: counter not present (2/4 hosts)"
+  missing = _sentinel_job(
+    "host_ib collector not found on this node's monitor",
+    {"codes": {}, "schema_absent": True},
+  )
+  assert _shown(missing, False).endswith(
+    "collector not found on this node's monitor"
+  )
+
+
+@pytest.mark.machine_unit_mock
+@pytest.mark.parametrize(
+  ("reason", "codes"),
+  [
+    ("host_ib: not updated this cycle (1/1 hosts)", {"codes": {"-1": 1}}),
+    ("host_ib: PMU busy (1/1 hosts)", {"codes": {"-5": 1}}),
+    (
+      "host_ib: counter not present (1/2 hosts); host_ib: backend error "
+      "(1/2 hosts)",
+      {"codes": {"-2": 1, "-7": 1}},
+    ),
+    ("No host_data samples for this metric in the job window", None),
+  ],
+)
+def test_audience_non_staff_gets_none_for_other_codes(reason, codes):
+  """Every other code, mixed codes and generic reasons -> None (SPA shows
+  "Data not available."); staff still get the full text."""
+  job = _sentinel_job(reason, codes)
+  assert _shown(job, False) is None
+  assert _shown(job, True) == reason
+
+
+@pytest.mark.machine_unit_mock
+def test_audience_staff_sees_estimated_note_on_valued_rows():
+  """Partial-device scaling note: staff only; researchers see the value."""
+  note = "estimated: 3/64 devices unreadable (read failed), scaled"
+  job = _sentinel_job(
+    note,
+    {"codes": {}, "partial_devices": {"-3": {"devices": 3, "total": 64}}},
+    value=12.5,
+  )
+  assert _shown(job, True) == note
+  assert _shown(job, False) is None
+
+
+@pytest.mark.machine_unit_mock
+def test_audience_split_reads_no_data_codes_not_text():
+  """The decision follows no_data_codes; the reason text is never parsed."""
+  misleading = _sentinel_job("counter not present", {"codes": {"-5": 1}})
+  assert _shown(misleading, False) is None
+  plain = _sentinel_job("anything", {"codes": {"-2": 3}})
+  assert _shown(plain, False) == "anything"
+
+
+@pytest.mark.machine_unit_mock
+def test_researcher_visible_codes_constant_is_shared():
+  """The API rule uses monitor_sentinel.RESEARCHER_VISIBLE_CODES."""
+  from hpcperfstats.analysis.metrics.lib.sentinel_reasons import (
+    researcher_visible,
+  )
+  from hpcperfstats.lib.monitor_sentinel import RESEARCHER_VISIBLE_CODES
+
+  assert frozenset({-2}) == RESEARCHER_VISIBLE_CODES
+  assert researcher_visible({"codes": {"-2": 1}, "transient": {}})
+  assert not researcher_visible({"codes": {"-2": 1}, "bridged": 2})
+  assert not researcher_visible({"codes": {}, "transient": {"-3": 4}})

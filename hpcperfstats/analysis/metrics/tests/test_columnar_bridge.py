@@ -303,3 +303,71 @@ def test_missing_residual_collapse_export_disables_kernel(
   monkeypatch.setattr(sys, "path", list(sys.path))
   assert codon_bridge.kernels() is None
   assert codon_bridge._state.reason == "missing_methods residual_collapse"
+
+
+def _sentinel_entry_points():
+  """Public sentinel_profile calls that reach each sentinel kernel."""
+  from hpcperfstats.analysis.metrics.lib import sentinel_profile as sp
+  from hpcperfstats.analysis.metrics.tests import (
+    test_metrics_sentinel_aggregation as agg,
+  )
+
+  jt = agg._ib_job(overrides={("c1.x", "port_rcv_data"): {20: -3}})
+  return sp, {
+    "sentinel_samples": lambda: sp.sentinel_samples(
+      jt.index, "host_ib", list(agg._IB), "arc", [], limit=None
+    ),
+    "sentinel_fold": lambda: sp.sentinel_fold(
+      np.array([0, 0]),
+      np.array([0, 60_000_000]),
+      np.array([2.0, np.nan]),
+      np.array([sp.SAMPLE_VALID, sp.SAMPLE_GAP]),
+      np.array([0, -3]),
+      1.0,
+      typename="t",
+    ),
+    "fill_interior_gaps": lambda: sp.fill_interior_gaps(
+      np.array([1.0, np.nan, 3.0]), np.array([False, True, False]), 3, 0.5
+    ),
+  }
+
+
+@pytest.mark.parametrize(
+  "kernel", ["sentinel_samples", "sentinel_fold", "fill_interior_gaps"]
+)
+def test_sentinel_kernel_error_does_not_fall_back(monkeypatch, kernel):
+  sp, entry = _sentinel_entry_points()
+
+  def boom(*_a):
+    raise RuntimeError("bad buffer")
+
+  _install_fake(monkeypatch, **{kernel: boom})
+  calls = []
+  twin = f"_np_{kernel}"
+  real = getattr(sp, twin)
+  monkeypatch.setattr(
+    sp, twin, lambda *a, **k: calls.append(1) or real(*a, **k)
+  )
+  with pytest.raises(codon_bridge.CodonKernelError, match=kernel):
+    entry[kernel]()
+  assert calls == []
+
+
+def test_missing_sentinel_exports_disable_kernel(monkeypatch, tmp_path):
+  (tmp_path / codon_bridge.PYEXT_SO).write_bytes(b"")
+  monkeypatch.setenv(codon_bridge.CODON_METRICS_DIR_ENV, str(tmp_path))
+  sentinel = ("sentinel_samples", "sentinel_fold", "fill_interior_gaps")
+  fake = SimpleNamespace(
+    **{
+      n: (lambda *a: 0)
+      for n in codon_bridge._KERNEL_METHODS
+      if n not in sentinel
+    }
+  )
+  monkeypatch.setattr(
+    codon_bridge.importlib, "import_module", lambda _name: fake
+  )
+  monkeypatch.setattr(codon_bridge, "_deepbind_libomp", lambda _d: None)
+  monkeypatch.setattr(sys, "path", list(sys.path))
+  assert codon_bridge.kernels() is None
+  assert codon_bridge._state.reason == f"missing_methods {','.join(sentinel)}"

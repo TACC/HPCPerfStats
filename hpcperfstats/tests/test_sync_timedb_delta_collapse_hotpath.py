@@ -806,11 +806,13 @@ def test_apply_counter_deltas_carry_split_matches_single_pass():
     assert ref_carry.raw.keys() == new_carry.raw.keys()
     for key, ref_tuple in ref_carry.raw.items():
       got_tuple = new_carry.raw[key]
-      assert len(got_tuple) == 4
+      # (value, wid, mult, time, missed sentinel samples, chain broken)
+      assert len(got_tuple) == 6
       assert got_tuple[0] == ref_tuple[0]
       assert int(got_tuple[1]) == int(ref_tuple[1])
       assert got_tuple[2] == ref_tuple[2]
       assert got_tuple[3] == ref_tuple[3]
+      assert got_tuple[4:] == (0.0, 0.0)
     late = got[(got["host"] == "h2") & (got["event"] == "late")]
     assert len(late) == 1
     assert pd.isna(late["delta"].iloc[0])

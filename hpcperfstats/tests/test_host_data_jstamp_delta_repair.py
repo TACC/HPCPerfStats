@@ -203,3 +203,27 @@ def test_repair_refuses_to_run_without_a_cutoff():
     call_command("repair_jstamp_deltas", apply=True)
   with pytest.raises(CommandError, match="--before"):
     call_command("repair_jstamp_deltas", jid=["79282"])
+
+
+def test_plan_series_leaves_sentinel_rows_and_their_successor_alone():
+  """Regression: a monitor value sentinel (negative value) used to be diffed
+  as data (a 48-bit 'wrap' or a negative delta). Ingest already owns the
+  sentinel row and the row after it (bridge or chain break)."""
+  from hpcperfstats.dbload.lib.host_data_jstamp_delta_repair import (
+    SeriesCarry,
+    plan_series,
+  )
+
+  rows = [
+    (1, 60.0, 100.0, 60.0, 1.0),
+    (2, 120.0, -3.0, None, None),
+    (3, 180.0, 400.0, 300.0, 2.5),
+    (4, 240.0, 460.0, 9e9, 9e9),
+  ]
+  fixes, carry = plan_series(
+    "host_ib", "port_xmit_data", rows, SeriesCarry(0.0, 40.0)
+  )
+  fixed = {f.time for f in fixes}
+  assert 4 in fixed
+  assert fixed.isdisjoint({2, 3})
+  assert carry == SeriesCarry(240.0, 460.0)

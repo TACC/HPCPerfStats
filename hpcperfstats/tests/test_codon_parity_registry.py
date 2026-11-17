@@ -26,6 +26,7 @@ DBLOAD_UNITS = (
 )
 METRICS_UNIT = PKG / "analysis" / "metrics" / "codon" / "metrics_kernels.py"
 SEGMENTS = PKG / "analysis" / "metrics" / "lib" / "columnar" / "segments.py"
+SENTINEL_PROFILE = PKG / "analysis" / "metrics" / "lib" / "sentinel_profile.py"
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ _P = "hpcperfstats.dbload.lib.sync_timedb_parsing"
 _T = "hpcperfstats/tests"
 _MT = "hpcperfstats/analysis/metrics/tests/test_codon_kernels.py"
 _SEG = "hpcperfstats.analysis.metrics.lib.columnar.segments"
+_SP = "hpcperfstats.analysis.metrics.lib.sentinel_profile"
 
 PARITY_FEATURES: tuple[ParityFeature, ...] = (
   ParityFeature(
@@ -64,6 +66,35 @@ PARITY_FEATURES: tuple[ParityFeature, ...] = (
     ("apply_counter_deltas_cols",),
     (
       f"{_T}/test_codon_feed_delta_collapse_arc.py::test_apply_counter_deltas_cols_wrap_and_carry_continuity",
+    ),
+  ),
+  ParityFeature(
+    "$ header capture ($build bridge flag, restart times, window cut)",
+    f"{_P}:IncrementalStatsParser._record_header_sample",
+    ("scan_monitor_headers", "_header_bridge_flag"),
+    (
+      f"{_T}/test_codon_feed_delta_collapse_arc.py::test_sentinel_corpora_codon_matches_cpython",
+    ),
+  ),
+  ParityFeature(
+    "value sentinel deltas (bridge, chain break, limit, override, carry)",
+    f"{_P}:_sentinel_deltas",
+    ("apply_counter_deltas_cols", "_sentinel_breaks", "_restart_in_gap"),
+    (
+      f"{_T}/test_codon_feed_delta_collapse_arc.py::test_sentinel_corpora_codon_matches_cpython",
+    ),
+  ),
+  ParityFeature(
+    "value sentinel collapse (valid-only, modal code, per-device bridged arc)",
+    f"{_P}:_compute_deltas_and_arc_impl",
+    (
+      "sentinel_collapse_prep",
+      "sentinel_restore_cols",
+      "sentinel_bridge_arc_cols",
+      "_collapse_dev_of",
+    ),
+    (
+      f"{_T}/test_codon_feed_delta_collapse_arc.py::test_sentinel_corpora_codon_matches_cpython",
     ),
   ),
   ParityFeature(
@@ -191,6 +222,35 @@ PARITY_FEATURES: tuple[ParityFeature, ...] = (
     ("group_reduce_c", "residual_collapse_c"),
     (f"{_MT}::test_frame_index_reductions_codon_equal_numpy_bit_exact",),
   ),
+  ParityFeature(
+    "metrics sentinel sample states (row-order sums, last code, first row)",
+    f"{_SP}:_np_sentinel_samples",
+    ("sentinel_samples_c",),
+    (
+      f"{_MT}::test_sentinel_samples_matches_numpy_twin_randomized",
+      f"{_MT}::test_sentinel_samples_edge_cases_match_numpy_twin",
+      f"{_MT}::test_sentinel_profile_end_to_end_codon_equals_numpy",
+    ),
+  ),
+  ParityFeature(
+    "metrics sentinel bucket fold (covered means, gap flags, first drop)",
+    f"{_SP}:_np_sentinel_fold",
+    ("sentinel_fold_c",),
+    (
+      f"{_MT}::test_sentinel_fold_matches_numpy_twin_randomized",
+      f"{_MT}::test_sentinel_fold_edge_cases_match_numpy_twin",
+      f"{_MT}::test_sentinel_profile_end_to_end_codon_equals_numpy",
+    ),
+  ),
+  ParityFeature(
+    "metrics sentinel interior gap fill (max_gap, max_frac, anchors)",
+    f"{_SP}:_np_fill_interior_gaps",
+    ("fill_interior_gaps_c",),
+    (
+      f"{_MT}::test_sentinel_fill_interior_gaps_matches_numpy_twin",
+      f"{_MT}::test_sentinel_fill_interior_gaps_boundaries_match_numpy_twin",
+    ),
+  ),
 )
 
 # Exports that move data across the C ABI (slot banks, carry, errors, setters,
@@ -268,7 +328,12 @@ def test_every_codon_export_is_registered_or_abi() -> None:
 
 def test_every_numpy_reference_has_a_codon_twin() -> None:
   refs = {f.cpython.split(":")[1] for f in PARITY_FEATURES}
-  np_refs = {n for n in _defined_functions(SEGMENTS) if n.startswith("_np_")}
+  np_refs = {
+    n
+    for path in (SEGMENTS, SENTINEL_PROFILE)
+    for n in _defined_functions(path)
+    if n.startswith("_np_")
+  }
   assert np_refs <= refs, f"NumPy references without a row: {np_refs - refs}"
 
 

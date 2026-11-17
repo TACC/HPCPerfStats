@@ -295,9 +295,94 @@ def _as_utc(when: Any) -> datetime | None:
   return datetime.fromtimestamp(float(when), tz=UTC)
 
 
+def _persist_sentinel_runs(marks: list[dict[str, Any]]) -> None:
+  """
+  Merge ``kind=sentinel`` run marks into ``host_sentinel_summary``.
+
+  A run continues the stored run of the same series, code and device counts
+  whose ``end_time`` reaches the run's previous sample time (``start_time``
+  when the series had no earlier sample), so a run split across flushes or
+  messages becomes one row. ``start_time``/``end_time`` only widen
+  (``min``/``max``), so replaying a file or a re-delivered message changes
+  nothing. Archive and live ingest may race on the same run; the unique
+  constraint turns the loser's insert into a merge.
+
+  Args:
+    marks (list[dict[str, Any]]): Marks; non-sentinel kinds are ignored.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _persist_sentinel_runs([]) is None
+    True
+  """
+  runs = [m for m in marks if m.get("kind") == "sentinel"]
+  if not runs:
+    return
+  from django.db import IntegrityError, transaction
+
+  from hpcperfstats.site.lib.machine.models import host_sentinel_summary
+
+  written = 0
+  malformed = 0
+  for rec in runs:
+    try:
+      typ, dev, event, code, end, n, total, prev = str(rec["jids"]).split("\t")
+      start_dt = _as_utc(rec.get("time"))
+      end_dt = _as_utc(float(end))
+      prev_dt = _as_utc(float(prev)) if prev else start_dt
+    except KeyError, TypeError, ValueError:
+      malformed += 1
+      continue
+    if start_dt is None or end_dt is None or not rec.get("host"):
+      malformed += 1
+      continue
+    base = {
+      "host": str(rec["host"])[:64],
+      "type": typ[:32],
+      "dev": dev[:64],
+      "event": event[:64],
+      "code": int(code),
+      "device_count": int(n),
+      "total_devices": int(total),
+    }
+    for _attempt in range(2):
+      try:
+        with transaction.atomic():
+          run = (
+            host_sentinel_summary.objects.select_for_update()
+            .filter(**base, end_time__gte=prev_dt, start_time__lte=end_dt)
+            .order_by("start_time")
+            .first()
+          )
+          if run is None:
+            host_sentinel_summary.objects.create(
+              **base, start_time=start_dt, end_time=end_dt
+            )
+          else:
+            run.start_time = min(run.start_time, start_dt)
+            run.end_time = max(run.end_time, end_dt)
+            run.save(update_fields=["start_time", "end_time"])
+        written += 1
+        break
+      except IntegrityError:
+        continue
+  if written + malformed < len(runs) or malformed:
+    log.error(
+      "host_sentinel_summary merge incomplete: written=%d malformed=%d "
+      "lost=%d of %d runs",
+      written,
+      malformed,
+      len(runs) - written - malformed,
+      len(runs),
+    )
+
+
 def persist_monitor_marks(marks: list[dict[str, Any]]) -> None:
   """
-  Upsert ``job_affinity`` from ``%affinity`` marks.
+  Upsert ``job_affinity`` from ``%affinity`` marks and merge value-sentinel
+  runs (``kind=sentinel``) into ``host_sentinel_summary``.
 
   ``%jobs`` membership is the ``j:<jid>`` stamp on ``host_data``, so this
   function does not write a second table. Missing Django apps or a missing
@@ -354,6 +439,18 @@ def persist_monitor_marks(marks: list[dict[str, Any]]) -> None:
       )
   except Exception:
     log.warning("monitor mark side ingest skipped", exc_info=True)
+  # Own boundary: a failed run merge must not hide behind (or abort) the
+  # affinity upsert, and must be loud: host_data keeps the sentinel rows, but
+  # reasons, partial-device scaling and Admin Monitor read this table.
+  try:
+    _persist_sentinel_runs(marks)
+  except Exception:
+    runs_n = sum(1 for m in marks if m.get("kind") == "sentinel")
+    log.error(
+      "host_sentinel_summary write failed for %d sentinel runs",
+      runs_n,
+      exc_info=True,
+    )
 
 
 def flush_parser_side_marks(parser: Any) -> None:

@@ -596,6 +596,71 @@ def test_process_sample_idle_jid_dash_maps_to_none():
   assert all(o.jid is None for o in host_objs)
 
 
+def _live_sentinel_series(
+  tokens, *, typ, header_between=None, header_first=None
+):
+  """Feed one-row messages through the live path; return rows by time."""
+  from hpcperfstats.dbload.lib import sync_timedb_parsing as stp
+  from hpcperfstats.dbload.lib.sync_timedb_sample_ingest import (
+    ingest_monitor_sample_text,
+  )
+
+  schema = {typ: ["c,E,W=48,U=1"]}
+  carry = stp.DeltaCarryState()
+  if header_first is not None:
+    stp.note_monitor_header(header_first, "hostA", carry)
+  rows = {}
+  with mock.patch.object(
+    stp, "_sentinel_bridge_max_missed_samples", return_value=3
+  ):
+    for i, (t, tok) in enumerate(tokens):
+      if header_between is not None and i == header_between[0]:
+        stp.note_monitor_header(header_between[1], "hostA", carry)
+      stats, _ = ingest_monitor_sample_text(
+        f"{t} J1 hostA\n{typ} 0 {tok}\n",
+        schema=schema,
+        schema_fast=schema,
+        carry=carry,
+      )
+      for r in stats.itertuples(index=False):
+        rows[float(r.time)] = r
+  return rows
+
+
+def test_live_carry_bridges_sentinel_gap_across_messages():
+  rows = _live_sentinel_series(
+    [(100.0, "1000"), (110.0, "-3"), (120.0, "1300")], typ="host_ib"
+  )
+  assert rows[110.0].value == -3
+  assert rows[120.0].delta == 300
+  assert rows[120.0].arc == 15.0
+
+
+def test_live_dollar_message_inside_gap_breaks_chain():
+  import math
+
+  rows = _live_sentinel_series(
+    [(100.0, "1000"), (110.0, "-3"), (120.0, "1300")],
+    typ="host_ib",
+    header_between=(2, "$hostname hostA\n$build x86_64-ver3.1-hw-ib-full"),
+  )
+  assert math.isnan(rows[120.0].delta)
+
+
+def test_live_host_cpu_hw_bridges_only_with_proven_build():
+  import math
+
+  points = [(100.0, "10"), (110.0, "-1"), (120.0, "30")]
+  unknown = _live_sentinel_series(points, typ="host_cpu_hw")
+  assert math.isnan(unknown[120.0].delta)
+  arm = _live_sentinel_series(
+    points,
+    typ="host_cpu_hw",
+    header_first="$hostname hostA\n$build aarch64-ver3.1-hw-arm-full",
+  )
+  assert arm[120.0].delta == 20
+
+
 def test_flush_clears_pending_frames_on_success():
   """Successful write-stage flush clears pending frame lists (source contract)."""
   import inspect

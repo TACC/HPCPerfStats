@@ -72,7 +72,7 @@ SCAN_SQL = """
   SELECT type,
          event,
          COUNT(*)::bigint AS row_count,
-         BOOL_OR(COALESCE(value, 0) <> 0 OR COALESCE(arc, 0) <> 0)
+         BOOL_OR((value >= 0 AND value <> 0) OR COALESCE(arc, 0) <> 0)
   FROM host_data
   WHERE host = %s
     AND time > %s

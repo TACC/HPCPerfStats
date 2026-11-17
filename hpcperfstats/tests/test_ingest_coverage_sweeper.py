@@ -321,3 +321,9 @@ def test_sweeper_disabled_exits_without_db_or_valkey(monkeypatch):
   monkeypatch.setattr(cache_utils, "get_valkey_client", _forbidden)
   monkeypatch.setattr(ic, "run_sweep", _forbidden)
   assert entry.main() == 0
+
+
+def test_scan_sql_does_not_count_value_sentinels_as_nonzero():
+  """host_data value < 0 is a monitor sentinel, not a non-zero reading."""
+  assert "(value >= 0 AND value <> 0)" in ic.SCAN_SQL
+  assert "COALESCE(value, 0) <> 0" not in ic.SCAN_SQL

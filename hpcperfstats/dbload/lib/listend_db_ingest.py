@@ -977,7 +977,10 @@ def _worker_main(
 
   from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
   from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
-  from hpcperfstats.dbload.lib.sync_timedb_parsing import DeltaCarryState
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+    DeltaCarryState,
+    note_monitor_header,
+  )
   from hpcperfstats.dbload.lib.sync_timedb_sample_ingest import (
     ingest_monitor_sample_text,
   )
@@ -1161,6 +1164,9 @@ def _worker_main(
         if schema:
           schema_by_host[host] = schema
           schema_fast_by_host[host] = schema_fast
+        note_monitor_header(
+          message, host, carry_by_host.setdefault(host, DeltaCarryState())
+        )
         seeded_hosts.add(host)
         message = None
         continue

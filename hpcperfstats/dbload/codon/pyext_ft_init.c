@@ -30,6 +30,10 @@
 #include <time.h>
 
 #define MAX_CODON_SLOTS 128
+/* Longest carry_raw entry: a counter is [value, wid, mult, time, missed,
+ * broken]; reserved keys (restart times) stay well under this bound. */
+#define CARRY_RAW_MAX_LEN 64
+#define CARRY_BRIDGE_MAX_KEY "\0cfg\0bridge_max"
 
 extern void feed_and_collapse_fingerprint_c(
   long slot,
@@ -71,13 +75,17 @@ extern void parse_stats_file_codon_next_c(
 extern void codon_carry_clear_c(long slot);
 extern void codon_carry_raw_set_c(
   long slot,
-  char **key_ptr,
-  double value,
-  double wid,
-  double mult,
-  double time_val
+  const char *key_ptr,
+  long key_len,
+  long n,
+  double *vals
 );
-extern void codon_carry_arc_set_c(long slot, char **key_ptr, double value);
+extern void codon_carry_arc_set_c(
+  long slot,
+  const char *key_ptr,
+  long key_len,
+  double value
+);
 /* Codon ``-> str`` exports return ``{ptr, len}`` in rax/rdx. The bytes are
  * not NUL-terminated; strlen walks into the allocator tail and races. */
 typedef struct codon_str {
@@ -87,6 +95,7 @@ typedef struct codon_str {
 
 extern long codon_carry_raw_out_count_c(long slot);
 extern codon_str codon_carry_raw_out_key_c(long slot, long i);
+extern long codon_carry_raw_out_len_c(long slot, long i);
 extern double codon_carry_raw_out_value_c(long slot, long i, long idx);
 extern long codon_carry_arc_out_count_c(long slot);
 extern codon_str codon_carry_arc_out_key_c(long slot, long i);
@@ -227,6 +236,29 @@ owned_copy_from_py_str(PyObject *str_obj, char **out)
   return 0;
 }
 
+/* Owned UTF-8 copy and length of a carry key (free with ``PyMem_Free``).
+ * Counter keys join fields with NUL and reserved keys start with NUL, so the
+ * length is passed explicitly (a NUL-terminated copy would truncate the key). */
+static char *
+carry_key_owned(PyObject *key, Py_ssize_t *len)
+{
+  if (!PyUnicode_Check(key)) {
+    PyErr_SetString(PyExc_TypeError, "carry keys must be str");
+    return NULL;
+  }
+  const char *utf8 = PyUnicode_AsUTF8AndSize(key, len);
+  if (utf8 == NULL) {
+    return NULL;
+  }
+  char *owned = (char *)PyMem_Malloc((size_t)*len + 1);
+  if (owned == NULL) {
+    PyErr_NoMemory();
+    return NULL;
+  }
+  memcpy(owned, utf8, (size_t)*len + 1);
+  return owned;
+}
+
 static int
 parse_lines_and_slot(PyObject *args, PyObject **list_obj, long *slot)
 {
@@ -306,8 +338,10 @@ py_opt_time(long is_null, double unix_s)
   return dt;
 }
 
-/* carry_raw: {key: [value, wid, mult, time]}. Pushes each entry into the
- * Codon slot via one-element owned key arrays (``codon_carry_raw_set_c``). */
+/* carry_raw: {key: [float, ...]} (counters [value, wid, mult, time, missed,
+ * broken]; reserved NUL-prefixed keys have their own lengths). Pushes each
+ * entry into the Codon slot via one-element owned key arrays
+ * (``codon_carry_raw_set_c``). */
 static int
 load_carry_raw_dict(long slot, PyObject *carry_raw)
 {
@@ -322,14 +356,15 @@ load_carry_raw_dict(long slot, PyObject *carry_raw)
   PyObject *value;
   Py_ssize_t pos = 0;
   while (PyDict_Next(carry_raw, &pos, &key, &value)) {
-    if (!PySequence_Check(value) || PySequence_Size(value) != 4) {
+    const Py_ssize_t n = PySequence_Check(value) ? PySequence_Size(value) : -1;
+    if (n < 1 || n > CARRY_RAW_MAX_LEN) {
       PyErr_SetString(
-        PyExc_TypeError, "carry_raw values must be [value, wid, mult, time]"
+        PyExc_TypeError, "carry_raw values must be float lists of 1..64 items"
       );
       return -1;
     }
-    double vals[4];
-    for (Py_ssize_t k = 0; k < 4; k++) {
+    double vals[CARRY_RAW_MAX_LEN];
+    for (Py_ssize_t k = 0; k < n; k++) {
       PyObject *item = PySequence_GetItem(value, k);
       if (item == NULL) {
         return -1;
@@ -340,13 +375,12 @@ load_carry_raw_dict(long slot, PyObject *carry_raw)
         return -1;
       }
     }
-    char *key_copy = NULL;
-    if (owned_copy_from_py_str(key, &key_copy) < 0) {
+    Py_ssize_t key_len = 0;
+    char *key_copy = carry_key_owned(key, &key_len);
+    if (key_copy == NULL) {
       return -1;
     }
-    char *key_arr[1];
-    key_arr[0] = key_copy;
-    codon_carry_raw_set_c(slot, key_arr, vals[0], vals[1], vals[2], vals[3]);
+    codon_carry_raw_set_c(slot, key_copy, (long)key_len, (long)n, vals);
     PyMem_Free(key_copy);
   }
   return 0;
@@ -371,13 +405,12 @@ load_carry_arc_dict(long slot, PyObject *carry_arc)
     if (PyErr_Occurred()) {
       return -1;
     }
-    char *key_copy = NULL;
-    if (owned_copy_from_py_str(key, &key_copy) < 0) {
+    Py_ssize_t key_len = 0;
+    char *key_copy = carry_key_owned(key, &key_len);
+    if (key_copy == NULL) {
       return -1;
     }
-    char *key_arr[1];
-    key_arr[0] = key_copy;
-    codon_carry_arc_set_c(slot, key_arr, v);
+    codon_carry_arc_set_c(slot, key_copy, (long)key_len, v);
     PyMem_Free(key_copy);
   }
   return 0;
@@ -398,14 +431,15 @@ build_carry_raw_dict(long slot)
       Py_DECREF(dict);
       return NULL;
     }
-    PyObject *vals = PyList_New(4);
+    const long n = codon_carry_raw_out_len_c(slot, i);
+    PyObject *vals = PyList_New((Py_ssize_t)n);
     if (vals == NULL) {
       Py_DECREF(key);
       Py_DECREF(dict);
       return NULL;
     }
     int failed = 0;
-    for (Py_ssize_t idx = 0; idx < 4; idx++) {
+    for (Py_ssize_t idx = 0; idx < (Py_ssize_t)n; idx++) {
       PyObject *v = PyFloat_FromDouble(
         codon_carry_raw_out_value_c(slot, i, (long)idx)
       );
@@ -1516,17 +1550,19 @@ static PyObject *
 parse_stats_file_codon_open_py(PyObject *self, PyObject *args, PyObject *kwargs)
 {
   static char *kwlist[] = {
-    "path", "flush_max_bytes", "start_idx", "slot", "exclude", NULL
+    "path", "flush_max_bytes", "start_idx", "slot", "exclude", "bridge_max",
+    NULL
   };
   PyObject *path_obj = NULL;
   long flush_max_bytes = 0;
   long start_idx = 0;
   long slot = 0;
   PyObject *exclude = NULL;
+  long bridge_max = -1;
   if (!PyArg_ParseTupleAndKeywords(
-        args, kwargs, "O!|lllO", kwlist,
+        args, kwargs, "O!|lllOl", kwlist,
         &PyUnicode_Type, &path_obj, &flush_max_bytes, &start_idx, &slot,
-        &exclude
+        &exclude, &bridge_max
       )) {
     return NULL;
   }
@@ -1547,6 +1583,15 @@ parse_stats_file_codon_open_py(PyObject *self, PyObject *args, PyObject *kwargs)
   PyMem_Free(path_owned);
   if (raise_if_kernel_error(slot) < 0) {
     return NULL;
+  }
+  /* Open cleared the slot carry; seed the INI sentinel bridge limit. The key
+   * starts with NUL, so it is passed as an explicit-length Codon string. */
+  if (ok && bridge_max >= 0) {
+    static const char key_bytes[] = CARRY_BRIDGE_MAX_KEY;
+    double val = (double)bridge_max;
+    codon_carry_raw_set_c(
+      slot, key_bytes, (long)(sizeof key_bytes - 1), 1, &val
+    );
   }
   return PyBool_FromLong(ok);
 }

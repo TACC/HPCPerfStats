@@ -36,6 +36,17 @@ KEEP_DEV_TYPES = ["nvidia_gpu", "amd_gpu", "intel_gpu", "host_power_socket"]
 # ``sync_timedb_parsing._JOB_STAMP_DEV_SEP``).
 JOB_STAMP_DEV_SEP = "\x1f"
 
+# Value sentinels: literal mirrors of ``hpcperfstats.lib.monitor_sentinel``
+# (bridgeable codes) and of the reserved ``DeltaCarryState.raw`` keys in
+# ``sync_timedb_parsing``; locked by ``test_sentinel_codon_literals``.
+SENTINEL_BRIDGEABLE_CODES = [-1.0, -3.0, -7.0, -8.0, -9.0]
+SENTINEL_BRIDGE_MAX_DEFAULT = 3
+CARRY_BUILD_KEY = "\0build\0"
+CARRY_RESTART_KEY = "\0restart\0"
+CARRY_HEADER_PENDING_KEY = "\0header\0"
+CARRY_BRIDGE_MAX_KEY = "\0cfg\0bridge_max"
+CARRY_RESTART_KEEP = 8
+
 HOST_PROC_KEYS = [
   "uid",
   "vm_peak",
@@ -1231,6 +1242,108 @@ def _collapse_kind(typ: str, event: str) -> int:
   return _KIND_SUM
 
 
+def _header_bridge_flag(slug: str) -> float:
+  """1.0 when ``$build`` proves ``host_cpu_hw`` bridges (no ``likwid`` token, or ``x86perf``)."""
+  likwid = False
+  x86perf = False
+  for tok in slug.split("-"):
+    if tok == "likwid":
+      likwid = True
+    elif tok == "x86perf":
+      x86perf = True
+  return 1.0 if (not likwid) or x86perf else 0.0
+
+
+def scan_monitor_headers(
+  lines: list[str], carry: dict[str, list[float]]
+) -> None:
+  """Port of the ``IncrementalStatsParser`` ``$`` header capture.
+
+  A run of ``$`` lines (its ``$build`` slug, if any) belongs to the next digit
+  sample header: that header's host gets ``CARRY_BUILD_KEY`` (bridge flag) and
+  its time appended to ``CARRY_RESTART_KEY``. A per-host
+  ``CARRY_HEADER_PENDING_KEY`` left by listend's ``note_monitor_header`` also
+  records the restart time. A header still waiting at the end of ``lines``
+  (file-session window cut) is parked under the bare pending key. Mutates
+  ``carry``.
+  """
+  pending = False
+  flag = 0.0
+  if CARRY_HEADER_PENDING_KEY in carry:
+    pending = True
+    flag = carry[CARRY_HEADER_PENDING_KEY][0]
+    del carry[CARRY_HEADER_PENDING_KEY]
+  for raw in lines:
+    if not raw:
+      continue
+    s = raw
+    if s[0].isspace():
+      s = s.lstrip()
+      if not s:
+        continue
+    if s[0] == "$":
+      if not pending:
+        pending = True
+        flag = 0.0
+      if s.startswith("$build"):
+        parts = s.split()
+        flag = _header_bridge_flag(parts[1]) if len(parts) > 1 else 0.0
+    elif s[0].isdigit():
+      parts = s.split()
+      if len(parts) < 3:
+        continue
+      host = parts[2]
+      host_key = CARRY_HEADER_PENDING_KEY + host
+      if not pending and host_key not in carry:
+        continue
+      if pending:
+        carry[CARRY_BUILD_KEY + host] = [flag]
+        pending = False
+      carry.pop(host_key, None)
+      try:
+        t = float(parts[0])
+      except ValueError:
+        continue
+      rk = CARRY_RESTART_KEY + host
+      times: list[float] = []
+      if rk in carry:
+        for h in carry[rk]:
+          times.append(h)
+      times.append(t)
+      if len(times) > CARRY_RESTART_KEEP:
+        times = times[len(times) - CARRY_RESTART_KEEP :]
+      carry[rk] = times
+  if pending:
+    carry[CARRY_HEADER_PENDING_KEY] = [flag]
+
+
+def _sentinel_breaks(
+  v: float, typ: str, host: str, carry: dict[str, list[float]]
+) -> bool:
+  """Port of ``_sentinel_chain_breaks`` for one sentinel row."""
+  bridgeable = False
+  for c in SENTINEL_BRIDGEABLE_CODES:
+    if v == c:
+      bridgeable = True
+  if not bridgeable:
+    return True
+  for t in _CCM_TYPES:
+    if typ == t:
+      bk = CARRY_BUILD_KEY + host
+      return not (bk in carry and carry[bk][0] == 1.0)
+  return False
+
+
+def _restart_in_gap(
+  carry: dict[str, list[float]], host: str, t0: float, t1: float
+) -> bool:
+  """Port of ``_restart_between``: a ``$`` header sample in ``(t0, t1]``."""
+  rk = CARRY_RESTART_KEY + host
+  if rk not in carry:
+    return False
+  return any(t0 < h and h <= t1 for h in carry[rk])
+
+
 def apply_counter_deltas_cols(
   times: list[float],
   hosts: list[str],
@@ -1254,6 +1367,7 @@ def apply_counter_deltas_cols(
   list[float],
   list[float],
   dict[str, list[float]],
+  list[float],
 ]:
   """Columnar port of ``_apply_counter_deltas``.
 
@@ -1264,8 +1378,16 @@ def apply_counter_deltas_cols(
   a finite negative delta becomes NaN, then
   scales by ``mult`` via Codon-NumPy contiguous buffers when ``n>0``.
   ``wid``/``mult`` columns are dropped from the output. ``carry_raw`` is
-  updated (as a copy) with the last raw ``(value, wid, mult, time)`` row
-  per group.
+  updated (as a copy) with ``[value, wid, mult, time, missed, broken]`` per
+  group: the last valid raw value/time, the sentinel rows since it and
+  whether one of them breaks the chain.
+
+  Value sentinels (``value < 0``) follow ``_sentinel_deltas``: a sentinel row
+  gets NaN, and the next valid row diffs against the last valid value when
+  the gap holds at most the bridge limit (``CARRY_BRIDGE_MAX_KEY`` in the
+  carry, else ``SENTINEL_BRIDGE_MAX_DEFAULT``) rows, none chain-breaking and
+  no ``$`` header sample. The 11th return is that bridged delta's elapsed
+  time per output row (NaN when not bridged).
   """
   n = len(times)
   new_carry: dict[str, list[float]] = {}
@@ -1293,6 +1415,7 @@ def apply_counter_deltas_cols(
       out_value,
       out_delta,
       new_carry,
+      [],
     )
 
   keys: list[str] = []
@@ -1319,25 +1442,89 @@ def apply_counter_deltas_cols(
     out_value.append(values[idx])
 
   nan = float("nan")
+  bridge_max = float(SENTINEL_BRIDGE_MAX_DEFAULT)
+  if CARRY_BRIDGE_MAX_KEY in carry_raw:
+    bridge_max = carry_raw[CARRY_BRIDGE_MAX_KEY][0]
   raw_deltas: list[float] = []
+  bridge_dt: list[float] = []
   wid_f: list[float] = []
   mult_f: list[float] = []
   v_arr = np.array(out_value)
+  prev_v = nan
+  prev_t = nan
+  missed = 0.0
+  broken = False
+  had_valid = False
+  carried_ok = False
   for j in range(n):
     idx = order[j]
     key = keys[idx]
-    if j > 0 and keys[order[j - 1]] == key:
-      delta = float(v_arr[j]) - float(v_arr[j - 1])
-    else:
-      delta = nan
+    if j == 0 or keys[order[j - 1]] != key:
+      prev_v = nan
+      prev_t = nan
+      missed = 0.0
+      broken = False
+      had_valid = False
+      carried_ok = False
       if key in carry_raw:
         carried = carry_raw[key]
-        prev_val = carried[0]
-        if not math.isnan(prev_val):
-          delta = float(v_arr[j]) - prev_val
+        if not math.isnan(carried[0]):
+          carried_ok = True
+          prev_v = carried[0]
+          prev_t = carried[3]
+          if len(carried) > 4:
+            missed = carried[4]
+          if len(carried) > 5:
+            broken = carried[5] > 0.0
+    v = float(v_arr[j])
+    t = out_time[j]
+    delta = nan
+    bdt = nan
+    if v < 0.0:
+      missed += 1.0
+      if _sentinel_breaks(v, out_type[j], out_host[j], carry_raw):
+        broken = True
+    else:
+      if not math.isnan(prev_v):
+        if missed == 0.0:
+          delta = v - prev_v
+        elif (
+          missed <= bridge_max
+          and not broken
+          and not _restart_in_gap(carry_raw, out_host[j], prev_t, t)
+        ):
+          delta = v - prev_v
+          bdt = t - prev_t
+      prev_v = v
+      prev_t = t
+      missed = 0.0
+      broken = False
+      had_valid = True
     raw_deltas.append(delta)
+    bridge_dt.append(bdt)
     wid_f.append(float(wids[idx]))
     mult_f.append(mults[idx])
+    is_last = (j == n - 1) or (keys[order[j + 1]] != key)
+    if is_last:
+      if had_valid:
+        new_carry[key] = [
+          prev_v,
+          float(wids[idx]),
+          mults[idx],
+          prev_t,
+          missed,
+          1.0 if broken else 0.0,
+        ]
+      elif carried_ok:
+        carried = carry_raw[key]
+        new_carry[key] = [
+          carried[0],
+          carried[1],
+          carried[2],
+          carried[3],
+          missed,
+          1.0 if broken else 0.0,
+        ]
   d_arr = np.array(raw_deltas)
   w_arr = np.array(wid_f)
   m_arr = np.array(mult_f)
@@ -1356,18 +1543,6 @@ def apply_counter_deltas_cols(
       delta = modulus + delta if one_wrap else nan
     out_delta.append(delta * float(m_arr[j]))
 
-  for j in range(n):
-    idx = order[j]
-    key = keys[idx]
-    is_last = (j == n - 1) or (keys[order[j + 1]] != key)
-    if is_last:
-      new_carry[key] = [
-        values[idx],
-        float(wids[idx]),
-        mults[idx],
-        times[idx],
-      ]
-
   return (
     out_time,
     out_host,
@@ -1379,6 +1554,7 @@ def apply_counter_deltas_cols(
     out_value,
     out_delta,
     new_carry,
+    bridge_dt,
   )
 
 
@@ -2076,6 +2252,311 @@ def normalize_copy_unique_scalars(
   return (host, proc_out)
 
 
+def _collapse_dev_of(dev: str, typ: str) -> str:
+  """The ``dev`` a row has after ``collapse_full_cols``."""
+  if dev.startswith("j:"):
+    return dev.split(JOB_STAMP_DEV_SEP)[0]
+  if _is_keep_dev_type(typ):
+    return dev
+  return ""
+
+
+def _sentinel_run_mark(
+  host: str,
+  typ: str,
+  dev: str,
+  event: str,
+  code: float,
+  run: list[float],
+) -> dict[str, str]:
+  """One ``kind=sentinel`` side mark (``_sentinel_run_marks`` record shape)."""
+  prev = "" if math.isnan(run[4]) else str(run[4])
+  payload = (
+    typ
+    + "\t"
+    + dev
+    + "\t"
+    + event
+    + "\t"
+    + str(int(code))
+    + "\t"
+    + str(run[1])
+    + "\t"
+    + str(int(run[2]))
+    + "\t"
+    + str(int(run[3]))
+    + "\t"
+    + prev
+  )
+  return {
+    "kind": "sentinel",
+    "jids": payload,
+    "jid": "",
+    "cpus": "",
+    "gpus": "",
+    "cg": "",
+    "time": str(run[0]),
+    "host": host,
+  }
+
+
+def sentinel_collapse_prep(
+  times: list[float],
+  hosts: list[str],
+  jids: list[str],
+  types: list[str],
+  devs: list[str],
+  events: list[str],
+  units: list[str],
+  values: list[float],
+  deltas: list[float],
+  bridge_dt: list[float],
+  carry_arc: dict[str, float],
+) -> tuple[
+  list[float],
+  list[tuple[str, str, str, str, str, float, float, str]],
+  dict[tuple[str, str, str, str, str, float], list[float]],
+  list[dict[str, str]],
+]:
+  """Port of ``_sentinel_collapse_prep``.
+
+  Returns ``(values_for_collapse, restore, bridge)``: sentinel values become
+  NaN; ``restore`` lists ``(host, type, dev, event, unit, time, code, jid)``
+  for each collapsed key with no valid row (modal code, ties to the smallest
+  magnitude, jid of its first row); ``bridge`` maps a collapsed key to
+  ``[bridged_delta_sum, bridged_rate_sum, sum_kind]``; the 4th return is
+  the flush's ``kind=sentinel`` run marks (``_sentinel_run_marks``), with each
+  series' previous sample time taken from ``carry_arc``.
+  """
+  n = len(times)
+  # Run building: series (host, type, collapsed dev, event) -> time -> codes.
+  s_codes: dict[tuple[str, str, str, str], dict[float, dict[float, int]]] = {}
+  s_total: dict[tuple[str, str, str, str], dict[float, int]] = {}
+  s_has_sent: dict[tuple[str, str, str, str], bool] = {}
+  out_v: list[float] = []
+  valid_n: dict[tuple[str, str, str, str, str, float], int] = {}
+  code_n: dict[tuple[str, str, str, str, str, float], dict[float, int]] = {}
+  code_jid: dict[tuple[str, str, str, str, str, float], dict[float, str]] = {}
+  order_keys: list[tuple[str, str, str, str, str, float]] = []
+  bridge: dict[tuple[str, str, str, str, str, float], list[float]] = {}
+  for i in range(n):
+    key = (
+      hosts[i],
+      types[i],
+      _collapse_dev_of(devs[i], types[i]),
+      events[i],
+      units[i],
+      times[i],
+    )
+    v = values[i]
+    series = (key[0], key[1], key[2], key[3])
+    if series not in s_total:
+      s_total[series] = {}
+      s_codes[series] = {}
+    tot = s_total[series]
+    tot[key[5]] = tot.get(key[5], 0) + 1
+    if key[5] not in s_codes[series]:
+      s_codes[series][key[5]] = {}
+    if v < 0.0:
+      s_has_sent[series] = True
+      at = s_codes[series][key[5]]
+      at[v] = at.get(v, 0) + 1
+      out_v.append(float("nan"))
+      if key not in code_n:
+        code_n[key] = {}
+        code_jid[key] = {}
+        order_keys.append(key)
+      counts = code_n[key]
+      if v in counts:
+        counts[v] = counts[v] + 1
+      else:
+        counts[v] = 1
+        code_jid[key][v] = jids[i]
+    else:
+      out_v.append(v)
+      valid_n[key] = valid_n.get(key, 0) + 1
+    if not math.isnan(bridge_dt[i]):
+      kind = _collapse_kind(types[i], events[i])
+      sum_kind = 1.0 if kind in (_KIND_SUM, _KIND_NVIDIA_OR) else 0.0
+      rate = deltas[i] / bridge_dt[i]
+      if key in bridge:
+        b = bridge[key]
+        bridge[key] = [b[0] + deltas[i], b[1] + rate, b[2]]
+      else:
+        bridge[key] = [deltas[i], rate, sum_kind]
+  restore: list[tuple[str, str, str, str, str, float, float, str]] = []
+  for key in order_keys:
+    if key in valid_n:
+      continue
+    best = 0.0
+    best_n = -1
+    for code, cnt in code_n[key].items():
+      if cnt > best_n or (cnt == best_n and code > best):
+        best = code
+        best_n = cnt
+    restore.append(
+      (
+        key[0],
+        key[1],
+        key[2],
+        key[3],
+        key[4],
+        key[5],
+        best,
+        code_jid[key][best],
+      )
+    )
+  marks: list[dict[str, str]] = []
+  for series in s_has_sent:
+    ck = _counter_key(series[0], series[1], series[2], series[3])
+    prev_t = carry_arc[ck] if ck in carry_arc else float("nan")
+    open_runs: dict[float, list[float]] = {}
+    by_time = s_codes[series]
+    for t in sorted(by_time.keys()):
+      total = float(s_total[series][t])
+      present = by_time[t]
+      gone: list[float] = []
+      for code in open_runs:
+        if code not in present:
+          gone.append(code)
+      for code in gone:
+        marks.append(
+          _sentinel_run_mark(
+            series[0], series[1], series[2], series[3], code, open_runs[code]
+          )
+        )
+        del open_runs[code]
+      for code, cnt in present.items():
+        if code in open_runs:
+          run = open_runs[code]
+          if run[2] == float(cnt) and run[3] == total and run[1] == prev_t:
+            run[1] = t
+            continue
+          marks.append(
+            _sentinel_run_mark(
+              series[0], series[1], series[2], series[3], code, run
+            )
+          )
+        open_runs[code] = [t, t, float(cnt), total, prev_t]
+      prev_t = t
+    for code, run in open_runs.items():
+      marks.append(
+        _sentinel_run_mark(
+          series[0], series[1], series[2], series[3], code, run
+        )
+      )
+  return (out_v, restore, bridge, marks)
+
+
+def sentinel_restore_cols(
+  times: list[float],
+  hosts: list[str],
+  jids: list[str],
+  types: list[str],
+  devs: list[str],
+  events: list[str],
+  units: list[str],
+  values: list[float],
+  deltas: list[float],
+  restore: list[tuple[str, str, str, str, str, float, float, str]],
+  bridge: dict[tuple[str, str, str, str, str, float], list[float]],
+) -> tuple[
+  tuple[
+    list[float],
+    list[str],
+    list[str],
+    list[str],
+    list[str],
+    list[str],
+    list[str],
+    list[float],
+    list[float],
+  ],
+  dict[tuple[str, str, str, str, str, float], list[float]],
+]:
+  """Port of ``_sentinel_restore_rows``.
+
+  Rows of restored keys (a reducer's leftover such as the NVIDIA OR 0.0) are
+  replaced by the code row. A row with a bridged device keeps the non-bridged
+  part of its delta for arc; ``fix`` maps its key to
+  ``[full_delta, bridged_rate_sum, sum_kind]``.
+  """
+  gone: dict[tuple[str, str, str, str, str, float], bool] = {}
+  for r in restore:
+    gone[(r[0], r[1], r[2], r[3], r[4], r[5])] = True
+  o_time: list[float] = []
+  o_host: list[str] = []
+  o_jid: list[str] = []
+  o_type: list[str] = []
+  o_dev: list[str] = []
+  o_event: list[str] = []
+  o_unit: list[str] = []
+  o_value: list[float] = []
+  o_delta: list[float] = []
+  fix: dict[tuple[str, str, str, str, str, float], list[float]] = {}
+  for i in range(len(times)):
+    key = (hosts[i], types[i], devs[i], events[i], units[i], times[i])
+    if key in gone:
+      continue
+    d = deltas[i]
+    if key in bridge:
+      b = bridge[key]
+      fix[key] = [d, b[1], b[2]]
+      d = d - b[0]
+    o_time.append(times[i])
+    o_host.append(hosts[i])
+    o_jid.append(jids[i])
+    o_type.append(types[i])
+    o_dev.append(devs[i])
+    o_event.append(events[i])
+    o_unit.append(units[i])
+    o_value.append(values[i])
+    o_delta.append(d)
+  for r in restore:
+    o_time.append(r[5])
+    o_host.append(r[0])
+    o_jid.append(r[7])
+    o_type.append(r[1])
+    o_dev.append(r[2])
+    o_event.append(r[3])
+    o_unit.append(r[4])
+    o_value.append(r[6])
+    o_delta.append(float("nan"))
+  return (
+    (o_time, o_host, o_jid, o_type, o_dev, o_event, o_unit, o_value, o_delta),
+    fix,
+  )
+
+
+def sentinel_bridge_arc_cols(
+  times: list[float],
+  hosts: list[str],
+  types: list[str],
+  devs: list[str],
+  events: list[str],
+  units: list[str],
+  deltas: list[float],
+  arcs: list[float],
+  fix: dict[tuple[str, str, str, str, str, float], list[float]],
+) -> tuple[list[float], list[float]]:
+  """Port of ``_sentinel_bridge_arc``: per-device bridged rates, full delta back."""
+  if len(fix) == 0:
+    return (deltas, arcs)
+  out_d: list[float] = []
+  out_a: list[float] = []
+  for i in range(len(times)):
+    key = (hosts[i], types[i], devs[i], events[i], units[i], times[i])
+    if key not in fix:
+      out_d.append(deltas[i])
+      out_a.append(arcs[i])
+      continue
+    f = fix[key]
+    part = 0.0 if deltas[i] == 0.0 else arcs[i]
+    out_a.append(part + f[1] if f[2] > 0.0 else float("nan"))
+    out_d.append(f[0])
+  return (out_d, out_a)
+
+
 def feed_delta_collapse_arc(
   lines: list[str],
   carry_raw: dict[str, list[float]],
@@ -2141,6 +2622,11 @@ def feed_delta_collapse_arc(
     marks,
   ) = feed_lines_full(lines, start_idx, exclude_types, arm_shared_in)
 
+  work_carry: dict[str, list[float]] = {}
+  for k, v in carry_raw.items():
+    work_carry[k] = v
+  scan_monitor_headers(lines, work_carry)
+
   (
     d_time,
     d_host,
@@ -2152,6 +2638,7 @@ def feed_delta_collapse_arc(
     d_value,
     d_delta,
     carry_raw_out,
+    d_bridge_dt,
   ) = apply_counter_deltas_cols(
     stats_time,
     stats_host,
@@ -2163,9 +2650,24 @@ def feed_delta_collapse_arc(
     stats_value,
     stats_wid,
     stats_mult,
-    carry_raw,
+    work_carry,
   )
 
+  collapse_v, restore, bridge, sentinel_marks = sentinel_collapse_prep(
+    d_time,
+    d_host,
+    d_jid,
+    d_type,
+    d_dev,
+    d_event,
+    d_unit,
+    d_value,
+    d_delta,
+    d_bridge_dt,
+    carry_arc,
+  )
+  for m in sentinel_marks:
+    marks.append(m)
   (
     c_time,
     c_host,
@@ -2184,9 +2686,27 @@ def feed_delta_collapse_arc(
     d_dev,
     d_event,
     d_unit,
-    d_value,
+    collapse_v,
     d_delta,
   )
+  fix: dict[tuple[str, str, str, str, str, float], list[float]] = {}
+  if len(restore) > 0 or len(bridge) > 0:
+    (
+      (c_time, c_host, c_jid, c_type, c_dev, c_event, c_unit, c_value, c_delta),
+      fix,
+    ) = sentinel_restore_cols(
+      c_time,
+      c_host,
+      c_jid,
+      c_type,
+      c_dev,
+      c_event,
+      c_unit,
+      c_value,
+      c_delta,
+      restore,
+      bridge,
+    )
 
   (
     a_time,
@@ -2211,6 +2731,9 @@ def feed_delta_collapse_arc(
     c_value,
     c_delta,
     carry_arc,
+  )
+  a_delta, a_arc = sentinel_bridge_arc_cols(
+    a_time, a_host, a_type, a_dev, a_event, a_unit, a_delta, a_arc, fix
   )
 
   finished = (

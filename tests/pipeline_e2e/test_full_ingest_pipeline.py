@@ -152,6 +152,17 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
   assert not half_baked, "metrics_data rows need value or no_data_reason: %r" % (
       [(x.metric, x.value, x.no_data_reason) for x in half_baked],
   )
+  # Contract 10 reasons: a type the job's schema lacks says "collector not
+  # found" (with schema_absent codes); every code-backed reason names a type.
+  schema = job_data.objects.get(pk=PIPELINE_E2E_JID).host_data_schema_json or {}
+  for r in rows:
+    codes = r.no_data_codes or {}
+    if codes.get("schema_absent"):
+      typ = str(r.no_data_reason).split(" ", 1)[0]
+      assert r.value is None and typ not in schema, (r.metric, r.no_data_reason)
+      assert r.no_data_reason == typ + " collector not found on this node's monitor"
+    elif codes.get("codes") and r.value is None:
+      assert ": " in str(r.no_data_reason) and "hosts)" in str(r.no_data_reason)
   # Grace PMU sharing (monitor 3.1 Phase 1b, D6): ratios of summed host_cpu_hw rates.
   by_metric = {r.metric: r.value for r in rows}
   for metric, want in (
@@ -174,3 +185,80 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
           sorted(r.metric for r in rows if r.value is None),
       )
   )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_sentinel_values_ingest_end_to_end():
+  """Monitor value sentinels through RabbitMQ -> listend -> sync_timedb.
+
+  A bridgeable code (-3 READ_FAILED) on one IB sample keeps the code in
+  ``value`` with NULL delta/arc and the next sample's delta spans the gap; an
+  all-device chain-breaking code (-2) on host_cpu is stored once as the code;
+  ``host_sentinel_summary`` gets the runs.
+  """
+  if os.environ.get("HPCPERFSTATS_COMPOSE_NETWORK", "").strip() != "1":
+    pytest.skip("Requires compose network (db, rabbitmq, valkey); run workflow script.")
+  if os.environ.get("HPCPERFSTATS_PIPELINE_E2E", "").strip().lower() not in (
+      "1", "yes", "true"):
+    pytest.skip("Pipeline E2E gate is disabled (set HPCPERFSTATS_PIPELINE_E2E=1).")
+  from hpcperfstats.site.lib.machine.models import host_sentinel_summary
+
+  host_ext = cfg.get_host_name_ext().strip().lstrip(".")
+  fqdn = "{}s.{}".format(PIPELINE_E2E_HOST_SHORT, host_ext)
+  host_data.objects.filter(host=fqdn).delete()
+  host_sentinel_summary.objects.filter(host=fqdn).delete()
+  header = (
+      "$hpcperfstats 3.1\n$hostname {h}\n$uname Linux x86_64 5.14.0 test\n"
+      "$uptime 1\n$build x86_64-ver3.1-hw-ib-likwid-full\n"
+      "!host_ib port_xmit_data,E port_rcv_data,E\n"
+      "!host_cpu user,E,U=cs idle,E,U=cs\n"
+  ).format(h=fqdn)
+  base = (django_timezone.now() - timedelta(days=3)).timestamp()
+  ib = ["1000 2000", "-3 -3", "1600 2600", "1700 2700"]
+  cpu = [("10 90", "11 91"), ("-2 -2", "-2 -2"), ("30 70", "31 71"), ("40 60", "41 61")]
+  bodies = [header]
+  for i, (ib_v, (c0, c1)) in enumerate(zip(ib, cpu, strict=True)):
+    bodies.append(
+        "%.6f sjob %s\nhost_ib mlx5_0.1 %s\nhost_cpu 0 %s\nhost_cpu 1 %s\n"
+        % (base + 60 * i, fqdn, ib_v, c0, c1)
+    )
+  bodies.append(header)
+
+  os.makedirs(cfg.get_daily_archive_dir_path(), exist_ok=True)
+  queue_name = cfg.get_rmq_queue()
+  connection = pika.BlockingConnection(pika.ConnectionParameters(cfg.get_rmq_server()))
+  channel = connection.channel()
+  channel.queue_declare(queue=queue_name, durable=True)
+  for text in bodies:
+    channel.basic_publish(
+        exchange="",
+        routing_key=queue_name,
+        body=text.encode("utf-8"),
+        properties=pika.BasicProperties(delivery_mode=2),
+    )
+  connection.close()
+  assert drain_queue_to_archive() == len(bodies)
+  run_ingest_entire_archive_once_for_tests()
+
+  ib_rows = {
+      round(r.time.timestamp() - base): r
+      for r in host_data.objects.filter(host=fqdn, type="host_ib", event="port_xmit_data")
+  }
+  assert ib_rows[60].value == -3
+  assert ib_rows[60].delta is None and ib_rows[60].arc is None
+  assert ib_rows[120].delta == 600  # bridged: 1600 - 1000 over the gap
+  assert ib_rows[120].arc == pytest.approx(600 / 120)
+  cpu_rows = {
+      round(r.time.timestamp() - base): r
+      for r in host_data.objects.filter(host=fqdn, type="host_cpu", event="user")
+  }
+  assert cpu_rows[60].value == -2
+  assert cpu_rows[120].delta is None  # -2 breaks the chain
+  assert cpu_rows[180].delta == 20
+  assert not host_data.objects.filter(host=fqdn, value__lt=0, delta__isnull=False).exists()
+  runs = {
+      (r.type, r.event, r.code, r.device_count, r.total_devices)
+      for r in host_sentinel_summary.objects.filter(host=fqdn)
+  }
+  assert ("host_ib", "port_xmit_data", -3, 1, 1) in runs
+  assert ("host_cpu", "user", -2, 2, 2) in runs

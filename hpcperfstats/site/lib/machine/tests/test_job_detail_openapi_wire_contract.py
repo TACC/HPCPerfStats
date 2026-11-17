@@ -171,3 +171,73 @@ def test_job_detail_wire_with_shared_node_true_matches_openapi_serializers():
   ser = JobDetailResponseSerializer(data=JOB_DETAIL_WIRE_SHARED_NODE)
   assert ser.is_valid(), ser.errors
   assert ser.validated_data["is_shared_node"] is True
+
+
+def _sentinel_metric_job():
+  """One job whose persisted rows carry a staff-only and a visible cause."""
+  from unittest.mock import MagicMock
+
+  rows = []
+  for metric, reason, codes in (
+    ("avg_ibbw", "host_ib: PMU busy (2/2 hosts)", {"codes": {"-5": 2}}),
+    (
+      "avg_blockbw",
+      "host_block: counter not present (2/2 hosts)",
+      {"codes": {"-2": 2}},
+    ),
+  ):
+    row = MagicMock()
+    row.metric, row.type, row.units = metric, "host_ib", "MB/s"
+    row.value, row.no_data_reason, row.no_data_codes = None, reason, codes
+    rows.append(row)
+  job = MagicMock()
+  job.metrics_data_set.all.return_value = rows
+  return job, rows
+
+
+def _metrics_list(job, is_staff):
+  """The api.job_detail expression for ``metrics_list``."""
+  from hpcperfstats.analysis.metrics.lib.metrics import (
+    build_job_metrics_display_list,
+    filter_staff_only_job_metrics,
+  )
+
+  return filter_staff_only_job_metrics(
+    build_job_metrics_display_list(job), is_staff
+  )
+
+
+def _reasons(metrics_list):
+  return {r["metric"]: r["no_data_reason"] for r in metrics_list}
+
+
+@pytest.mark.django_db(databases=[])
+@pytest.mark.parametrize("order", [(False, True), (True, False)])
+def test_staff_full_reason_regardless_of_request_order(order):
+  """Researcher then staff (and the reverse) on the same job: staff always
+  get the full causes, researchers only the visible one; the persisted
+  ``no_data_reason`` stays the full text and the wire shape validates."""
+  job, rows = _sentinel_metric_job()
+  seen = {}
+  for is_staff in order:
+    out = _metrics_list(job, is_staff)
+    seen[is_staff] = _reasons(out)
+    ser = JobDetailResponseSerializer(
+      data={**JOB_DETAIL_WIRE_BASE, "metrics_list": out}
+    )
+    assert ser.is_valid(), ser.errors
+  assert seen[True]["avg_ibbw"] == "host_ib: PMU busy (2/2 hosts)"
+  assert seen[False]["avg_ibbw"] is None
+  assert seen[True]["avg_blockbw"] == seen[False]["avg_blockbw"]
+  assert [r.no_data_reason for r in rows] == [
+    "host_ib: PMU busy (2/2 hosts)",
+    "host_block: counter not present (2/2 hosts)",
+  ]
+
+
+@pytest.mark.django_db(databases=[])
+def test_sentinel_codes_never_reach_the_wire():
+  """``no_data_codes`` is internal: no metrics_list row carries it."""
+  job, _rows = _sentinel_metric_job()
+  for is_staff in (True, False):
+    assert all("no_data_codes" not in r for r in _metrics_list(job, is_staff))

@@ -477,6 +477,29 @@ Exact `st_name` values are in `HPCPerfStats/monitor/src/*.c` (grep `.st_name`). 
 
 ---
 
+## Value sentinels
+
+Real values are unsigned on the wire. When the monitor could not read one metric while its type and device still reach emission, it prints the token `-<n>` in place of the value, so an emitted `0` always means "read, and the counter was 0". Each code names one reason; the catalog lives in `HPCPerfStats/monitor/src/stats_sentinel.h` (`X(n, SLUG, "description")`, wire code `-n`) and is mirrored for the consumer in `hpcperfstats/lib/monitor_sentinel.py` (drift-tested). Codes are append-only. A daemon with `emit_value_sentinels 0` prints values exactly as before.
+
+| Code | Slug | Meaning | Gap handling (consumer) |
+| --- | --- | --- | --- |
+| -1 | `NOT_UPDATED` | Collector did not refresh this key this cycle | bridgeable, transient |
+| -2 | `NOT_PRESENT` | Counter/field does not exist on this hardware/driver | chain-breaking, static |
+| -3 | `READ_FAILED` | Source exists but the read/parse failed | bridgeable, transient |
+| -4 | `PERMISSION_DENIED` | OS denied access | chain-breaking, static |
+| -5 | `PMU_BUSY` | Hardware counter held by another program | chain-breaking, transient |
+| -6 | `NOT_SCHEDULED` | Event multiplexed out for the whole interval | chain-breaking, transient |
+| -7 | `BACKEND_ERROR` | Library/API session failure (DCGM, MAD, LIKWID) | bridgeable, transient |
+| -8 | `INVALID_VALUE` | Value read but rejected as non-physical | bridgeable, transient |
+| -9 | `BACKOFF` | Source in failure backoff, not queried this cycle | bridgeable, transient |
+| -10 | `NOT_BUILT` | Needs a backend not compiled into this build | chain-breaking, static |
+| -11 | `COUNTER_RESET` | Hardware counter restarted; this interval is unknown | chain-breaking, transient |
+| other < 0 | `UNKNOWN` | Code newer than the consumer's catalog | chain-breaking, transient |
+
+**Bridgeable** codes mean the source counter kept running, so the next valid sample's `delta` spans the gap. **Chain-breaking** codes start a new chain (next `delta` NaN). On `host_cpu_hw` every bridgeable code is chain-breaking unless the `$build` slug has `x86perf` or lacks `likwid`. Sentinel rows keep the code in `host_data.value` with `delta` / `arc` NULL; readers exclude `value < 0`.
+
+---
+
 ## Universal vs explicit code references
 
 Every event name below is stored in **`host_data.event`** when the monitor emits it (subject to site `exclude_types` / hardware maps). All such rows flow through the **universal pipeline** in the table above through the ORM model.

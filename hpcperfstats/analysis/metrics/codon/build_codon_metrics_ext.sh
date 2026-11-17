@@ -53,7 +53,8 @@ codon build -release --mcpu=native --linker-flags "-flto=thin" \
   metrics_kernels.py
 
 for sym in copy_count_rows_c copy_decode_c group_reduce_c residual_collapse_c \
-  grid_mean_c join_sorted_c; do
+  grid_mean_c join_sorted_c sentinel_samples_c sentinel_fold_c \
+  fill_interior_gaps_c; do
   if ! nm -D "${KERNEL}" | awk '{print $3}' | grep -qx "${sym}"; then
     echo "missing_export ${sym}" >&2
     nm -D "${KERNEL}" | head -40 >&2
@@ -209,6 +210,43 @@ except OverflowError:
   print("codon_metrics_name_cap_overflow=pass")
 else:
   raise AssertionError("name cap overflow not reported")
+# fill_interior_gaps: one interior gap bucket between 1.0 and 3.0.
+fm = np.array([1.0, np.nan, 3.0])
+fg = np.array([0, 1, 0], dtype=np.uint8)
+assert m.fill_interior_gaps(3, fm, fg, np.arange(3.0), 3, 0.5) == 1
+assert fm.tolist() == [1.0, 2.0, 3.0], fm
+
+# sentinel_samples: rows 0/1 share key 5 (valid + gap), row 2 is bridged.
+sk = np.array([5, 5, 9], dtype=np.int64)
+sfirst = np.empty(3, np.int64)
+ssum = np.empty(3)
+sst = np.empty(3, np.int64)
+scode = np.empty(3, np.int64)
+g = m.sentinel_samples(
+  3, sk, np.array([1, 0, 0], np.uint8), np.array([0, 0, 1], np.uint8),
+  np.array([0, 1, 0], np.uint8), np.array([0, -3, -1], np.int64),
+  np.array([2.0, 0.0, 4.0]), np.empty(4 * 3 + 65536, np.int64),
+  sfirst, ssum, sst, scode,
+)
+assert g == 2 and sfirst[:2].tolist() == [0, 2], (g, sfirst)
+assert sst[:2].tolist() == [2, 1] and scode[:2].tolist() == [-3, -1], (sst, scode)
+assert ssum[:2].tolist() == [2.0, 4.0], ssum
+
+# sentinel_fold: one host, buckets 0 (dropped) and 1.
+hi = np.empty(7 * 2, np.int64)
+fmean = np.empty(2)
+fgap = np.empty(2, np.uint8)
+fpos = np.empty(2)
+g = m.sentinel_fold(
+  2, np.array([3, 3], np.int64), np.array([0, 1], np.int64),
+  np.array([1.0, 5.0]), np.array([0, 0], np.int64), 3, 0.1,
+  np.empty(4 * 2 + 65536, np.int64), np.empty(2 * 2, np.int64),
+  hi, fmean, fgap, fpos,
+)
+assert g == 1 and hi.reshape(7, 2)[:, 0].tolist() == [3, 2, 0, 0, 0, 1, 0], hi
+assert fmean[0] == 5.0 and fgap[0] == 0 and fpos[0] == 1.0, (fmean, fgap, fpos)
+print("codon_metrics_sentinel_smoke=pass")
+
 assert sys._is_gil_enabled() is False
 print("codon_metrics_pyext_314t_import=pass")
 PY

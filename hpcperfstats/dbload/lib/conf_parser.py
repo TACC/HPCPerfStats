@@ -62,6 +62,7 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PORTAL", "db_statement_timeout_ms"),
   ("PORTAL", "db_idle_in_transaction_session_timeout_ms"),
   ("PORTAL", "separate_test_login"),
+  ("PORTAL", "telemetry_persistent_not_updated_frac"),
   # [PIPELINE] - sync_timedb, update_metrics, sync_acct, archive paths/tuning
   ("PIPELINE", "metrics_pool_processes"),
   ("PIPELINE", "metrics_scheduler_mode"),
@@ -90,6 +91,11 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "metrics_compute_batch_max_single_job_s"),
   ("PIPELINE", "metrics_compute_batch_unknown_runtime_s"),
   ("PIPELINE", "metrics_compute_watchdog_s"),
+  ("PIPELINE", "metrics_sentinel_min_coverage"),
+  ("PIPELINE", "metrics_sentinel_scale_partial_sums"),
+  ("PIPELINE", "metrics_sentinel_partial_device_max_frac"),
+  ("PIPELINE", "metrics_sentinel_fill_max_gap_s"),
+  ("PIPELINE", "metrics_sentinel_fill_max_frac"),
   ("PIPELINE", "metrics_compute_total_watchdog_s"),
   ("PIPELINE", "metrics_deferred_not_ready_retry_s"),
   ("PIPELINE", "metrics_deferred_not_ready_max_retries"),
@@ -148,6 +154,7 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "sync_ingest_parse_queue_max"),
   ("PIPELINE", "sync_ingest_parse_flush_max_mib"),
   ("PIPELINE", "sync_codon_parse_flush_max_mib"),
+  ("PIPELINE", "ingest_sentinel_bridge_max_missed_samples"),
   ("PIPELINE", "sync_process_tree_rss_limit_cgroup_pct"),
   ("PIPELINE", "sync_process_tree_rss_exit_cgroup_pct"),
   ("PIPELINE", "sync_ingest_max_file_read_bytes"),
@@ -240,6 +247,7 @@ INI_OPTION_DEFAULTS = {
   "db_statement_timeout_ms": "120000",
   "db_idle_in_transaction_session_timeout_ms": "300000",
   "separate_test_login": "no",
+  "telemetry_persistent_not_updated_frac": "0.5",
   "metrics_pool_processes": "32",
   "metrics_scheduler_mode": "global_priority",
   "metrics_scheduler_ready_queue_target": "100",
@@ -275,6 +283,11 @@ INI_OPTION_DEFAULTS = {
   "metrics_compute_batch_max_single_job_s": "0.0",
   "metrics_compute_batch_unknown_runtime_s": "172800.0",
   "metrics_compute_watchdog_s": "120.0",
+  "metrics_sentinel_min_coverage": "0.5",
+  "metrics_sentinel_scale_partial_sums": "no",
+  "metrics_sentinel_partial_device_max_frac": "0.30",
+  "metrics_sentinel_fill_max_gap_s": "900",
+  "metrics_sentinel_fill_max_frac": "0.10",
   "metrics_compute_total_watchdog_s": "0.0",
   "metrics_deferred_not_ready_retry_s": "10.0",
   "metrics_deferred_not_ready_max_retries": "30",
@@ -301,6 +314,7 @@ INI_OPTION_DEFAULTS = {
   "sync_ingest_parse_queue_max": "0",
   "sync_ingest_parse_flush_max_mib": "512",
   "sync_codon_parse_flush_max_mib": "1",
+  "ingest_sentinel_bridge_max_missed_samples": "3",
   "sync_archive_pool_processes": "4",
   "sync_ingest_queue_max_size": "50000",
   "sync_ingest_rescan_mtime_days": "1",
@@ -1169,6 +1183,30 @@ def get_cors_origin_scheme() -> Any:
   if raw in ("http", "https"):
     return raw
   return "https"
+
+
+def get_telemetry_persistent_not_updated_frac() -> float:
+  """
+  Window share above which ``NOT_UPDATED`` runs are a monitor bug.
+
+  Admin Monitor raises ``persistent_not_updated`` for a host's type/event
+  whose ``-1`` sentinel runs cover more than this share of the scan window:
+  every failure site sets an explicit code, so a ``-1`` that persists is an
+  uncovered failure path. Reads ``[PORTAL]`` (Admin Monitor runs in the web
+  service).
+
+  Returns:
+    float: Share in ``[0, 1]``.
+
+  Examples:
+    >>> 0.0 <= get_telemetry_persistent_not_updated_frac() <= 1.0
+    True
+  """
+  _ensure_cfg_loaded()
+  raw = _ini_get_from_registry(
+    "PORTAL", "telemetry_persistent_not_updated_frac"
+  )
+  return min(1.0, max(0.0, float(raw)))
 
 
 def get_separate_test_login() -> bool:
@@ -2041,6 +2079,127 @@ def get_sync_codon_parse_flush_max_mib() -> Any:
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_codon_parse_flush_max_mib"))
+
+
+def get_ingest_sentinel_bridge_max_missed_samples() -> int:
+  """
+  Max consecutive value-sentinel samples a counter delta may bridge.
+
+  A bridgeable monitor sentinel (the counter kept running while the monitor
+  failed to read it) lets the next valid sample's delta span the gap. Gaps
+  of more sentinel samples of that key break the chain instead. Counting
+  samples, not seconds, keeps the limit relative to each key's own cadence
+  (fast and slow tier alike).
+
+  Returns:
+    int: Sample count (>= 0; 0 disables bridging).
+
+  Examples:
+    >>> get_ingest_sentinel_bridge_max_missed_samples() >= 0  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("ingest_sentinel_bridge_max_missed_samples"))
+
+
+def get_metrics_sentinel_min_coverage() -> float:
+  """
+  Coverage floor below which a sentinel-hit series is static (no value).
+
+  A host series whose valid (plus bridged) share of samples is at least this
+  floor is transient: its value is computed from the valid samples. Below
+  it, or with a static-kind code and no valid sample, the host is excluded
+  from the metric (and the metric is None when no host is left).
+
+  Returns:
+    float: Share in ``[0, 1]``.
+
+  Examples:
+    >>> 0.0 <= get_metrics_sentinel_min_coverage() <= 1.0
+    True
+  """
+  _ensure_cfg_loaded()
+  return min(1.0, max(0.0, _pipeline_getfloat("metrics_sentinel_min_coverage")))
+
+
+def get_metrics_sentinel_scale_partial_sums() -> bool:
+  """
+  Whether a host-summed metric missing static hosts is scaled up.
+
+  Off (default): a job-total metric with a static host is None with a
+  reason, because summing a subset of hosts would understate it. On: the
+  sum of the remaining hosts is scaled by hosts / remaining hosts and marked
+  estimated for staff.
+
+  Returns:
+    bool: True to scale.
+
+  Examples:
+    >>> isinstance(get_metrics_sentinel_scale_partial_sums(), bool)
+    True
+  """
+  _ensure_cfg_loaded()
+  return bool(_parse_bool(_pipeline_get("metrics_sentinel_scale_partial_sums")))
+
+
+def get_metrics_sentinel_partial_device_max_frac() -> float:
+  """
+  Largest unreadable-device share a collapsed host sample is scaled for.
+
+  When some devices of a collapsed per-device type are unreadable, the
+  stored sum covers the readable ones and the metric scales it by
+  ``total / readable``. Above this share the sample is a gap instead.
+
+  Returns:
+    float: Share in ``[0, 1]``.
+
+  Examples:
+    >>> 0.0 <= get_metrics_sentinel_partial_device_max_frac() <= 1.0
+    True
+  """
+  _ensure_cfg_loaded()
+  return min(
+    1.0,
+    max(0.0, _pipeline_getfloat("metrics_sentinel_partial_device_max_frac")),
+  )
+
+
+def get_metrics_sentinel_fill_max_gap_s() -> float:
+  """
+  Longest interior sentinel gap (seconds of gap buckets) a metric fills.
+
+  Transient gap buckets inside a series are interpolated from their
+  neighbours only up to this span; longer gaps count against coverage.
+
+  Returns:
+    float: Seconds (>= 0).
+
+  Examples:
+    >>> get_metrics_sentinel_fill_max_gap_s() >= 0
+    True
+  """
+  _ensure_cfg_loaded()
+  return max(0.0, _pipeline_getfloat("metrics_sentinel_fill_max_gap_s"))
+
+
+def get_metrics_sentinel_fill_max_frac() -> float:
+  """
+  Largest share of a host series' buckets that may be interpolated.
+
+  Above it nothing is interpolated for that series, so a value is never
+  mostly invented. Bridged spreads (measured rates) do not count.
+
+  Returns:
+    float: Share in ``[0, 1]``.
+
+  Examples:
+    >>> 0.0 <= get_metrics_sentinel_fill_max_frac() <= 1.0
+    True
+  """
+  _ensure_cfg_loaded()
+  return min(
+    1.0, max(0.0, _pipeline_getfloat("metrics_sentinel_fill_max_frac"))
+  )
 
 
 def get_sync_archive_pool_processes() -> Any:

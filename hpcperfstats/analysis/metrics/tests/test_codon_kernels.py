@@ -402,6 +402,359 @@ def test_threads_run_kernels_concurrently_with_identical_results():
   assert errors == []
 
 
+def _assert_bits(got, want):
+  """Equal shape, dtype kind, values (NaN-equal) and float sign bits."""
+  got = np.asarray(got)
+  want = np.asarray(want)
+  assert got.shape == want.shape, (got.shape, want.shape)
+  assert got.dtype.kind == want.dtype.kind, (got.dtype, want.dtype)
+  assert np.array_equal(got, want, equal_nan=want.dtype.kind == "f")
+  if want.dtype.kind == "f":
+    assert np.signbit(got).tolist() == np.signbit(want).tolist()
+
+
+def _assert_same_tuple(got, want):
+  assert len(got) == len(want)
+  for g, w in zip(got, want, strict=True):
+    _assert_bits(g, w)
+
+
+def _sample_rows(rng, n, *, hosts=40, times=60):
+  """Rows of one sentinel fold before the per-sample reduction.
+
+  Kinds: valid, bridged, gap, and neither (a NULL row with code 0, which
+  must not open a sample). Keys are unsorted ``host << 32 | time`` with
+  repeats; ``eff`` spans 15 decades so row order changes the float sum.
+  """
+  keys = rng.integers(0, hosts, n, dtype=np.int64) << 32
+  keys |= rng.integers(0, times, n, dtype=np.int64)
+  kind = rng.integers(0, 4, n)
+  valid = kind == 0
+  bridged = kind == 1
+  gap_row = kind == 2
+  code = np.where(valid | (kind == 3), 0, -rng.integers(1, 10, n))
+  eff = rng.normal(size=n) * 10.0 ** rng.integers(-6, 9, n)
+  eff[kind == 3] = np.nan
+  eff[rng.random(n) < 0.02] = -0.0
+  return keys, valid, bridged, gap_row, code.astype(np.int64), eff
+
+
+def _samples_both(keys, valid, bridged, gap_row, code, eff):
+  from hpcperfstats.analysis.metrics.lib import sentinel_profile as sp
+
+  got = codon_bridge.sentinel_samples(keys, valid, bridged, gap_row, code, eff)
+  want = sp._np_sentinel_samples(keys, valid, bridged, gap_row, code, eff)
+  return got, want
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3])
+@pytest.mark.usefixtures("kern")
+def test_sentinel_samples_matches_numpy_twin_randomized(seed):
+  rng = np.random.default_rng(100 + seed)
+  for n in (1, 7, 2_000, 40_000):
+    got, want = _samples_both(*_sample_rows(rng, n))
+    _assert_same_tuple(got, want)
+  # Wide host ids (bits above 48) force the upper radix passes.
+  keys, *rest = _sample_rows(rng, 5_000, hosts=1 << 20)
+  _assert_same_tuple(*_samples_both(keys, *rest))
+
+
+@pytest.mark.usefixtures("kern")
+def test_sentinel_samples_edge_cases_match_numpy_twin():
+  def case(keys, valid, bridged, gap_row, code, eff):
+    got, want = _samples_both(
+      np.asarray(keys, dtype=np.int64),
+      np.asarray(valid, dtype=bool),
+      np.asarray(bridged, dtype=bool),
+      np.asarray(gap_row, dtype=bool),
+      np.asarray(code, dtype=np.int64),
+      np.asarray(eff, dtype=np.float64),
+    )
+    _assert_same_tuple(got, want)
+    return got
+
+  empty = case([], [], [], [], [], [])
+  assert all(x.shape == (0,) for x in empty)
+  # NaN rows that are neither valid, bridged nor gap open no sample.
+  first, _s, _st, _c = case(
+    [7, 7, 3], [0, 0, 1], [0, 0, 0], [0, 0, 0], [0, 0, 0], [np.nan, 1, 2]
+  )
+  assert first.tolist() == [2]
+  # Bridged spread plus a gap in one sample: status gap, the gap's code wins
+  # over the bridged code, and the bridged rate still adds to the sum.
+  _f, sums, status, codes = case(
+    [4, 4, 4], [1, 0, 0], [0, 1, 0], [0, 0, 1], [0, -3, -5], [1.5, 2.5, 99.0]
+  )
+  assert status.tolist() == [2] and codes.tolist() == [-5]
+  assert sums.tolist() == [4.0]
+  # Several gap rows: the last one in row order names the sample.
+  _f, _s, _st, codes = case(
+    [9, 9, 9], [0, 0, 0], [0, 0, 0], [1, 1, 1], [-1, -6, -2], [0, 0, 0]
+  )
+  assert codes.tolist() == [-2]
+  # Negative keys go through the sign-flipped radix pass; -0.0 sums to +0.0.
+  case([-5, 3, -5, 3], [1, 1, 1, 0], [0] * 4, [0] * 4, [0] * 4, [-0.0] * 4)
+
+
+def _fold_rows(rng, n, *, hosts=8, minutes=120):
+  host = rng.integers(0, hosts, n, dtype=np.int64) * 3 + 1
+  t = rng.integers(0, minutes, n, dtype=np.int64) * 60_000_000
+  status = rng.choice(np.array([0, 1, 2], dtype=np.int64), n, p=[0.7, 0.1, 0.2])
+  values = rng.normal(size=n) * 10.0 ** rng.integers(-6, 9, n)
+  values[rng.random(n) < 0.03] = np.nan
+  values[status == 2] = np.nan
+  return host, t // sg.FIVE_MIN_US, values, status
+
+
+def _fold_both(host, bucket, values, status, max_gap, max_frac):
+  from hpcperfstats.analysis.metrics.lib import sentinel_profile as sp
+
+  args = (
+    np.asarray(host, dtype=np.int64),
+    np.asarray(bucket, dtype=np.int64),
+    np.asarray(values, dtype=np.float64),
+    np.asarray(status, dtype=np.int64),
+    max_gap,
+    max_frac,
+  )
+  got = codon_bridge.sentinel_fold(*args)
+  want = sp._np_sentinel_fold(*args)
+  _assert_same_tuple(got, want)
+  return got
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+@pytest.mark.usefixtures("kern")
+def test_sentinel_fold_matches_numpy_twin_randomized(seed):
+  rng = np.random.default_rng(200 + seed)
+  for n in (1, 30, 3_000, 50_000):
+    rows = _fold_rows(rng, n)
+    for max_gap, max_frac in ((3, 0.1), (0, 1.0), (40, 1.0), (1, 0.02)):
+      _fold_both(*rows, max_gap, max_frac)
+  # Sparse cadence: most buckets of most hosts are empty or gap-only.
+  _fold_both(*_fold_rows(rng, 400, hosts=30, minutes=600), 3, 0.5)
+
+
+@pytest.mark.usefixtures("kern")
+def test_sentinel_fold_edge_cases_match_numpy_twin():
+  v, b, g = 0, 1, 2
+  per_host, *_rest = _fold_both([], [], [], [], 3, 0.1)
+  assert per_host.shape == (7, 0)
+  # All-gap host: every bucket NaN and flagged, nothing to fill from.
+  per_host, means, gaps, _pos = _fold_both(
+    [5] * 4, [0, 1, 2, 3], [np.nan] * 4, [g] * 4, 3, 1.0
+  )
+  assert per_host[:, 0].tolist() == [5, 0, 0, 4, 0, 3, 0]
+  assert np.isnan(means).all() and gaps.all()
+  # Cadence-empty interior bucket (only gap samples) between bridged and
+  # valid ones: filled linearly at its bucket position.
+  per_host, means, gaps, pos = _fold_both(
+    [2] * 6,
+    [0, 1, 2, 4, 4, 5],
+    [9, 2, np.nan, np.nan, 6, 8],
+    [v, b, g, g, v, v],
+    3,
+    1.0,
+  )
+  assert per_host[:, 0].tolist() == [2, 3, 1, 2, 0, 4, 1]
+  assert pos.tolist() == [1.0, 2.0, 4.0, 5.0]
+  assert means[[0, 2, 3]].tolist() == [2.0, 6.0, 8.0]
+  assert means[1] == pytest.approx(2.0 + 4.0 / 3.0, rel=1e-12)
+  assert gaps.tolist() == [False, True, False, False]
+  # Chain-break gap at the host's last bucket is an edge: never filled.
+  per_host, means, _g, _p = _fold_both(
+    [0] * 3, [0, 1, 2], [1, 2, np.nan], [v, v, g], 3, 1.0
+  )
+  assert per_host[6, 0] == 0 and np.isnan(means[-1])
+  # Single-bucket hosts keep their only bucket; negative buckets (times
+  # before the epoch) sort ahead; a covered NaN row poisons its bucket mean.
+  per_host, means, _g, pos = _fold_both(
+    [7, 7, 1, 1, 1],
+    [-3, -3, 4, -2, 4],
+    [1, 3, np.nan, 2, 5],
+    [v, v, v, v, b],
+    3,
+    1.0,
+  )
+  assert per_host[0].tolist() == [1, 7] and per_host[5].tolist() == [1, 1]
+  assert pos.tolist() == [4.0, -3.0]
+  assert np.isnan(means[0]) and means[1] == 2.0
+  # max_gap / max_frac boundaries through the fold.
+  hb = list(range(12))
+  st = [v] * 12
+  st[5] = st[6] = g
+  vals = [float(i) for i in hb]
+  assert _fold_both([0] * 12, hb, vals, st, 2, 1.0)[0][6, 0] == 2
+  assert _fold_both([0] * 12, hb, vals, st, 1, 1.0)[0][6, 0] == 0
+  assert _fold_both([0] * 12, hb, vals, st, 2, 2 / 11)[0][6, 0] == 2
+  assert _fold_both([0] * 12, hb, vals, st, 2, 1.9 / 11)[0][6, 0] == 0
+
+
+def _fill_both(means, gaps, max_gap, max_frac, pos=None):
+  from hpcperfstats.analysis.metrics.lib import sentinel_profile as sp
+
+  means = np.asarray(means, dtype=np.float64)
+  gaps = np.asarray(gaps, dtype=bool)
+  positions = (
+    np.arange(means.shape[0], dtype=np.float64) if pos is None else pos
+  )
+  original = means.copy()
+  got_m, got_n = codon_bridge.fill_interior_gaps(
+    means, gaps, positions, max_gap, max_frac
+  )
+  want_m, want_n = sp._np_fill_interior_gaps(
+    means, gaps, max_gap, max_frac, pos
+  )
+  assert got_n == want_n
+  _assert_bits(got_m, want_m)
+  _assert_bits(means, original)
+  return got_m, got_n
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3])
+@pytest.mark.usefixtures("kern")
+def test_sentinel_fill_interior_gaps_matches_numpy_twin(seed):
+  rng = np.random.default_rng(300 + seed)
+  for n in (1, 2, 17, 500, 5_000):
+    means = rng.normal(size=n) * 10.0 ** rng.integers(-6, 9, n)
+    gaps = rng.random(n) < 0.3
+    means[gaps] = np.nan
+    means[rng.random(n) < 0.03] = np.nan
+    means[rng.random(n) < 0.01] = np.inf
+    pos = np.cumsum(rng.integers(1, 4, n)).astype(np.float64)
+    for max_gap, max_frac in ((3, 0.1), (1, 1.0), (50, 1.0), (0, 1.0)):
+      _fill_both(means, gaps, max_gap, max_frac)
+      _fill_both(means, gaps, max_gap, max_frac, pos)
+
+
+@pytest.mark.usefixtures("kern")
+def test_sentinel_fill_interior_gaps_boundaries_match_numpy_twin():
+  nan = np.nan
+  assert _fill_both([], [], 3, 0.5)[1] == 0
+  ten = [float(i) for i in range(10)]
+  one_gap = [i == 4 for i in range(10)]
+  # max_frac boundary: 1 of 10 fills at exactly 0.1, not just under it.
+  assert _fill_both(ten, one_gap, 3, 0.1)[1] == 1
+  assert _fill_both(ten, one_gap, 3, 0.0999)[1] == 0
+  # max_gap boundary: a run of 3 fills at max_gap 3, not at 2.
+  run3 = [3 <= i <= 5 for i in range(10)]
+  assert _fill_both(ten, run3, 3, 1.0)[1] == 3
+  assert _fill_both(ten, run3, 2, 1.0)[1] == 0
+  # Edge runs never fill; NaN and inf neighbours are not anchors.
+  assert _fill_both([nan, 1.0, 2.0], [True, False, False], 3, 1.0)[1] == 0
+  assert _fill_both([1.0, 2.0, nan], [False, False, True], 3, 1.0)[1] == 0
+  assert _fill_both([nan, nan, 3.0], [False, True, False], 3, 1.0)[1] == 0
+  assert _fill_both([np.inf, nan, 3.0], [False, True, False], 3, 1.0)[1] == 0
+  assert _fill_both([nan] * 4, [True] * 4, 3, 1.0)[1] == 0
+  # Uneven positions weight the interpolation by distance.
+  out, n = _fill_both(
+    [0.0, nan, 10.0], [False, True, False], 3, 1.0, np.array([0.0, 1.0, 4.0])
+  )
+  assert n == 1 and out.tolist() == [0.0, 2.5, 10.0]
+  # One fillable and one oversized run: the share counts fillable buckets.
+  mixed = [1.0, nan, 3.0, nan, nan, nan, nan, 8.0]
+  gaps = [m != m for m in mixed]
+  assert _fill_both(mixed, gaps, 2, 1 / 8)[1] == 1
+
+
+def _sentinel_profile_snapshot():
+  """Folds and per-sample arrays of the sentinel aggregation scenarios."""
+  from hpcperfstats.analysis.metrics.lib import metrics, sentinel_profile as sp
+  from hpcperfstats.analysis.metrics.lib.sentinel_profile import SentinelConfig
+  from hpcperfstats.analysis.metrics.tests import (
+    test_metrics_sentinel_aggregation as agg,
+  )
+
+  every = dict.fromkeys(range(agg._MIN + 1), -2)
+  jobs = {
+    "bridged": agg._ib_job(overrides={("c1.x", "port_rcv_data"): {20: -3}}),
+    "chain_break": agg._ib_job(
+      overrides={("c2.x", ev): {30: -5, 31: -5, 32: -5} for ev in agg._IB}
+    ),
+    "static_sum_scaled": agg._ib_job(
+      overrides={("c4.x", ev): every for ev in agg._IB},
+      config=SentinelConfig(scale_partial_sums=True),
+    ),
+    "partial_scaled": agg._ib_job(
+      10.0 * 61 / 64, runs=agg._partial("c1.x", -3, 3)
+    ),
+    "partial_gap_filled": agg._ib_job(
+      10.0, runs=agg._partial("c1.x", -3, 20, start_min=20, end_min=24)
+    ),
+    "under_floor": agg._ib_job(
+      overrides={
+        (h, ev): (
+          dict.fromkeys(range(agg._MIN + 1), -6)
+          if h == "c4.x"
+          else dict.fromkeys(range(5, 32), -5)
+        )
+        for h in agg._HOSTS
+        for ev in agg._IB
+      }
+    ),
+  }
+  out = {}
+  for name, jt in jobs.items():
+    for how in ("mean", "sum"):
+      value, sink = agg._fold(jt, agg=how)
+      out[f"{name}:{how}"] = (value, [vars(q) for q in sink])
+    for col, per_sample_sum in (("arc", True), ("value", False)):
+      got = sp.sentinel_samples(
+        jt.index,
+        "host_ib",
+        list(agg._IB),
+        col,
+        jt.sentinel_runs(),
+        limit=None,
+        per_sample_sum=per_sample_sum,
+      )
+      out[f"{name}:{col}:samples"] = got
+      if got is not None:
+        host, t, vals, status, codes = got[0]
+        value, q = sp.sentinel_fold(
+          host, t, vals, status, codes, 1.0, typename="host_ib"
+        )
+        out[f"{name}:{col}:fold"] = (value, vars(q))
+  enabled_ev, running_ev, _solo = agg.pmu_sharing_event_names()
+  rows = []
+  for h in agg._HOSTS:
+    rows += agg._counter(h, "host_cpu_hw", running_ev, 1.0, sentinels={10: -6})
+    rows += agg._counter(h, "host_cpu_hw", enabled_ev, 2.0)
+  out["aligned_ratio"] = metrics.Metrics()._job_pmu_sharing_pct(
+    agg._table(rows), "avg_pmu_running_pct"
+  )
+  return out
+
+
+def _assert_same_snapshot(a, b, key=""):
+  if isinstance(a, np.ndarray):
+    _assert_bits(a, b)
+  elif isinstance(a, (tuple, list)):
+    assert len(a) == len(b), key
+    for x, y in zip(a, b, strict=True):
+      _assert_same_snapshot(x, y, key)
+  elif isinstance(a, float) and a != a:
+    assert b != b, key
+  else:
+    assert a == b, key
+
+
+@pytest.mark.usefixtures("kern")
+def test_sentinel_profile_end_to_end_codon_equals_numpy(monkeypatch):
+  with_codon = _sentinel_profile_snapshot()
+  _numpy_only(monkeypatch)
+  with_numpy = _sentinel_profile_snapshot()
+  assert set(with_codon) == set(with_numpy)
+  for key, a in with_codon.items():
+    _assert_same_snapshot(a, with_numpy[key], key)
+  # The scenarios reach every branch the kernels feed.
+  assert with_numpy["bridged:mean"][1][0]["bridged"] == 1
+  assert with_numpy["chain_break:mean"][1][0]["transient_codes"] == {-5: 4}
+  assert with_numpy["static_sum_scaled:sum"][1][0]["hosts_scaled"] is True
+  assert with_numpy["partial_gap_filled:mean"][1][0]["filled"] == 1
+  assert with_numpy["under_floor:mean"][0] is None
+
+
 # -- golden corpus -----------------------------------------------------------
 
 

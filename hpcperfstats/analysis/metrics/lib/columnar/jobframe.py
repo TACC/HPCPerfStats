@@ -30,6 +30,8 @@ from typing import Any
 
 import numpy as np
 
+from hpcperfstats.lib.monitor_sentinel import sentinel_codes
+
 TIME_DTYPE = np.int64
 ID_DTYPE = np.int32
 VALUE_DTYPE = np.float64
@@ -176,9 +178,12 @@ class JobFrame:
     series_id: int32 ``(type, event)`` series id per row.
     dev_id: int32 signed device id per row.
     owned: uint8 job-ownership flag per row.
-    value: float64 ``value`` column (NaN for NULL).
+    value: float64 ``value`` column (NaN for NULL and for monitor value
+      sentinels, so every reader sees a sentinel as missing).
     arc: float64 ``arc`` column (NaN for NULL).
     delta: float64 ``delta`` column (NaN for NULL).
+    sentinel: int16 monitor value-sentinel code per row (0 for data and
+      NULL); the code that ``build_job_frame`` took out of ``value``.
     hosts: Host names by id.
     series: ``(type, event)`` by series id.
     devs: Device names by ``abs(dev_id)``.
@@ -195,6 +200,7 @@ class JobFrame:
   value: np.ndarray
   arc: np.ndarray
   delta: np.ndarray
+  sentinel: np.ndarray
   hosts: list[str]
   series: list[tuple[str, str]]
   devs: list[str]
@@ -434,6 +440,7 @@ class JobFrame:
       "value": VALUE_DTYPE,
       "arc": VALUE_DTYPE,
       "delta": VALUE_DTYPE,
+      "sentinel": np.int16,
     }
     for name, dtype in expected.items():
       col = getattr(self, name)
@@ -573,6 +580,9 @@ def build_job_frame(
     if n > 1
     else np.arange(n)
   )
+  value = np.asarray(value, dtype=VALUE_DTYPE)[order]
+  codes = sentinel_codes(value)
+  value = np.where(codes != 0, np.nan, value)
   return JobFrame(
     jid=str(jid),
     time_us=np.ascontiguousarray(time_us[order]),
@@ -580,9 +590,10 @@ def build_job_frame(
     series_id=np.ascontiguousarray(series_id[order]),
     dev_id=np.ascontiguousarray(dev_id[order]),
     owned=np.ascontiguousarray(np.asarray(owned, dtype=np.uint8)[order]),
-    value=np.ascontiguousarray(np.asarray(value, dtype=VALUE_DTYPE)[order]),
+    value=np.ascontiguousarray(value),
     arc=np.ascontiguousarray(np.asarray(arc, dtype=VALUE_DTYPE)[order]),
     delta=np.ascontiguousarray(np.asarray(delta, dtype=VALUE_DTYPE)[order]),
+    sentinel=np.ascontiguousarray(codes),
     hosts=list(interner.hosts),
     series=series,
     devs=list(interner.devs),

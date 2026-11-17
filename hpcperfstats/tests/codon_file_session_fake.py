@@ -25,6 +25,7 @@ def attach_parse_stats_file_codon_fake(
     start_idx: int = 0,
     slot: int = 0,
     exclude: list[str] | None = None,
+    bridge_max: int = -1,
   ) -> bool:
     from hpcperfstats.dbload.lib.codon_file_bundles import (
       iter_codon_flush_line_bundles,
@@ -40,9 +41,13 @@ def attach_parse_stats_file_codon_fake(
       )
     except FileNotFoundError:
       return False
+    # Open clears the slot carry, then seeds the sentinel bridge limit.
+    carry_raw: dict[str, list[float]] = {}
+    if bridge_max >= 0:
+      carry_raw["\0cfg\0bridge_max"] = [float(bridge_max)]
     sessions[int(slot)] = {
       "it": it,
-      "carry_raw": {},
+      "carry_raw": carry_raw,
       "carry_arc": {},
       "exclude": list(exclude) if exclude else [],
     }

@@ -75,7 +75,12 @@ def test_persist_metrics_batch_sets_metrics_distinct_time_count(
   _rows, kwargs = mock_bulk_create.call_args
   assert kwargs["update_conflicts"] is True
   assert kwargs["unique_fields"] == ["jid", "type", "metric"]
-  assert kwargs["update_fields"] == ["units", "value", "no_data_reason"]
+  assert kwargs["update_fields"] == [
+    "units",
+    "value",
+    "no_data_reason",
+    "no_data_codes",
+  ]
   mock_bulk_update.assert_not_called()
 
 
