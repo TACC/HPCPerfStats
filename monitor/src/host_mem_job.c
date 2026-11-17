@@ -14,18 +14,28 @@ static void host_mem_job_collect(struct stats_type *type)
   (void)dict_init(&type->st_current_dict, 0);
 }
 
+/* Set a memory.stat key only when it was parsed; an unreadable memory.stat maps its errno. */
+static void publish_stat_key(struct stats *st, const struct job_cgroup_mem_kb *kb, unsigned int bit,
+                             const char *key, unsigned long long val)
+{
+  if (kb->stat_present & bit)
+    stats_set(st, key, val);
+  else if (kb->stat_errno != 0)
+    stats_set_missing(st, key, stats_sentinel_for_errno(kb->stat_errno));
+}
+
 void host_mem_job_publish(struct stats *st, const struct job_cgroup_mem_kb *kb)
 {
   stats_set(st, "mem_used", kb->mem_used);
   if (kb->has_peak)
     stats_set(st, "mem_peak", kb->mem_peak);
-  stats_set(st, "anon_pages", kb->anon_pages);
-  stats_set(st, "file_pages", kb->file_pages);
-  stats_set(st, "mapped", kb->mapped);
-  stats_set(st, "dirty", kb->dirty);
-  stats_set(st, "writeback", kb->writeback);
-  stats_set(st, "page_tables", kb->page_tables);
-  /* No memory.peak in this scope: mem_peak is absent, not a real 0. */
+  publish_stat_key(st, kb, JOB_CGROUP_MEM_STAT_ANON, "anon_pages", kb->anon_pages);
+  publish_stat_key(st, kb, JOB_CGROUP_MEM_STAT_FILE, "file_pages", kb->file_pages);
+  publish_stat_key(st, kb, JOB_CGROUP_MEM_STAT_MAPPED, "mapped", kb->mapped);
+  publish_stat_key(st, kb, JOB_CGROUP_MEM_STAT_DIRTY, "dirty", kb->dirty);
+  publish_stat_key(st, kb, JOB_CGROUP_MEM_STAT_WRITEBACK, "writeback", kb->writeback);
+  publish_stat_key(st, kb, JOB_CGROUP_MEM_STAT_PAGE_TABLES, "page_tables", kb->page_tables);
+  /* mem_peak without memory.peak and stat keys memory.stat does not list are absent, not 0. */
   stats_set_missing_all(st, STATS_SENTINEL_NOT_PRESENT);
 }
 

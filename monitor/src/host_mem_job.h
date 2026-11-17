@@ -16,8 +16,8 @@
       X(writeback, "U=KB", "cgroup memory.stat file_writeback"),                                   \
       X(page_tables, "U=KB", "cgroup memory.stat pagetables")
 
-/* Publish one job scope's cgroup memory into its host_mem_job row; mem_peak is NOT_PRESENT when
- * the scope has no memory.peak. */
+/* Publish one job scope's cgroup memory into its host_mem_job row; mem_peak and memory.stat keys
+ * not read are NOT_PRESENT, or the errno sentinel of an unreadable memory.stat. */
 void host_mem_job_publish(struct stats *st, const struct job_cgroup_mem_kb *kb);
 
 #endif

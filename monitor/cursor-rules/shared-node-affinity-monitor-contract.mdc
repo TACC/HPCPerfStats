@@ -63,6 +63,6 @@ host_mem_job j:<jid> [@fast|@full] <mem_used> <mem_peak> <anon_pages> <file_page
 - Read **only** `…/slurmstepd.scope/<token>/memory.{current,peak,stat}` (not task leaf, not bare `slurmstepd.scope`).
 - `dev=j:<jid>` (literal `j:` prefix). Override root via `HPCPERFSTATS_CGROUP_ROOT` (tests).
 - KEYS overlap a **subset** of `host_mem` names (`mem_used`, `anon_pages`, …) plus `mem_peak`; **not** full NUMA `host_mem` parity (`mem_total` / `active` / `slab` / … absent).
-- Units `U=KB` (bytes/1024). Missing peak/stat fields → `0`. Fail-open: omit device if `memory.current` missing.
+- Units `U=KB` (bytes/1024). Missing `memory.peak`, or a stat key `memory.stat` does not list → `NOT_PRESENT` (`-2`); unreadable `memory.stat` → its errno sentinel (`stats_sentinel_for_errno`) on the six stat keys. Never `0`. Fail-open: omit device if `memory.current` missing.
 - Filter: jid payloads keep matching `j:<jid>` only; `-` payload never includes `host_mem_job`.
 - Node-wide `host_mem` (NUMA) unchanged; never N-fold onto jid payloads when `|J|>=2`.

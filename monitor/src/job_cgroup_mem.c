@@ -1,5 +1,6 @@
 /* Job-scope cgroup v2 memory.current / peak / stat (token dir only). */
 #include <errno.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -117,9 +118,23 @@ static int resolve_token_dir(const char *root, const char *relpath, char *out, s
   }
 }
 
+/* Order matches the JOB_CGROUP_MEM_STAT_* bits. */
+static const struct {
+  const char *key;
+  size_t off;
+} g_stat_fields[] = {
+    {"anon", offsetof(struct job_cgroup_mem_kb, anon_pages)},
+    {"file", offsetof(struct job_cgroup_mem_kb, file_pages)},
+    {"file_mapped", offsetof(struct job_cgroup_mem_kb, mapped)},
+    {"file_dirty", offsetof(struct job_cgroup_mem_kb, dirty)},
+    {"file_writeback", offsetof(struct job_cgroup_mem_kb, writeback)},
+    {"pagetables", offsetof(struct job_cgroup_mem_kb, page_tables)},
+};
+
 static void parse_memory_stat(const char *text, struct job_cgroup_mem_kb *out)
 {
   const char *p = text;
+  size_t i;
 
   if (text == NULL || out == NULL)
     return;
@@ -129,18 +144,11 @@ static void parse_memory_stat(const char *text, struct job_cgroup_mem_kb *out)
     int n = 0;
 
     if (sscanf(p, "%63s %llu%n", key, &val, &n) >= 2 && n > 0) {
-      if (strcmp(key, "anon") == 0)
-        out->anon_pages = bytes_to_kb(val);
-      else if (strcmp(key, "file") == 0)
-        out->file_pages = bytes_to_kb(val);
-      else if (strcmp(key, "file_mapped") == 0)
-        out->mapped = bytes_to_kb(val);
-      else if (strcmp(key, "file_dirty") == 0)
-        out->dirty = bytes_to_kb(val);
-      else if (strcmp(key, "file_writeback") == 0)
-        out->writeback = bytes_to_kb(val);
-      else if (strcmp(key, "pagetables") == 0)
-        out->page_tables = bytes_to_kb(val);
+      for (i = 0; i < sizeof(g_stat_fields) / sizeof(g_stat_fields[0]); i++)
+        if (strcmp(key, g_stat_fields[i].key) == 0) {
+          *(unsigned long long *)((char *)out + g_stat_fields[i].off) = bytes_to_kb(val);
+          out->stat_present |= 1u << i;
+        }
       p += n;
     } else {
       const char *nl = strchr(p, '\n');
@@ -190,10 +198,13 @@ int job_cgroup_mem_read(const char *cgroup_relpath, struct job_cgroup_mem_kb *ou
     out->has_peak = 1;
   }
 
+  errno = 0;
   if (snprintf(path, sizeof(path), "%s/memory.stat", token_dir) >= 0 &&
       (size_t)strlen(path) < sizeof(path) &&
       path_read_small(path, stat_buf, sizeof(stat_buf), &stat_len, &g_quiet_read_opts) == 0)
     parse_memory_stat(stat_buf, out);
+  else
+    out->stat_errno = errno != 0 ? errno : EIO;
 
   return 0;
 }
