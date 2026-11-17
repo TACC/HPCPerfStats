@@ -336,10 +336,12 @@ docker_temp_server_stop() {
 # red) with Timescale background workers off, once per database that has the
 # extension. A failed or impossible update (installed newer than the image, e.g.
 # after an image rollback) is logged and the server still starts so an operator
-# can get in; it never blocks startup or crash-loops under restart: always.
+# can get in. PGCTLTIMEOUT lets pg_ctl wait out crash recovery and the shutdown
+# checkpoint: at pg_ctl's default wait the start failed mid-recovery, the
+# container exited and restart: always replayed WAL from scratch in a loop.
 hpc_timescaledb_auto_update() {
 	local dbs db have want action
-	export PGPASSWORD="${PGPASSWORD:-$POSTGRES_PASSWORD}"
+	export PGPASSWORD="${PGPASSWORD:-$POSTGRES_PASSWORD}" PGCTLTIMEOUT=86400
 	docker_temp_server_start "$@" -c timescaledb.max_background_workers=0
 	if ! dbs="$(POSTGRES_DB= docker_process_sql --dbname postgres --tuples-only --no-align \
 		-c 'SELECT datname FROM pg_database WHERE datallowconn ORDER BY datname')"; then
@@ -378,7 +380,7 @@ hpc_timescaledb_auto_update() {
 		esac
 	done
 	docker_temp_server_stop
-	unset PGPASSWORD
+	unset PGPASSWORD PGCTLTIMEOUT
 }
 
 # check arguments for an option that would cause postgres to stop

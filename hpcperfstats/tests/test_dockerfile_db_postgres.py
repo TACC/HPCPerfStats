@@ -476,10 +476,13 @@ def _run_ts_auto_update(
   entry = _repo_root() / "services-conf" / "db-docker-entrypoint.sh"
   script = (
     f"source '{entry}'\n"
-    'docker_temp_server_start() { echo "start $*" >> "$STUB_DIR/calls"; }\n'
-    'docker_temp_server_stop() { echo stop >> "$STUB_DIR/calls"; }\n'
+    'docker_temp_server_start() { echo "start $*" >> "$STUB_DIR/calls";'
+    ' echo "start_wait=${PGCTLTIMEOUT-unset}" >> "$STUB_DIR/calls"; }\n'
+    'docker_temp_server_stop() { echo stop >> "$STUB_DIR/calls";'
+    ' echo "stop_wait=${PGCTLTIMEOUT-unset}" >> "$STUB_DIR/calls"; }\n'
     "hpc_timescaledb_auto_update postgres -c max_connections=500\n"
     'echo "pgpassword=${PGPASSWORD-unset}" >> "$STUB_DIR/calls"\n'
+    'echo "after_wait=${PGCTLTIMEOUT-unset}" >> "$STUB_DIR/calls"\n'
   )
   env = {
     **os.environ,
@@ -528,7 +531,12 @@ def test_db_entrypoint_timescaledb_auto_update_only_older_catalogs(
   assert [ln for ln in lines if ln.startswith("alter")] == [
     "alter hpcperfstats"
   ]
-  assert lines[-2:] == ["stop", "pgpassword=unset"]
+  assert lines[-4:] == [
+    "stop",
+    "stop_wait=86400",
+    "pgpassword=unset",
+    "after_wait=unset",
+  ]
   assert "rolledback catalog 2.32.0 is newer than image 2.31.1" in err
 
 
@@ -550,8 +558,28 @@ def test_db_entrypoint_timescaledb_auto_update_failure_does_not_block_start(
     "alter a",
     "alter b",
   ]
-  assert calls.splitlines()[-2] == "stop"
+  assert calls.splitlines()[-4] == "stop"
   assert "FAILED in a (2.30.0 -> 2.31.1)" in err
+
+
+def test_db_entrypoint_timescaledb_auto_update_waits_out_crash_recovery(
+  tmp_path: Path,
+) -> None:
+  """pg_ctl start/stop around the catalog update get a long PGCTLTIMEOUT.
+
+  hpcperfstats04 2026-11-17: after an unclean stop, crash recovery outlasted
+  pg_ctl's default wait, the entrypoint exited, and restart: always replayed
+  WAL from the same LSN 14 times. The wait must cover start and the shutdown
+  checkpoint, and must not leak into the real postgres environment.
+  """
+  calls, err, rc = _run_ts_auto_update(
+    tmp_path, {"hpcperfstats": "2.31.1 2.31.1 same"}
+  )
+  assert rc == 0, err
+  lines = calls.splitlines()
+  assert lines[1] == "start_wait=86400"
+  assert "stop_wait=86400" in lines
+  assert lines[-1] == "after_wait=unset"
 
 
 def test_db_entrypoint_runs_timescaledb_auto_update_on_existing_db() -> None:
