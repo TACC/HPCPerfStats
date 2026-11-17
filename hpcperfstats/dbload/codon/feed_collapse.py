@@ -1375,7 +1375,8 @@ def apply_counter_deltas_cols(
   ``value.diff()`` per group (first sample ``NaN`` unless ``carry_raw``
   has a hit), adds one modulus only when the previous sample sat in the
   top half of the counter and the drop is smaller than one modulus, otherwise
-  a finite negative delta becomes NaN, then
+  a finite negative delta becomes NaN (so does any drop across a ``$``
+  restart header), then
   scales by ``mult`` via Codon-NumPy contiguous buffers when ``n>0``.
   ``wid``/``mult`` columns are dropped from the output. ``carry_raw`` is
   updated (as a copy) with ``[value, wid, mult, time, missed, broken]`` per
@@ -1486,7 +1487,10 @@ def apply_counter_deltas_cols(
         broken = True
     else:
       if not math.isnan(prev_v):
-        if missed == 0.0:
+        # A drop across a ``$`` restart header is a reset, not a wrap.
+        if missed == 0.0 and not (
+          v < prev_v and _restart_in_gap(carry_raw, out_host[j], prev_t, t)
+        ):
           delta = v - prev_v
         elif (
           missed <= bridge_max

@@ -377,11 +377,13 @@ def test_pyext_sentinel_corpora_match_source(pyext: Any) -> None:
   from hpcperfstats.tests.test_codon_feed_delta_collapse_arc import (
     _assert_rows_match,
     _codon_sentinel_rows,
+    _restart_drop_corpora,
     _sentinel_corpora,
   )
 
   mod = _load_feed_collapse()
-  for name, flushes in _sentinel_corpora().items():
+  corpora = {**_sentinel_corpora(), **_restart_drop_corpora()}
+  for name, flushes in corpora.items():
     want = _codon_sentinel_rows(mod, flushes)
     got = _pyext_sentinel_rows(pyext, flushes)
     assert want, name

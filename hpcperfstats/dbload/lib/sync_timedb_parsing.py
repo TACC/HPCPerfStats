@@ -3853,6 +3853,14 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
       & (prev >= (modulus * 0.5))
       & (delta > -modulus)
     )
+    if raw:
+      # A drop across a ``$`` restart header is a reset, not a wrap.
+      t = stats_df["time"].to_numpy(dtype=np.float64, copy=False)
+      group_n = np.cumsum(is_first) - 1
+      for i in np.flatnonzero(one_wrap):
+        t0 = carried_first[group_n[i]][3] if is_first[i] else t[i - 1]
+        host = stats_df["host"].iat[i]
+        one_wrap[i] = not _restart_between(raw, host, t0, t[i])
     delta[one_wrap] = modulus[one_wrap] + delta[one_wrap]
     delta[finite_neg & ~one_wrap] = np.nan
   mult = stats_df["mult"].to_numpy(dtype=np.float64, copy=False)

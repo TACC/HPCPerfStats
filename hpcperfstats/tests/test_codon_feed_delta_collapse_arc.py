@@ -591,6 +591,38 @@ def _codon_sentinel_rows(mod, flushes: list[list[str]]) -> dict[tuple, tuple]:
   return rows
 
 
+def _restart_drop_corpora() -> dict[str, list[list[str]]]:
+  """W=32 ``pkg_energy`` drops across a ``$`` restart header, in one flush
+  and across a flush boundary, plus a genuine wrap with no header between."""
+  rapl = "!intel_x86_rapl pkg_energy,E,W=32,U=mJ"
+  restart_hdr = [*_SENTINEL_HDR, "$uptime 5"]
+
+  def pkg(points) -> list[str]:
+    out: list[str] = []
+    for t, v in points:
+      out += [f"{t} J1 hostA", f"intel_x86_rapl 0 {v}"]
+    return out
+
+  return {
+    "restart_drop": [
+      [
+        rapl,
+        *_SENTINEL_HDR,
+        *pkg([(100, 4000001000)]),
+        *restart_hdr,
+        *pkg([(110, 5000), (120, 6000)]),
+      ]
+    ],
+    "restart_drop_cross_flush": [
+      [rapl, *_SENTINEL_HDR, *pkg([(100, 4000001000)])],
+      [rapl, *restart_hdr, *pkg([(110, 5000)])],
+    ],
+    "wrap_no_restart": [
+      [rapl, *_SENTINEL_HDR, *pkg([(100, 2**32 - 296), (110, 704)])]
+    ],
+  }
+
+
 @pytest.mark.parametrize("name", sorted(_sentinel_corpora()))
 def test_sentinel_corpora_codon_matches_cpython(name: str) -> None:
   """Bridge, chain break, limit, unknown code, restart, LIKWID override, W=48
@@ -602,6 +634,22 @@ def test_sentinel_corpora_codon_matches_cpython(name: str) -> None:
   got = _codon_sentinel_rows(mod, flushes)
   assert want, f"{name}: empty oracle"
   _assert_rows_match(got, want)
+
+
+def test_counter_drop_across_restart_breaks_chain_both_engines() -> None:
+  """A counter drop across a ``$`` restart header is a chain break (NaN),
+  not a W-bit wrap, in both engines; a drop with no header between still
+  unwraps."""
+  mod = _load_feed_collapse()
+  key = ("hostA", "intel_x86_rapl", "", "pkg_energy")
+  want = {}
+  for name, flushes in _restart_drop_corpora().items():
+    want[name] = _cpython_sentinel_rows(flushes)
+    _assert_rows_match(_codon_sentinel_rows(mod, flushes), want[name])
+  assert math.isnan(want["restart_drop"][(*key, 110.0)][1])
+  assert want["restart_drop"][(*key, 120.0)][1] == 1000
+  assert math.isnan(want["restart_drop_cross_flush"][(*key, 110.0)][1])
+  assert want["wrap_no_restart"][(*key, 110.0)][1] == 1000
 
 
 def test_sentinel_corpora_have_sentinel_and_bridged_rows() -> None:

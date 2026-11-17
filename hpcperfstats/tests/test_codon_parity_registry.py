@@ -66,6 +66,7 @@ PARITY_FEATURES: tuple[ParityFeature, ...] = (
     ("apply_counter_deltas_cols",),
     (
       f"{_T}/test_codon_feed_delta_collapse_arc.py::test_apply_counter_deltas_cols_wrap_and_carry_continuity",
+      f"{_T}/test_codon_feed_delta_collapse_arc.py::test_counter_drop_across_restart_breaks_chain_both_engines",
     ),
   ),
   ParityFeature(

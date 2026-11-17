@@ -125,6 +125,36 @@ def test_restart_header_inside_gap_breaks_chain():
   assert _nan(_row(out, 120.0)["delta"])
 
 
+_RAPL_SCHEMA = "!intel_x86_rapl pkg_energy,E,W=32,U=mJ"
+
+
+def _pkg(points) -> list[str]:
+  return _samples("intel_x86_rapl", "0", points)
+
+
+def test_counter_drop_across_restart_header_breaks_chain():
+  # Read as a W=32 wrap this was one 294971296 mJ delta.
+  lines = [_RAPL_SCHEMA, *_header(), *_pkg([(100.0, "4000001000")])]
+  lines += [*_header(), "$uptime 5"]
+  lines += _pkg([(110.0, "5000"), (120.0, "6000")])
+  out = _run(lines)
+  assert _nan(_row(out, 110.0)["delta"])
+  assert _row(out, 120.0)["delta"] == 1000
+
+
+def test_counter_drop_across_restart_header_breaks_chain_through_carry():
+  carry = stp.DeltaCarryState()
+  _run([_RAPL_SCHEMA, *_header(), *_pkg([(100.0, "4000001000")])], carry)
+  second = [_RAPL_SCHEMA, *_header(), "$uptime 5", *_pkg([(110.0, "5000")])]
+  assert _nan(_row(_run(second, carry), 110.0)["delta"])
+
+
+def test_w32_wrap_without_restart_header_still_unwraps():
+  top = str(2**32 - 296)
+  out = _run([_RAPL_SCHEMA, *_header(), *_pkg([(100.0, top), (110.0, "704")])])
+  assert _row(out, 110.0)["delta"] == 1000
+
+
 def test_w48_wrap_across_bridge():
   top = str(2**48 - 100)
   out = _run(
