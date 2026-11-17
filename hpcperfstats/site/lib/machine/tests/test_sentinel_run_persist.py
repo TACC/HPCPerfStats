@@ -85,3 +85,47 @@ def test_sentinel_runs_ignore_other_mark_kinds():
     [{"kind": "jobs", "jids": ["1"], "time": 1.0, "host": "h"}]
   )
   assert _rows() == []
+
+
+def test_sentinel_runs_of_one_call_share_one_bounded_transaction():
+  """N runs in one flush cost a fixed number of queries (one locking read,
+  one insert, one update), not a transaction and lock per run."""
+  from django.db import connection
+  from django.test.utils import CaptureQueriesContext
+
+  persist_monitor_marks([_mark(100, 110, host=f"h{i}") for i in range(10)])
+  marks = [_mark(120, 130, prev=110, host=f"h{i}") for i in range(10)]
+  marks += [_mark(100, 110, host=f"n{i}") for i in range(30)]
+  with CaptureQueriesContext(connection) as ctx:
+    persist_monitor_marks(marks)
+  sql = [q["sql"].lstrip().upper() for q in ctx.captured_queries]
+  assert sum(s.startswith("SELECT") for s in sql) == 1, sql
+  assert sum(s.startswith("INSERT") for s in sql) == 1, sql
+  assert sum(s.startswith("UPDATE") for s in sql) == 1, sql
+  assert len(sql) <= 6, sql
+  rows = sorted(
+    (r.host, r.start_time.timestamp(), r.end_time.timestamp())
+    for r in host_sentinel_summary.objects.all()
+  )
+  assert rows == sorted(
+    [(f"h{i}", 100.0, 130.0) for i in range(10)]
+    + [(f"n{i}", 100.0, 110.0) for i in range(30)]
+  )
+
+
+def test_sentinel_runs_chained_within_one_call_merge_into_one_row():
+  persist_monitor_marks([_mark(100, 110), _mark(120, 130, prev=110)])
+  assert _rows() == [(-2, 100.0, 130.0, 1, 2)]
+
+
+def test_sentinel_run_already_covered_issues_no_write():
+  """A replayed or re-delivered run inside the stored one writes nothing."""
+  from django.db import connection
+  from django.test.utils import CaptureQueriesContext
+
+  persist_monitor_marks([_mark(100, 130)])
+  with CaptureQueriesContext(connection) as ctx:
+    persist_monitor_marks([_mark(110, 120, prev=100), _mark(100, 130)])
+  sql = [q["sql"].lstrip().upper() for q in ctx.captured_queries]
+  assert not any(s.startswith(("INSERT", "UPDATE")) for s in sql), sql
+  assert _rows() == [(-2, 100.0, 130.0, 1, 2)]

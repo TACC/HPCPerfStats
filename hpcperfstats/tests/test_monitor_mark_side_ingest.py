@@ -245,19 +245,22 @@ class _FakeQuerySet:
   def select_for_update(self):
     return self
 
-  def filter(self, **_kw):
+  def filter(self, *_a, **_kw):
     return self
 
   def order_by(self, *_a):
     return self
 
-  def first(self):
-    return None
+  def __iter__(self):
+    return iter(())
 
-  def create(self, **_kw):
+  def bulk_create(self, objs):
     if self.create_exc is not None:
       raise self.create_exc
-    self.created += 1
+    self.created += len(objs)
+
+  def bulk_update(self, _objs, _fields):
+    return 0
 
 
 def _patch_sentinel_db(monkeypatch, objects):

@@ -303,9 +303,12 @@ def _persist_sentinel_runs(marks: list[dict[str, Any]]) -> None:
   whose ``end_time`` reaches the run's previous sample time (``start_time``
   when the series had no earlier sample), so a run split across flushes or
   messages becomes one row. ``start_time``/``end_time`` only widen
-  (``min``/``max``), so replaying a file or a re-delivered message changes
-  nothing. Archive and live ingest may race on the same run; the unique
-  constraint turns the loser's insert into a merge.
+  (``min``/``max``), and a run the stored row already covers writes nothing,
+  so replaying a file or a re-delivered message changes nothing. All runs of
+  one call merge in one transaction: one locking read of the stored rows they
+  can touch, then one insert and one update. Archive and live ingest may race
+  on the same run; the unique constraint fails the loser's batch, which
+  retries once against the winner's rows.
 
   Args:
     marks (list[dict[str, Any]]): Marks; non-sentinel kinds are ignored.
@@ -321,54 +324,84 @@ def _persist_sentinel_runs(marks: list[dict[str, Any]]) -> None:
   if not runs:
     return
   from django.db import IntegrityError, transaction
+  from django.db.models import Q
 
   from hpcperfstats.site.lib.machine.models import host_sentinel_summary
 
-  written = 0
-  malformed = 0
+  key_fields = (
+    "host",
+    "type",
+    "dev",
+    "event",
+    "code",
+    "device_count",
+    "total_devices",
+  )
+  parsed = []
   for rec in runs:
     try:
       typ, dev, event, code, end, n, total, prev = str(rec["jids"]).split("\t")
       start_dt = _as_utc(rec.get("time"))
       end_dt = _as_utc(float(end))
       prev_dt = _as_utc(float(prev)) if prev else start_dt
+      key = (str(rec["host"])[:64], typ[:32], dev[:64], event[:64])
+      key += (int(code), int(n), int(total))
     except KeyError, TypeError, ValueError:
-      malformed += 1
       continue
-    if start_dt is None or end_dt is None or not rec.get("host"):
-      malformed += 1
-      continue
-    base = {
-      "host": str(rec["host"])[:64],
-      "type": typ[:32],
-      "dev": dev[:64],
-      "event": event[:64],
-      "code": int(code),
-      "device_count": int(n),
-      "total_devices": int(total),
-    }
-    for _attempt in range(2):
-      try:
-        with transaction.atomic():
-          run = (
-            host_sentinel_summary.objects.select_for_update()
-            .filter(**base, end_time__gte=prev_dt, start_time__lte=end_dt)
-            .order_by("start_time")
-            .first()
+    if start_dt is not None and end_dt is not None and rec.get("host"):
+      parsed.append((start_dt, end_dt, prev_dt, key))
+  parsed.sort(key=lambda p: p[0])
+  malformed = len(runs) - len(parsed)
+  written = 0
+  for _attempt in range(2 if parsed else 0):
+    try:
+      with transaction.atomic():
+        span = Q()
+        for key in {p[3] for p in parsed}:
+          span |= Q(**dict(zip(key_fields, key, strict=True)))
+        stored: dict[tuple[Any, ...], list[Any]] = {}
+        for row in (
+          host_sentinel_summary.objects.select_for_update()
+          .filter(span, end_time__gte=min(p[2] for p in parsed))
+          .filter(start_time__lte=max(p[1] for p in parsed))
+          .order_by("start_time")
+        ):
+          row_key = tuple(getattr(row, f) for f in key_fields)
+          stored.setdefault(row_key, []).append(row)
+        new, dirty = [], {}
+        for start_dt, end_dt, prev_dt, key in parsed:
+          rows = stored.setdefault(key, [])
+          run = next(
+            (
+              r
+              for r in rows
+              if r.end_time >= prev_dt and r.start_time <= end_dt
+            ),
+            None,
           )
           if run is None:
-            host_sentinel_summary.objects.create(
-              **base, start_time=start_dt, end_time=end_dt
+            run = host_sentinel_summary(
+              **dict(zip(key_fields, key, strict=True)),
+              start_time=start_dt,
+              end_time=end_dt,
             )
-          else:
+            new.append(run)
+            rows.append(run)
+          elif run.start_time > start_dt or run.end_time < end_dt:
             run.start_time = min(run.start_time, start_dt)
             run.end_time = max(run.end_time, end_dt)
-            run.save(update_fields=["start_time", "end_time"])
-        written += 1
-        break
-      except IntegrityError:
-        continue
-  if written + malformed < len(runs) or malformed:
+            if run.pk is not None:
+              dirty[run.pk] = run
+          rows.sort(key=lambda r: r.start_time)
+        host_sentinel_summary.objects.bulk_create(new)
+        host_sentinel_summary.objects.bulk_update(
+          list(dirty.values()), ["start_time", "end_time"]
+        )
+      written = len(parsed)
+      break
+    except IntegrityError:
+      continue
+  if written < len(runs):
     log.error(
       "host_sentinel_summary merge incomplete: written=%d malformed=%d "
       "lost=%d of %d runs",
