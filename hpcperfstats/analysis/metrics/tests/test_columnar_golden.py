@@ -94,8 +94,8 @@ def _pmu_sharing_oracle(table, metric):
 
 def _schema_absence_reason_ok(table, row):
   """
-  Contract 10 maps the generic no-sample reason of a metric whose type the
-  job schema never carried to "<type> collector not found ..." (value None,
+  The generic no-sample reason of a metric whose type the job schema never
+  carried maps to "<type> collector not found ..." (value None,
   ``no_data_codes.schema_absent``). True only when the row says so and the
   named type really is absent from the table schema; values never map.
   """

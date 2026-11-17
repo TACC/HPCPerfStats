@@ -640,7 +640,7 @@ def test_sentinel_fill_interior_gaps_boundaries_match_numpy_twin():
   run3 = [3 <= i <= 5 for i in range(10)]
   assert _fill_both(ten, run3, 3, 1.0)[1] == 3
   assert _fill_both(ten, run3, 2, 1.0)[1] == 0
-  # Edge runs never fill; NaN and inf neighbours are not anchors.
+  # Edge runs never fill; NaN and inf neighbors are not anchors.
   assert _fill_both([nan, 1.0, 2.0], [True, False, False], 3, 1.0)[1] == 0
   assert _fill_both([1.0, 2.0, nan], [False, False, True], 3, 1.0)[1] == 0
   assert _fill_both([nan, nan, 3.0], [False, True, False], 3, 1.0)[1] == 0

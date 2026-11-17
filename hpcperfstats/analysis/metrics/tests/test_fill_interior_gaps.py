@@ -1,7 +1,7 @@
-"""Bounded gap fill for transient sentinel gaps (Q5).
+"""Bounded gap fill for transient sentinel gaps.
 
 Interior gap buckets (sentinel rows, no valid row) are interpolated from the
-neighbouring bucket means, bounded by ``metrics_sentinel_fill_max_gap_s`` and
+neighboring bucket means, bounded by ``metrics_sentinel_fill_max_gap_s`` and
 ``metrics_sentinel_fill_max_frac``; bridged gaps get the measured bridged rate
 spread over them and do not count toward either bound. Edges, cadence-empty
 buckets and peaks are never filled.
@@ -69,7 +69,7 @@ def test_interior_chain_breaking_arc_gap_is_interpolated():
 
 
 def test_gauge_gap_is_interpolated():
-  """A gauge (``value`` fold) gap gets the neighbouring levels."""
+  """A gauge (``value`` fold) gap gets the neighboring levels."""
   rows = []
   for i in range(61):
     t = _T0 + timedelta(minutes=i)

@@ -157,7 +157,7 @@ static void test_read_scaled_from_fd(void)
   assert(perf_read_scaled(fds[0], NULL, &d, NULL, NULL) == -1);
 }
 
-/* Value sentinels: each interval reports what it measured. Partial multiplexing is scaled with
+/* Each interval's sentinel reports what it measured. Partial multiplexing is scaled with
  * no sentinel; never scheduled is NOT_SCHEDULED; a re-seed is COUNTER_RESET. */
 static void test_scale_sample_status(void)
 {

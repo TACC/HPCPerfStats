@@ -190,7 +190,7 @@ static void test_one_event_failing_leaves_others(void)
   fake_perf_reset();
 }
 
-/* Value sentinels: an open errno maps to its code (EACCES PERMISSION_DENIED, EBUSY PMU_BUSY,
+/* An open errno maps to its sentinel code (EACCES PERMISSION_DENIED, EBUSY PMU_BUSY,
  * ENOENT/EINVAL NOT_PRESENT), an unnamed event is NOT_PRESENT, a failed read is READ_FAILED, and a
  * lifetime never decreases across a failed read, a re-seed or an unscheduled interval. */
 static void test_event_sentinel_codes(void)

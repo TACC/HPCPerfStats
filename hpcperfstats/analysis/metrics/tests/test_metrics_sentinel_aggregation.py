@@ -251,7 +251,7 @@ def test_partial_devices_19_of_64_scaled_under_the_cap():
 
 def test_partial_devices_20_of_64_is_a_gap_bucket_not_scaled():
   """Over the 0.30 cap the samples are gaps; the interior bucket is filled
-  from its neighbours instead of being scaled or averaged in low."""
+  from its neighbors instead of being scaled or averaged in low."""
   rows = []
   for h in _HOSTS:
     for ev in _IB:

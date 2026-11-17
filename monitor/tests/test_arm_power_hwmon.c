@@ -218,7 +218,7 @@ static void test_missing_garbage_duplicate_and_empty(void)
   assert(read_w(&h, slot) == 0.0);
   assert(h.m[slot].read_warned == 1);
   assert(read_w(&h, slot) == 0.0);
-  /* Value sentinels: garbage READ_FAILED, no meter NOT_PRESENT, never a published 0. */
+  /* Garbage is READ_FAILED and a missing meter NOT_PRESENT; neither publishes a 0. */
   {
     double w = 7.0;
 

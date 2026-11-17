@@ -123,7 +123,7 @@ def bridge_proven(typename: str, build_slug: str | None) -> bool:
   Report whether bridgeable codes may bridge for ``typename`` on this build.
 
   ``host_cpu_hw`` on LIKWID publishes LIKWID's counter values directly, and
-  their behaviour across a failed read is unverified, so it bridges only once
+  their behavior across a failed read is unverified, so it bridges only once
   the ``$build`` slug carries ``x86perf`` (x86 core counters on direct perf).
   A missing slug (old daemon) is treated as LIKWID without ``x86perf``.
   Slug tokens are compared exactly after splitting on ``-``.

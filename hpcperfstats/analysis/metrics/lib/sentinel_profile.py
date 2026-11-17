@@ -144,7 +144,7 @@ class SentinelProfile:
   def valid_frac(self) -> float:
     """
     ``(valid + bridged) / (valid + bridged + sentinel)``; 1.0 without
-    samples. Counting samples, not time, keeps slow-tier keys unpenalised.
+    samples. Counting samples, not time, keeps slow-tier keys unpenalized.
 
     Returns:
       float: Covered share.

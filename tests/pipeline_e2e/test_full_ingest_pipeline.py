@@ -152,8 +152,8 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
   assert not half_baked, "metrics_data rows need value or no_data_reason: %r" % (
       [(x.metric, x.value, x.no_data_reason) for x in half_baked],
   )
-  # Contract 10 reasons: a type the job's schema lacks says "collector not
-  # found" (with schema_absent codes); every code-backed reason names a type.
+  # A type the job schema lacks says "collector not found" (with
+  # schema_absent codes); every code-backed reason names a type.
   schema = job_data.objects.get(pk=PIPELINE_E2E_JID).host_data_schema_json or {}
   for r in rows:
     codes = r.no_data_codes or {}

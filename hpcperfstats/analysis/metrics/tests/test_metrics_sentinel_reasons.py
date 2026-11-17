@@ -1,4 +1,4 @@
-"""Job Detail no-data reasons from monitor value sentinels (contract 10).
+"""Job Detail no-data reasons from monitor value sentinels.
 
 A metric without a value explains itself from the ``host_sentinel_summary``
 runs of the job window ("<type>: <description> (n/N hosts)", one part per
