@@ -652,6 +652,69 @@ def test_counter_drop_across_restart_breaks_chain_both_engines() -> None:
   assert want["wrap_no_restart"][(*key, 110.0)][1] == 1000
 
 
+def _whole_file_corpora() -> dict[str, list[str]]:
+  """Single-flush sentinel and restart-drop corpora as one file each."""
+  corpora = {**_sentinel_corpora(), **_restart_drop_corpora()}
+  return {name: f[0] for name, f in corpora.items() if len(f) == 1}
+
+
+def _cpython_whole_file_rows(lines: list[str]) -> dict[tuple, tuple]:
+  """Rows of the non-streamed contents path with Codon disabled.
+
+  Same steps as ``sync_timedb._parse_stats_file_payload_impl``:
+  ``parse_stats_lines`` -> ``build_stats_dataframes`` -> delta step, with the
+  parser's ``$`` header state in one ``DeltaCarryState``.
+  """
+  from unittest import mock
+
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_codon_bridge as bridge,
+    sync_timedb_parsing as stp,
+  )
+
+  carry = stp.DeltaCarryState()
+  with (
+    mock.patch.object(bridge, "try_codon_parse_collapse", return_value=None),
+    mock.patch.object(
+      stp, "_sentinel_bridge_max_missed_samples", return_value=3
+    ),
+  ):
+    stats, procs = stp.parse_stats_lines(list(lines), 0, delta_carry=carry)
+    df, _procs = stp.build_stats_dataframes(stats, procs)
+    out = stp.compute_deltas_and_arc(df, carry=carry)
+  return {
+    (r["host"], r["type"], str(r["dev"] or ""), r["event"], float(r["time"])): (
+      float(r["value"]),
+      float(r["delta"]),
+      float(r["arc"]),
+    )
+    for _, r in out.iterrows()
+  }
+
+
+@pytest.mark.parametrize("name", sorted(_whole_file_corpora()))
+def test_whole_file_cpython_path_matches_codon(name: str) -> None:
+  """The CPython whole-file path sees ``$`` restarts and ``$build`` like
+  Codon's line batch, which scans the headers itself."""
+  lines = _whole_file_corpora()[name]
+  want = _codon_sentinel_rows(_load_feed_collapse(), [lines])
+  _assert_rows_match(_cpython_whole_file_rows(lines), want)
+
+
+def test_whole_file_cpython_path_breaks_chains_at_restart_headers() -> None:
+  """W=32 reset across ``$`` is NaN, not 294971296 mJ; a bridgeable gap
+  across a restart breaks; ``$build`` still proves the ARM bridge."""
+  corpora = _whole_file_corpora()
+  rapl = ("hostA", "intel_x86_rapl", "", "pkg_energy")
+  drop = _cpython_whole_file_rows(corpora["restart_drop"])
+  assert math.isnan(drop[(*rapl, 110.0)][1])
+  assert drop[(*rapl, 120.0)][1] == 1000
+  gap = _cpython_whole_file_rows(corpora["restart"])
+  assert math.isnan(gap[("hostA", "host_ib", "", "rx_bytes", 120.0)][1])
+  arm = _cpython_whole_file_rows(corpora["arm_bridges"])
+  assert arm[("hostA", "host_cpu_hw", "", "instr_retired", 120.0)][1] == 150
+
+
 def test_sentinel_corpora_have_sentinel_and_bridged_rows() -> None:
   """Positive control: the corpora really carry codes and bridged deltas."""
   mod = _load_feed_collapse()

@@ -396,6 +396,27 @@ def test_pyext_sentinel_corpora_match_source(pyext: Any) -> None:
     )
 
 
+def test_pyext_matches_cpython_whole_file_path(pyext: Any) -> None:
+  """The baked line batch and the CPython contents path (Codon off) give the
+  same rows when ``$`` restarts or ``$build`` decide the deltas."""
+  from hpcperfstats.tests.test_codon_feed_delta_collapse_arc import (
+    _assert_rows_match,
+    _cpython_whole_file_rows,
+    _whole_file_corpora,
+  )
+
+  for name, lines in _whole_file_corpora().items():
+    got = _pyext_sentinel_rows(pyext, [lines])
+    assert got, name
+    _assert_rows_match(
+      {
+        k: tuple(float("nan") if x is None else x for x in v)
+        for k, v in got.items()
+      },
+      _cpython_whole_file_rows(lines),
+    )
+
+
 def test_pyext_file_session_seeds_bridge_max(
   pyext: Any, tmp_path: Path
 ) -> None:

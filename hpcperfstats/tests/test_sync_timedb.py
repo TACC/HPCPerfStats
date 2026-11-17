@@ -1827,6 +1827,57 @@ def test_payload_meta_includes_stats_rows_parsed(monkeypatch, tmp_path):
   assert int(parsed_n) >= len(stats) > 0
 
 
+@pytest.mark.parametrize(
+  ("corpus", "key"),
+  [
+    ("restart_drop", ("intel_x86_rapl", "pkg_energy", 110.0)),
+    ("restart", ("host_ib", "rx_bytes", 120.0)),
+  ],
+)
+def test_payload_without_codon_breaks_chain_at_restart_header(
+  monkeypatch, tmp_path, corpus, key
+):
+  """With Codon off, the non-streamed payload still reads ``$`` headers: a
+  W=32 reset across a restart is NaN (was a 294971296 mJ wrap) and a
+  bridgeable sentinel gap across a restart does not bridge."""
+  from hpcperfstats.dbload import sync_timedb as st
+  from hpcperfstats.dbload.lib import (
+    monitor_mark_side_ingest as marks,
+    sync_timedb_codon_bridge as bridge,
+    sync_timedb_parsing as stp,
+  )
+  from hpcperfstats.tests.test_codon_feed_delta_collapse_arc import (
+    _whole_file_corpora,
+  )
+
+  stats_file = tmp_path / "hostA" / "1709123456"
+  stats_file.parent.mkdir(parents=True)
+  lines = _whole_file_corpora()[corpus]
+  stats_file.write_text("".join(f"{x}\n" for x in lines), encoding="utf-8")
+  monkeypatch.setattr(
+    bridge, "try_codon_parse_collapse", lambda *_a, **_k: None
+  )
+  monkeypatch.setattr(stp, "_sentinel_bridge_max_missed_samples", lambda: 3)
+  monkeypatch.setattr(marks, "persist_monitor_marks", lambda _m: None)
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st, "update_worker_substage", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "_should_stream_stats_file", lambda *_a, **_k: False)
+  monkeypatch.setattr(
+    st,
+    "_resolve_streaming_ingest_start",
+    lambda *_a, **_k: (False, (0, True)),
+  )
+
+  result = st._parse_stats_file_payload_impl(str(stats_file))
+  payload = st._unpack_parse_payload_result(result)[1]
+  stats = payload[0]
+  typ, event, t = key
+  row = stats[(stats["type"] == typ) & (stats["event"] == event)]
+  delta = row.loc[row["time"].astype(float) == t, "delta"]
+  assert len(delta) == 1 and pd.isna(delta.iloc[0]), row
+
+
 def test_parse_t0_includes_resolve_streaming_ingest_start():
   """Hours of parse_elapsed_s include start-resolve, not proven feed_line CPU."""
   from pathlib import Path

@@ -3182,6 +3182,8 @@ def parse_stats_lines(
   start_idx: Any,
   eventmaps_by_type: Any | None = None,
   exclude_types_list: Any | None = None,
+  *,
+  delta_carry: Any | None = None,
 ) -> Any:
   """
   Parse stats and proc_stats from lines starting at start_idx.
@@ -3194,6 +3196,10 @@ def parse_stats_lines(
     start_idx (Any): Start idx passed to this helper.
     eventmaps_by_type (Any | None): One of ``Any``, ``None``.
     exclude_types_list (Any | None): One of ``Any``, ``None``.
+    delta_carry (Any | None): ``DeltaCarryState`` that receives the ``$``
+      header state (restart times, ``$build`` bridge flag) on the CPython
+      branch; pass the same object to ``compute_deltas_and_arc``. Unused
+      when Codon finishes the parse, which scans the headers itself.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -3215,7 +3221,9 @@ def parse_stats_lines(
   )
   if codon_finished is not None:
     return codon_finished
-  parser = IncrementalStatsParser(start_idx, exclude_types_list)
+  parser = IncrementalStatsParser(
+    start_idx, exclude_types_list, delta_carry=delta_carry
+  )
   parser.feed_lines(lines)
   finished = parser.finish()
   from hpcperfstats.dbload.lib.monitor_mark_side_ingest import (
@@ -4598,12 +4606,14 @@ def _warn_nonempty_stats_collapsed_to_empty(stats_df: Any) -> None:
   )
 
 
-def compute_deltas_and_arc(stats_df: Any) -> Any:
+def compute_deltas_and_arc(stats_df: Any, *, carry: Any | None = None) -> Any:
   """
   Compute the deltas and arc.
 
   Args:
     stats_df (Any): Stats df passed to this helper.
+    carry (Any | None): ``DeltaCarryState`` given to ``parse_stats_lines``
+      so ``$`` restarts and ``$build`` reach the delta step, or ``None``.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -4611,7 +4621,7 @@ def compute_deltas_and_arc(stats_df: Any) -> Any:
   Examples:
     >>> compute_deltas_and_arc(None)  # doctest: +SKIP
   """
-  return _compute_deltas_and_arc_impl(stats_df, None)
+  return _compute_deltas_and_arc_impl(stats_df, carry)
 
 
 def compute_deltas_and_arc_chunk(stats_df: Any, *, carry: Any) -> Any:

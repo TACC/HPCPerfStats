@@ -4969,11 +4969,13 @@ def _parse_stats_file_payload_impl(
       start_idx, need_archival = result
       try:
         update_worker_substage("parse:accumulate")
+        carry = DeltaCarryState()
         stats_list, proc_stats_list = parse_stats_lines(
           lines,
           start_idx,
           eventmaps_by_type=EVENTMAPS_BY_TYPE,
           exclude_types_list=exclude_types,
+          delta_carry=carry,
         )
       except Exception as e:
         _reraise_if_ingest_control_flow(e)
@@ -4999,7 +5001,7 @@ def _parse_stats_file_payload_impl(
       # collapsed values.
       if "arc" not in stats.columns:
         update_worker_substage("parse:deltas_arc")
-        stats = compute_deltas_and_arc(stats)
+        stats = compute_deltas_and_arc(stats, carry=carry)
       parse_elapsed = _parse_elapsed()
       meta = _ingest_outcome_meta(
         outcome="ingested",

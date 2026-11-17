@@ -78,6 +78,17 @@ PARITY_FEATURES: tuple[ParityFeature, ...] = (
     ),
   ),
   ParityFeature(
+    "contents path: $ header state reaches the delta step",
+    f"{_P}:parse_stats_lines",
+    ("scan_monitor_headers", "feed_delta_collapse_arc"),
+    (
+      f"{_T}/test_codon_feed_delta_collapse_arc.py::test_whole_file_cpython_path_matches_codon",
+      f"{_T}/test_codon_feed_delta_collapse_arc.py::test_whole_file_cpython_path_breaks_chains_at_restart_headers",
+      f"{_T}/test_codon_canonical_parity.py::test_pyext_matches_cpython_whole_file_path",
+      f"{_T}/test_sync_timedb.py::test_payload_without_codon_breaks_chain_at_restart_header",
+    ),
+  ),
+  ParityFeature(
     "value sentinel deltas (bridge, chain break, limit, override, carry)",
     f"{_P}:_sentinel_deltas",
     ("apply_counter_deltas_cols", "_sentinel_breaks", "_restart_in_gap"),
