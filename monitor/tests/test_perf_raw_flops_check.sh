@@ -3,7 +3,8 @@
 # load and fake cpuinfo files: Intel / AMD default event sets, weighted ratio PASS, precision
 # leak FAIL, undercount FAIL (AMD MERGE-pairing symptom), events perf cannot open are skipped
 # (perf exits 0 on <not supported>), <not counted> in a run, multiplexed running share shown,
-# missing GEMM total, all-zero hint, --list encodings, and bad options (exit 2).
+# missing GEMM total, all-zero hint, --list encodings, perf's reason shown for a skipped event,
+# --gemm-cflags passed to the load install, and bad options (exit 2).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="${ROOT}/scripts/perf_raw_flops_check.sh"
@@ -58,7 +59,10 @@ EOF
 cat >"${T}/load" <<'EOF'
 #!/usr/bin/env bash
 cmd="$1"; shift
-[ "${cmd}" = install ] && exit "${FAKE_INSTALL_FAIL:-0}"
+if [ "${cmd}" = install ]; then
+  echo "$*" >"${FAKE_INSTALL_ARGS:-/dev/null}"
+  exit "${FAKE_INSTALL_FAIL:-0}"
+fi
 p=dp
 while [ $# -gt 0 ]; do [ "$1" = --precision ] && p="$2"; shift; done
 echo "gemm_load ${p} n=64 threads=1 seconds=1 started"
@@ -95,12 +99,26 @@ I="${T}/intel.tab"
 run intel "${I}"
 [ "${rc}" -eq 0 ] || fail "intel pass exit ${rc}: ${out}"
 has "event dp-512b_packed (fp_arith_inst_retired.512b_packed_double): not usable" "512b skipped"
+has "skipped; perf: <not supported>;;fp_arith_inst_retired.512b_packed_double" "skip shows perf reason"
+has "gemm extra cflags: none" "no extra cflags by default"
 has "events: 6" "six usable events"
 has "event dp-256b_packed   weight  4  count 2.5e+05  running 50.00%  FLOPs/GEMM 1.0000" "dp 256b line"
 has "dp ratio 1.000 PASS" "dp ratio"
 has "dp leak 0.000 PASS" "dp leak"
 has "sp ratio 1.000 PASS" "sp ratio"
 has "RESULT: PASS" "intel verdict"
+
+# --gemm-cflags reaches the load install unchanged.
+set +e
+out="$(FAKE_INSTALL_ARGS="${T}/install.args" PERF="${T}/perf" PERF_RAW_FLOPS_LOAD="${T}/load" \
+  PERF_RAW_FLOPS_CPUINFO="${T}/intel" FAKE_PERF_TABLE="${I}" "${SCRIPT}" --prefix "${T}/prefix" \
+  --seconds 1 --threads 1 --precisions dp --gemm-cflags "-mprefer-vector-width=512 -mfoo" 2>&1)"
+rc=$?
+set -e
+[ "${rc}" -eq 0 ] || fail "--gemm-cflags run exit ${rc}: ${out}"
+has "gemm extra cflags: -mprefer-vector-width=512 -mfoo" "cflags echoed"
+grep -qx -- "--prefix ${T}/prefix --cflags -mprefer-vector-width=512 -mfoo" "${T}/install.args" ||
+  fail "install args: $(cat "${T}/install.args")"
 
 # Precision leak: a dp run that also shows 5% sp FLOPs fails.
 sed 's/^fp_arith_inst_retired.scalar_single 0 0/fp_arith_inst_retired.scalar_single 50000 0/' "${I}" >"${T}/leak.tab"

@@ -21,12 +21,16 @@
 #   ./scripts/perf_raw_flops_check.sh --list
 #   ./scripts/perf_raw_flops_check.sh [--precisions "dp sp"] [--seconds S] [--size N]
 #        [--threads N] [--tolerance PCT] [--event CLASS-LABEL:WEIGHT:EVENT ...] [--prefix DIR]
+#        [--gemm-cflags "FLAGS"]
 #
 # --list      prints the CPU, the perf version and the FP events this perf knows, with the
 #             encodings perf uses (paste this back; it is where raw codes come from)
 # --event     replaces the default event set (repeatable). CLASS is dp, sp or all (counts both);
 #             WEIGHT is FLOPs per count; EVENT is a perf name or a raw cpu/.../ spec.
 #             Example: --event dp-512:8:cpu/event=0xc7,umask=0x40/
+# --gemm-cflags  extra compiler flags for the GEMM. GCC keeps 256-bit vectors on Skylake
+#             and later, so the 512-bit FLOP events stay at 0 unless the GEMM is built with
+#             --gemm-cflags "-mprefer-vector-width=512".
 # Defaults: --precisions "dp sp", --seconds 20, --size 1024, --threads = online CPUs,
 # --tolerance 10, --prefix ${HPCPERFSTATS_GEMM_PREFIX:-$HOME/hpcperfstats-gemm-load}.
 # Default events by vendor (perf names; ones this perf does not know are reported and skipped):
@@ -48,10 +52,11 @@ SECONDS_RUN=20
 SIZE=1024
 THREADS=""
 TOLERANCE=10
+GEMM_CFLAGS=""
 LIST=0
 EVENTS=()
 
-usage() { sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; }
 die() {
   echo "perf_raw_flops_check: $*" >&2
   exit 2
@@ -69,7 +74,7 @@ while [ $# -gt 0 ]; do
     LIST=1
     shift
     ;;
-  --precisions | --seconds | --size | --threads | --tolerance | --event | --prefix)
+  --precisions | --seconds | --size | --threads | --tolerance | --event | --prefix | --gemm-cflags)
     [ $# -ge 2 ] || die "$1 requires a value"
     case "$1" in
     --precisions) PRECISIONS="$2" ;;
@@ -79,6 +84,7 @@ while [ $# -gt 0 ]; do
     --tolerance) TOLERANCE="$2" ;;
     --event) EVENTS+=("$2") ;;
     --prefix) PREFIX="$2" ;;
+    --gemm-cflags) GEMM_CFLAGS="$2" ;;
     esac
     shift 2
     ;;
@@ -157,14 +163,16 @@ for e in "${EVENTS[@]}"; do
   if ! is_uint "${weight}" || [ "${weight}" -lt 1 ]; then
     die "--event '${e}': WEIGHT must be a positive integer"
   fi
-  # perf exits 0 for <not supported> / <not counted>, so require a numeric count.
-  if timeout 20 "${PERF}" stat -x ';' -e "${spec}" -- sleep 0.1 2>&1 >/dev/null |
-    grep -v '^#' | awk -F';' 'NF >= 3 && $1 ~ /^[0-9.]+$/ { ok = 1 } END { exit !ok }'; then
+  # perf exits 0 for <not supported> / <not counted>, so require a numeric count and show
+  # perf's own line when there is none.
+  probe="$(timeout 20 "${PERF}" stat -x ';' -e "${spec}" -- sleep 0.1 2>&1 >/dev/null |
+    grep -v -e '^#' -e '^[[:space:]]*$' || true)"
+  if echo "${probe}" | awk -F';' 'NF >= 3 && $1 ~ /^[0-9.]+$/ { ok = 1 } END { exit !ok }'; then
     LABELS+=("${label}")
     WEIGHTS+=("${weight}")
     SPECS+=("${spec}")
   else
-    echo "event ${label} (${spec}): not usable with this perf/kernel, skipped"
+    echo "event ${label} (${spec}): not usable with this perf/kernel, skipped; perf: $(echo "${probe:-no output}" | head -n 1)"
   fi
 done
 [ "${#SPECS[@]}" -gt 0 ] || {
@@ -174,13 +182,14 @@ done
 
 OUTDIR="${PREFIX}/perf_raw_flops"
 mkdir -p "${OUTDIR}"
-"${LOAD}" install --prefix "${PREFIX}" >"${OUTDIR}/install.log" 2>&1 || {
+"${LOAD}" install --prefix "${PREFIX}" --cflags "${GEMM_CFLAGS}" >"${OUTDIR}/install.log" 2>&1 || {
   cat "${OUTDIR}/install.log" >&2
   die "GEMM load install failed (module load gcc?)"
 }
 
 echo "host $(hostname -f 2>/dev/null || hostname), cpu ${VENDOR} family $(cpu_field 'cpu family') model $(cpu_field model)"
 echo "events: ${#SPECS[@]} (perf scales multiplexed counts by enabled/running)"
+echo "gemm extra cflags: ${GEMM_CFLAGS:-none}"
 SUMMARY="${OUTDIR}/summary.txt"
 : >"${SUMMARY}"
 perf_args=()

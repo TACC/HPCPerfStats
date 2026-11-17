@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Regression (via check-local): scripts/canary_gemm_load.sh builds the GEMM load, runs it in
-# the foreground for a bounded time (ending with its exact FLOP total), starts / refuses a second start / reports / stops a
-# background run, and rejects bad options. Skips (77) when no C compiler with OpenMP exists.
+# the foreground for a bounded time (ending with its exact FLOP total), starts / refuses a
+# second start / reports / stops a background run, rejects bad options, passes --cflags to the
+# compiler, and runs the read kernel to its exact byte total. Skips (77) when no C compiler with
+# OpenMP exists.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="${ROOT}/scripts/canary_gemm_load.sh"
@@ -32,7 +34,8 @@ printf '#include <omp.h>\nint main(void){return omp_get_max_threads()>0?0:1;}\n'
 }
 
 # Bad input is rejected with exit 2 before anything is built.
-for args in "start --precision xx" "run --threads 0" "run --seconds -1" "run --size 8" "bogus"; do
+for args in "start --precision xx" "run --threads 0" "run --seconds -1" "run --size 8" \
+  "run --kernel xx" "run --kernel read --mib 8" "bogus"; do
   set +e
   # shellcheck disable=SC2086
   "${SCRIPT}" ${args} --prefix "${PREFIX}" >/dev/null 2>&1
@@ -48,6 +51,7 @@ done
 for p in dp sp; do
   test -x "${PREFIX}/bin/gemm_load_${p}" || fail "install did not build gemm_load_${p}"
 done
+test -x "${PREFIX}/bin/read_load" || fail "install did not build read_load"
 grep -q "GEMM_T" "${PREFIX}/src/gemm_load.c" || fail "source not written"
 
 # Foreground run is bounded by --seconds and reports a positive rate and a finite check value.
@@ -64,7 +68,8 @@ fi
 # Background lifecycle: start, a second start is refused, status, stop, status after stop.
 "${SCRIPT}" start --prefix "${PREFIX}" --precision dp --size 64 --threads 1 >"${PREFIX}/start.out" ||
   fail "start failed: $(cat "${PREFIX}/start.out")"
-grep -q "precision=dp threads=1 size=64 seconds=0" "${PREFIX}/gemm_load.state" || fail "state not recorded"
+grep -q "kernel=gemm precision=dp threads=1 size=64 mib=4096 seconds=0" "${PREFIX}/gemm_load.state" ||
+  fail "state not recorded: $(cat "${PREFIX}/gemm_load.state")"
 pid="$(cat "${PREFIX}/gemm_load.pid")"
 kill -0 "${pid}" 2>/dev/null || fail "background pid ${pid} not running"
 set +e
@@ -82,5 +87,34 @@ rc=$?
 set -e
 [ "${rc}" -eq 1 ] || fail "status after stop exit ${rc}, want 1"
 "${SCRIPT}" stop --prefix "${PREFIX}" | grep -q "not running" || fail "stop when idle must be a no-op"
+
+# The read kernel reads the whole --mib array every pass and reports exactly passes x array bytes;
+# check= is the per-pass sum (64 MiB of doubles that are all 1.0).
+out="$("${SCRIPT}" run --prefix "${PREFIX}" --kernel read --mib 64 --seconds 1 --threads 2)"
+echo "${out}" | grep -q "read_load mib=64 threads=2 seconds=1 started" || fail "no read start: ${out}"
+echo "${out}" | grep -Eq "GB/s=[0-9]*\.[0-9]+ .*check=8388608$" || fail "no read rate/check: ${out}"
+bytes="$(echo "${out}" | sed -n 's/^read_load done total_bytes_read=\([0-9]*\) passes=\([0-9]*\) .*/\1 \2/p')"
+[ -n "${bytes}" ] || fail "no read done line: ${out}"
+read -r total passes <<<"${bytes}"
+if [ "${passes}" -lt 1 ] || [ "${total}" -ne $((passes * 64 * 1024 * 1024)) ]; then
+  fail "total_bytes_read ${total} is not passes (${passes}) x 64 MiB"
+fi
+"${SCRIPT}" start --prefix "${PREFIX}" --kernel read --mib 64 --threads 1 >"${PREFIX}/rstart.out" ||
+  fail "read start failed: $(cat "${PREFIX}/rstart.out")"
+grep -q "kernel=read .* mib=64 seconds=0" "${PREFIX}/gemm_load.state" || fail "read state not recorded"
+"${SCRIPT}" stop --prefix "${PREFIX}" | grep -q "stopped pid" || fail "read stop did not report pid"
+
+# An unknown --cflags flag fails the build and shows in its log, so the flags reach the compiler.
+CF="${PREFIX}/cflags"
+set +e
+"${SCRIPT}" install --prefix "${CF}" --cc "${cc_bin}" --cflags "-fhps-no-such-flag" \
+  >"${PREFIX}/cflags.out" 2>&1
+rc=$?
+set -e
+[ "${rc}" -ne 0 ] || fail "install with a bad --cflags flag must fail"
+grep -q -- "-fhps-no-such-flag" "${CF}/build_dp.log" || fail "flag not passed: $(cat "${CF}/build_dp.log")"
+"${SCRIPT}" install --prefix "${CF}" --cc "${cc_bin}" --cflags "-DHPS_CFLAGS_OK=1" \
+  >"${PREFIX}/cflags2.out" 2>&1 || fail "install with a valid --cflags failed: $(cat "${PREFIX}/cflags2.out")"
+test -x "${CF}/bin/gemm_load_dp" || fail "--cflags install did not build gemm_load_dp"
 
 echo "PASS test_canary_gemm_load"
