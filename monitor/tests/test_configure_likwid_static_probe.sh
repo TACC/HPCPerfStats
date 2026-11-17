@@ -20,6 +20,11 @@ awk '
 ' "${ac}" \
   || { echo "configure.ac: perfmon_init probe must try -llikwid-hwloc -llikwid-lua -lm -lrt -pthread -ldl" >&2; exit 1; }
 
+# liblikwid.a needs libm, and per-target -lm sits before the static group on the link line, so
+# with -Wl,--as-needed (release bundle) libm is dropped unless it also follows the group.
+grep -q -- '-Wl,--end-group -Wl,-Bdynamic -lpthread -ldl -lm' "${ac}" \
+  || { echo "configure.ac: --enable-all-static LIBS must list -lm after the static group" >&2; exit 1; }
+
 grep -q 'AS_UNSET(\[ac_cv_search_perfmon_init\])' "${ac}" \
   || { echo "configure.ac must AS_UNSET ac_cv_search_perfmon_init before plain retry" >&2; exit 1; }
 

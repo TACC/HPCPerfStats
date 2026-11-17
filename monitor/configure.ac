@@ -535,7 +535,7 @@ if test "x$enable_all_static" = xyes; then
   if test -n "$MONITOR_SHARED_LIBS"; then
     AC_MSG_NOTICE([--enable-all-static: linking shared-only libs after static group:${MONITOR_SHARED_LIBS}])
   fi
-  LIBS="-Wl,-Bstatic -Wl,--start-group $LIBS -Wl,--end-group -Wl,-Bdynamic -lpthread -ldl${MONITOR_SHARED_LIBS}"
+  LIBS="-Wl,-Bstatic -Wl,--start-group $LIBS -Wl,--end-group -Wl,-Bdynamic -lpthread -ldl -lm${MONITOR_SHARED_LIBS}"
 fi
 
 PKG_PROG_PKG_CONFIG
