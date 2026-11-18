@@ -293,7 +293,7 @@ export default function HistogramThumbnails({
 }: HistogramThumbnailsProps) {
   if (!histograms) {
     return (
-      <div className="flex min-h-[120px] items-center justify-center rounded border border-dashed border-border bg-muted p-3 text-muted-foreground">
+      <div className="flex min-h-[120px] items-center justify-center rounded border border-dashed border-border bg-muted p-3 text-foreground">
         <LoadingMessage message="Loading histograms…" />
       </div>
     );

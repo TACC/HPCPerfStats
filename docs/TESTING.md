@@ -1007,6 +1007,8 @@ The SPA and standalone HTML pages aim for **WCAG 2.2 Level AA** for in-app flows
 
 Colocated page/component tests call `axeSeriousViolations()` (WCAG 2.x / 2.1 AA tag scope, asserting **no serious or critical** violations) for: `Layout` (including Extended Search open), `JobList` (including charts tab with histograms), `JobDetail`, `Search`, `PageApiKey`, `ExtendedSearch` (dialog shell), and `HistogramThumbnails` (thumbnail + open popover). New or materially changed page shells must extend this set per **`frontend-a11y-regression.mdc`**.
 
+jsdom cannot compute colour contrast, so jest-axe never reports `color-contrast`. [`src/utils/muted-surface-contrast.test.ts`](hpcperfstats/site/frontend/src/utils/muted-surface-contrast.test.ts) statically rejects any component class string that pairs `text-muted-foreground` with solid `bg-muted` (about 4.3:1 in the light theme, under the AA 4.5:1 minimum). Playwright axe flagged that pair on the job-list histogram **Unavailable** placeholders; use `text-foreground` on `bg-muted` surfaces.
+
 ```bash
 cd hpcperfstats/site/frontend && npm test -- --run
 ```

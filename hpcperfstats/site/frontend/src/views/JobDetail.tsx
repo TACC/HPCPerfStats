@@ -1090,7 +1090,7 @@ export default function JobDetail() {
         {notComputed.length > 0 ? (
           <Collapsible
             className={cn(
-              "job-detail-metrics-not-computed rounded-lg border px-3 py-2",
+              "job-detail-metrics-not-computed rounded-lg border",
               valued.length > 0 ? "mt-3" : "",
             )}
             open={notComputedOpen}
@@ -1102,10 +1102,10 @@ export default function JobDetail() {
               }));
             }}
           >
-            <CollapsibleTrigger className="cursor-pointer text-left text-sm font-medium">
+            <CollapsibleTrigger className="w-full cursor-pointer px-3 py-2 text-left text-sm font-medium">
               Metrics not computed ({formatDecimalStandard(notComputed.length)})
             </CollapsibleTrigger>
-            <CollapsibleContent className="mt-2">
+            <CollapsibleContent className="px-3 pb-2">
               {renderMetricRowTables(sectionId, notComputed, "not-computed")}
             </CollapsibleContent>
           </Collapsible>

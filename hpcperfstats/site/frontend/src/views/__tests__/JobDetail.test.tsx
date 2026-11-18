@@ -1301,6 +1301,31 @@ describe("JobDetail", () => {
     expect(emptyParas.filter((p) => p.textContent === "Data not available.")).toHaveLength(0);
   });
 
+  it("makes the whole Metrics not computed header row the click target", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        metrics_list: [
+          { metric: "avg_freq", type: "pmc", units: "GHz", value: null },
+        ],
+      },
+    });
+
+    renderJobDetail("12345", { is_staff: true });
+
+    const trigger = await screen.findByRole("button", {
+      name: /Metrics not computed \(1\.00\)/,
+    });
+    // Padding lives on the full-width trigger, not the bordered box, so no
+    // part of the header row is a dead zone.
+    expect(trigger.className).toMatch(/\bw-full\b/);
+    expect(trigger.className).toMatch(/\bpx-3\b/);
+    const box = trigger.closest(".job-detail-metrics-not-computed");
+    expect(box?.className).not.toMatch(/\bp[xy]-\d/);
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("opens Metrics not computed sections during print prep", async () => {
     setJobDetailQueryMock({
       data: {

@@ -352,7 +352,7 @@ function maximizeEmbeddedPlot(
 }
 
 const PLACEHOLDER_CLASS =
-  "bokeh-plot-unavailable flex min-h-[120px] flex-col items-center justify-center rounded border border-dashed border-border bg-muted p-3 text-center text-muted-foreground";
+  "bokeh-plot-unavailable flex min-h-[120px] flex-col items-center justify-center rounded border border-dashed border-border bg-muted p-3 text-center text-foreground";
 
 /**
  * Bokeh measures the target element during embed_item. If the plot div uses
