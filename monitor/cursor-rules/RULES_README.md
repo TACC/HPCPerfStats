@@ -28,7 +28,7 @@ Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 - **`monitor-workspace-contract.mdc`** — scope and listend consumer contract
 - **`monitor-consumer-side-plan.mdc`** — secondary consumer plan when emit changes need ingest work
 - **`monitor-shm-validation-probe-parity.mdc`** — collector `dev` enumeration must match `host_live_probes.py`
-- **`monitor-beegfs-procfs.mdc`** — BeeGFS client detect + bounded `beegfs-ctl` (never `Sum:`); capacity via `statvfs`
+- **`monitor-beegfs-procfs.mdc`** — BeeGFS client detect + I/O bytes from the client's storage TCP counters (no server query); capacity via `statvfs`
 - **`monitor-security-hardening.mdc`** — privileged dump/shm/`dlopen`/exec/conf hardening
 - **`monitor-systemd-service-contract.mdc`** — root-daemon sandbox invariants, required device access, and unit/package/test coupling
 - **`monitor-runtime-path-coherence.mdc`** — default path synchronization across CLI, startup permissions, systemd, RPM, docs, and tests

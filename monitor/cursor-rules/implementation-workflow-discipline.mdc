@@ -49,7 +49,7 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [monitor-shm-message-correctness.mdc](monitor-shm-message-correctness.mdc) | Capability slug, validators, shm goldens |
 | [monitor-shm-validation-probe-parity.mdc](monitor-shm-validation-probe-parity.mdc) | Collector `dev` ↔ `host_live_probes.py` sync |
 | [monitor-ib-sysfs-parsing.mdc](monitor-ib-sysfs-parsing.mdc) | IB port state parsers |
-| [monitor-beegfs-procfs.mdc](monitor-beegfs-procfs.mdc) | BeeGFS client detect + bounded `beegfs-ctl` |
+| [monitor-beegfs-procfs.mdc](monitor-beegfs-procfs.mdc) | BeeGFS client detect + TCP-counter I/O bytes |
 | [monitor-xpum-integration.mdc](monitor-xpum-integration.mdc) | Intel PVC / XPU Manager (`intel_gpu`) |
 | [monitor-arm-direct-perf.mdc](monitor-arm-direct-perf.mdc) | Grace / aarch64 direct perf readers: scaled reads, never pinned, D1 keys and widths |
 | [monitor-amd-epyc-likwid.mdc](monitor-amd-epyc-likwid.mdc) | EPYC Rome–Turin LIKWID-only DF/core; no MSR fallback |

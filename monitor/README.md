@@ -166,7 +166,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | LIKWID RAPL (PWR + powercap) | `likwid_rapl.c`, `likwid_rapl_pwr.c`, `rapl_powercap.c` |
 | Omni-Path / Cornelis HFI (`host_opa`) | `opa.c`, `opa_sysfs.c`, `opa_mad_backoff.c`, `opa_mad_dyn.c`, `host_opa.h` (sysfs always; STL MAD via `--enable-opa-mad-dlopen` or link-time `--enable-opa`) |
 | NFS client (`host_nfs`) | `nfs.c`, `host_nfs.h` (`/proc/self/mountstats`; one row per `fstype nfs` or `nfs4` mount point; positional `events:` / `xprt:` / per-op fields read by kernel field index) |
-| BeeGFS client (`beegfs_client`) | `beegfs.c`, `beegfs_client.h`, `beegfs_ctl_parse.c` (mounts + `statvfs`; I/O via bounded `beegfs-ctl`) |
+| BeeGFS client (`beegfs_client`) | `beegfs.c`, `beegfs_client.h`, `beegfs_mount.c`, `beegfs_tcp.c` (mounts + `statvfs`; I/O bytes from the kernel TCP counters of the client's storage connections) |
 | Intel Data Center GPU / PVC (`intel_gpu`) | `intel_gpu.c`, `intel_gpu.h`, `xpum_gpu_dyn.c` (vendored `third_party/intel-xpum/`; runtime `libxpum` dlopen) |
 | IB MAD dlopen | `ib_mad.c`, `ib_mad_dyn.c`, `ib_mad_api.h` (vendored `third_party/ibmad-shim/` when `--enable-ib-mad-dlopen`) |
 | IB vs HFI routing | `ib_common.c` (`ib_hca_is_opa_hfi`), `ib_family.c` |
@@ -324,7 +324,7 @@ so an emitted `0` always means "read, and the counter was 0". Codes come from th
 | `-4` | `PERMISSION_DENIED` | `EACCES` / `EPERM` | breaks |
 | `-5` | `PMU_BUSY` | counter register in use by another program | breaks |
 | `-6` | `NOT_SCHEDULED` | perf event not scheduled this interval | breaks |
-| `-7` | `BACKEND_ERROR` | DCGM / LIKWID / MAD / beegfs-ctl call failed | bridgeable |
+| `-7` | `BACKEND_ERROR` | DCGM / LIKWID / MAD call failed | bridgeable |
 | `-8` | `INVALID_VALUE` | the backend returned a blank / NaN / poisoned value | bridgeable |
 | `-9` | `BACKOFF` | source in failure backoff or a slow-cycle cooldown | bridgeable |
 | `-10` | `NOT_BUILT` | not compiled in, or not programmed by this build's eventset | breaks |
@@ -525,10 +525,12 @@ Old→new llite event map lives under `type_events.lustre_llite` in
 |-------|----------|
 | Detection | Mounts with fstype `beegfs` / `beegfs_nodev`; device id = mount path |
 | Capacity | `statvfs` → `fs_bytes_*` / `fs_files_*` every sample |
-| I/O / metadata | Bounded `beegfs-ctl --clientstats` with **equals-form** `--nodetype=` / `--cfgFile=` (7.3.4+; no two-token `--mount`); local node only — **never** cluster `Sum:` |
-| Local line | Match `--names` id via hostname / short / **`*-ib`** / IPv4 |
-| Units | Prefer `--rwunit=B`; else `MiB-*` × 1048576 → `vfs_*_bytes` |
-| Cadence | Slow/full when `enable_slow_tier`; else ≤ once per `max(sample_freq, 30s)` + wall timeout |
+| I/O bytes | `vfs_write_bytes` / `vfs_read_bytes` = bytes acknowledged / received on the client's established TCP connections to its storage servers (`NETLINK_SOCK_DIAG` `tcp_info`, unprivileged); no fork, no server request, no DNS. These are wire bytes: they include BeeGFS message headers (+0.03% on 1 GiB direct I/O), count buffered writes when the client flushes them, and miss reads served from the client page cache |
+| Mount to client | `/proc/fs/beegfs/<id>/config` `cfgFile` matched with the mount's `cfgFile=` option; else the only instance; else `NOT_PRESENT` |
+| Totals | Per-socket growth (keyed by socket cookie) is added to a per-mount total, so reconnects never make the counter go backwards |
+| Not countable | `NOT_PRESENT` when the client's `storage_nodes` lists RDMA or SDP connections (that traffic bypasses TCP), a node without a readable connection line, fewer matching sockets than its listed TCP connection counts (the listing names one address per server, so connections to a multi-homed server's other addresses would be missed), or no instance; a listing whose nodes are all idle (`<none>`) is a real 0 growth |
+| Metadata ops | The 15 `vfs_*_ops` keys are `NOT_PRESENT`: the 7.3 client keeps no op counters and `beegfs-ctl --clientstats` makes every server dump its whole client table per call |
+| Cadence | Slow/full when `enable_slow_tier`; else <= once per `max(sample_freq, 30s)`; skipped ticks re-publish the cached totals or code |
 | Configure | `--enable-beegfs` (default yes); capability slug fragment `beegfs` |
 | Consumer follow-up | Website FSIO includes BeeGFS alongside Lustre and NFS (`beegfs_client` → Resources / Summary / `detail_fsio_beegfs_*`) |
 

@@ -136,13 +136,16 @@ static void test_beegfs(void)
   collect(&beegfs_stats_type);
   beegfs_test_set_mounts_path(
       write_tmp("beegfs_mounts", "beegfs_nodev /nonexistent/hps_beegfs beegfs rw 0 0\n"));
-  collect(&beegfs_stats_type); /* statvfs fails; the ctl refresh fails (no beegfs-ctl) */
+  beegfs_test_set_procfs_root("/nonexistent/hps_beegfs_procfs");
+  collect(&beegfs_stats_type); /* statvfs fails; no client instance to read */
   row = get_current_stats(&beegfs_stats_type, "/nonexistent/hps_beegfs");
   assert(state(row, "fs_bytes_total") == STATS_SENTINEL_NOT_PRESENT);
-  assert(state(row, "vfs_read_ops") == STATS_SENTINEL_BACKEND_ERROR);
+  assert(state(row, "vfs_read_bytes") == STATS_SENTINEL_NOT_PRESENT);
+  assert(state(row, "vfs_read_ops") == STATS_SENTINEL_NOT_PRESENT);
   collect(&beegfs_stats_type); /* refresh gate: the cached code is republished */
-  assert(state(row, "vfs_read_ops") == STATS_SENTINEL_BACKEND_ERROR);
+  assert(state(row, "vfs_read_bytes") == STATS_SENTINEL_NOT_PRESENT);
   beegfs_test_set_mounts_path(NULL);
+  beegfs_test_set_procfs_root(NULL);
 }
 
 static void test_llite(void)

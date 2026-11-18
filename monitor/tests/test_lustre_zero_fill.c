@@ -1,15 +1,11 @@
-/* Lustre mdc/osc and BeeGFS clientstats list only non-zero counters: a readable source publishes
- * 0 for the keys it omits (not NOT_UPDATED), an unreadable one its errno code, and a BeeGFS tick
- * the ctl refresh gate skips re-publishes the cached values and codes. */
+/* Lustre mdc/osc stats list only non-zero counters: a readable source publishes 0 for the keys
+ * it omits (not NOT_UPDATED), an unreadable one its errno code. */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "beegfs_client.h"
-#undef KEYS
 #include "lustre_mdc.h"
 #undef KEYS
 #include "lustre_osc.h"
@@ -25,7 +21,6 @@ const size_t stats_type_nr = 0;
 double sample_freq = 300.0;
 extern struct stats_type mdc_stats_type;
 extern struct stats_type osc_stats_type;
-extern struct stats_type beegfs_stats_type;
 
 static char g_dir[] = "/tmp/hps_zero_fillXXXXXX";
 
@@ -99,68 +94,12 @@ static void test_osc_zero_fills_omitted_ops(void)
   stats_type_destroy(&osc_stats_type);
 }
 
-static void test_beegfs_zero_fill_and_gated_republish(void)
-{
-  struct beegfs_ctl_counters storage;
-  struct beegfs_ctl_counters meta;
-  struct stats *row;
-
-  assert(stats_type_init(&beegfs_stats_type) == 0);
-  row = get_current_stats(&beegfs_stats_type, "/beegfs");
-  memset(&storage, 0, sizeof(storage));
-  memset(&meta, 0, sizeof(meta));
-  storage.vfs_read_bytes = 4096;
-  storage.have_vfs_read_bytes = 1;
-  storage.vfs_close_ops = 1;
-  storage.have_vfs_close_ops = 1;
-  meta.vfs_close_ops = 9;
-  meta.have_vfs_close_ops = 1;
-
-  /* Refresh tick, both lines selected: omitted columns are 0, meta wins close. */
-  stats_type_mark_not_updated(&beegfs_stats_type);
-  beegfs_publish_ctl(row, &storage, &meta);
-  assert(val(row, "vfs_read_bytes") == 4096ULL);
-  assert(val(row, "vfs_close_ops") == 9ULL);
-  assert(val(row, "vfs_mkdir_ops") == 0ULL);
-
-  /* Gated tick: the cached values are published again. */
-  stats_type_mark_not_updated(&beegfs_stats_type);
-  beegfs_republish_ctl(row);
-  assert(val(row, "vfs_read_bytes") == 4096ULL);
-  assert(val(row, "vfs_close_ops") == 9ULL);
-  assert(val(row, "vfs_mkdir_ops") == 0ULL);
-
-  /* Only the storage line: its columns publish, the others cannot be told from absent. */
-  stats_type_mark_not_updated(&beegfs_stats_type);
-  beegfs_publish_ctl(row, &storage, NULL);
-  assert(val(row, "vfs_read_bytes") == 4096ULL);
-  assert(val(row, "vfs_close_ops") == 1ULL);
-  assert(state(row, "vfs_mkdir_ops") == STATS_SENTINEL_BACKEND_ERROR);
-
-  /* Failed refresh, then a gated tick: the failure code is re-published too. */
-  stats_type_mark_not_updated(&beegfs_stats_type);
-  beegfs_publish_ctl(row, NULL, NULL);
-  assert(state(row, "vfs_read_bytes") == STATS_SENTINEL_BACKEND_ERROR);
-  stats_type_mark_not_updated(&beegfs_stats_type);
-  beegfs_republish_ctl(row);
-  assert(state(row, "vfs_read_bytes") == STATS_SENTINEL_BACKEND_ERROR);
-  assert(state(row, "fs_bytes_total") == STATS_SENTINEL_NOT_UPDATED);
-
-  /* A mount never refreshed has nothing cached: its keys stay NOT_UPDATED. */
-  row = get_current_stats(&beegfs_stats_type, "/beegfs2");
-  stats_type_mark_not_updated(&beegfs_stats_type);
-  beegfs_republish_ctl(row);
-  assert(state(row, "vfs_read_bytes") == STATS_SENTINEL_NOT_UPDATED);
-  stats_type_destroy(&beegfs_stats_type);
-}
-
 int main(void)
 {
   assert(mkdtemp(g_dir) != NULL);
   test_mdc_zero_fills_omitted_ops();
   test_osc_zero_fills_omitted_ops();
-  test_beegfs_zero_fill_and_gated_republish();
   assert(test_rm_tree(g_dir) == 0);
-  printf("test_lustre_beegfs_zero_fill passed\n");
+  printf("test_lustre_zero_fill passed\n");
   return 0;
 }

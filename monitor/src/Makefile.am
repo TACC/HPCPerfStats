@@ -367,8 +367,10 @@ endif
 if BEEGFS
 hpcperfstatsd_SOURCES += \
 	beegfs_client.h \
-	beegfs_ctl_parse.h \
-	beegfs_ctl_parse.c
+	beegfs_mount.h \
+	beegfs_mount.c \
+	beegfs_tcp.h \
+	beegfs_tcp.c
 
 TYPES += \
 	beegfs.c

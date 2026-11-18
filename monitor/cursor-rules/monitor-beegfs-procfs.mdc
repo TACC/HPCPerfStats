@@ -1,5 +1,5 @@
 ---
-description: BeeGFS client detection and bounded beegfs-ctl stats (never Sum:)
+description: BeeGFS client detection, statvfs capacity, and I/O bytes from the kernel TCP counters of the client's storage connections (no beegfs-ctl, no server query)
 globs:
   - HPCPerfStats/monitor/src/beegfs*
   - HPCPerfStats/monitor/tests/test_beegfs*
@@ -7,7 +7,7 @@ globs:
 alwaysApply: false
 ---
 
-**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+**Activation:** `alwaysApply: false` - when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 # Monitor: BeeGFS client (`beegfs_client`)
 
@@ -15,33 +15,30 @@ alwaysApply: false
 
 - Enumerate mounts with fstype **`beegfs`** or **`beegfs_nodev`** (`/proc/mounts`).
 - Device id is the **mount path** (e.g. `/scratch`).
-- `/proc/fs/beegfs/<clientID>/` on BeeGFS **7.3.x** exposes config/state only — **no** cumulative I/O counter files (`ops-rd` / `MiB-rd` absent). Do not invent procfs counter parsers for 7.3.x.
+- `/proc/fs/beegfs/<clientID>/` on BeeGFS **7.3.x** exposes config/state only: **no** I/O or op counters (the client's RPC counters exist only in `BEEGFS_DEBUG` builds). Do not invent procfs counter parsers.
 
 ## Capacity (cheap, every sample)
 
-- `statvfs(3)` on the mount → `fs_bytes_*` / `fs_files_*` (same semantics as `lustre_llite`).
+- `statvfs(3)` on the mount -> `fs_bytes_*` / `fs_files_*` (same semantics as `lustre_llite`).
 
-## I/O and metadata (bounded `beegfs-ctl`)
+## I/O bytes (`beegfs_tcp.c`)
 
-- On 7.3.x there is **no public linkable clientstats library**; use **`beegfs-ctl --clientstats`**.
-- **Equals-form argv only (7.3.4+):** `--nodetype=storage|meta`, `--cfgFile=<path>`, `--interval=0`, `--perinterval`, `--names`, optional `--rwunit=B`. **Never** two-token `--nodetype storage` or `--mount /path` — on 7.3.4 the bare token is a `<nodeID>` / invalid mount and ctl fails (`Invalid NodeNumID` / `Given mountpoint is invalid`).
-- Prefer **`--cfgFile=`** from mount `cfgFile=` (fallback `/etc/beegfs/beegfs-client.conf`). Do not rely on two-token `--mount` for `beegfs_nodev`.
-- Prefer **`--rwunit=B`** when supported (`B-rd` / `B-wr`); else parse `MiB-rd` / `MiB-wr` (scientific notation OK) and scale **× 1048576** to `vfs_read_bytes` / `vfs_write_bytes`.
-- Map ctl abbreviations to portable **`vfs_*`** keys (see `beegfs_client.h`); never emit raw `MiB-rd` / `ops-rd` / `unlnk` as KEY names.
-- **Never** ingest the cluster **`Sum:`** line as this host’s counters — select the **local** line via hostname / short hostname / **`hostname-ib`** / local IPv4 (`--names` often prints InfiniBand hostnames).
-- Keep wall-time budget on ctl (timeout → skip; first-fail log; capacity still works).
-- **Jitter:** when `enable_slow_tier` is on, refresh ctl only on **`COLLECT_FULL`**; when off, at most once per `max(sample_freq, 30s)`. Emit ctl-derived keys only on refresh ticks (tier table marks `vfs_*` slow; `fs_*` stay fast).
-- **dmesg `beegfs: enabling unsafe global rkey`:** kernel log on **new RDMA protection domain** create (ThinkParQ FAQ). Working equals-form `clientstats` does not by itself reproduce a per-sample storm; do not “fix” it by rewriting site `beegfs-client.conf` / `connRDMAKeyType` from the monitor.
+- **Never query the servers.** `beegfs-ctl --clientstats` makes every storage/meta server dump its whole per-client table on each call (`--filter` is client-side), so N nodes polling cost N full-table dumps per interval. Do not reintroduce it, or any other per-node server request.
+- `vfs_write_bytes` / `vfs_read_bytes` = `tcpi_bytes_acked` / `tcpi_bytes_received` of the client's **established IPv4 TCP sockets** to its storage servers, read through one `NETLINK_SOCK_DIAG` dump per refresh (unprivileged; no fork, no DNS). Measured on LS6 7.3.4: within 0.03% of 1 GiB direct I/O.
+- Peers come from `<instance>/storage_nodes` (`Connections: TCP: n (ip:port);` per node). Map the mount to its instance by matching `<instance>/config` `cfgFile` with the mount's `cfgFile=` option; else the only instance; else `NOT_PRESENT`.
+- **Untracked listings publish `NOT_PRESENT`, never 0 or a partial total:** RDMA or SDP connections (that traffic bypasses TCP), a `TCP:` count without an endpoint, a node with no readable `Connections:` line, a truncated listing, more endpoints than the peer table, or fewer matched sockets than the listed TCP connection counts (the client prints only the first address per server, so a multi-homed server's other addresses are invisible). All nodes `<none>` (idle) is a real 0 growth.
+- Totals are monotonic: per-socket growth keyed by socket cookie, a new or reset socket adds its full counters (`beegfs_tcp_acc_update`). A dump error maps through `stats_sentinel_for_errno` (`EOPNOTSUPP` for a kernel without `NETLINK_SOCK_DIAG` or byte counters -> `NOT_PRESENT`, which is also what qemu-user gives, so the live-dump tests assert that path there; `ENOBUFS` more sockets than the table -> `READ_FAILED`).
+- The 15 `vfs_*_ops` keys stay in the schema and publish `NOT_PRESENT` (no client-side source).
+- **Jitter:** when `enable_slow_tier` is on, refresh only on **`COLLECT_FULL`**; when off, at most once per `max(sample_freq, 30s)`. Skipped ticks re-publish the cached totals or code. No allocation in the collect path beyond the one per-mount accumulator.
 
 ## Configure
 
 - **`--enable-beegfs`** default **yes**; `MONITOR_WITH_BEEGFS`; capability slug fragment **`beegfs`**.
-- Missing `beegfs-ctl` with mounts present: detect + capacity still work; **no** per-sample ERROR spam.
 
 ## Tests
 
-- Schema contract rejects raw ctl names; ctl parse fixtures cover Sum ignore, MiB→bytes, hostname match.
-- Argv builder tests assert equals-form tokens and absence of two-token `--nodetype` / `--mount`.
-- Ident helper tests assert `short-ib` / `fqdn-ib` aliases (not for IPv4).
+- `test_beegfs_tcp.c`: listing parser (untracked cases), accumulator, live loopback dump.
+- `test_beegfs_io.c`: publish/republish, cfgFile mapping, RDMA and unmatched mounts `NOT_PRESENT`, idle listing 0.
+- `test_beegfs_mount.c`: fstype and `cfgFile=` helpers. `test_fault_inject_fs.c`: failure sites.
 
-Cross-links: **monitor-jitter-and-fidelity-priority**, **monitor-emitted-variable-naming**, **monitor-collect-tier-gating**, **monitor-consumer-side-plan**.
+Cross-links: **monitor-jitter-and-fidelity-priority**, **monitor-emitted-variable-naming**, **monitor-collect-tier-gating**, **monitor-value-sentinel-contract**.
