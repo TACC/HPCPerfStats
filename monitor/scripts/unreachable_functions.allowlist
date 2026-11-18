@@ -36,6 +36,7 @@ likwid_rapl_pwr_intel_eventset
 lustre_parse_kv_ull
 monitor_cli_print_usage
 monitor_release_fail_reset_for_test
+nfs_test_set_mountstats_path
 nvidia_gpu_nvml_test_set_api
 nvidia_gpu_watch_profile_has_field
 opa_hfi_unit_from_name
