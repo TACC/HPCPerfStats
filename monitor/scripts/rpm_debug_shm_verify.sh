@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Post-debug-rpmbuild: install main RPM (--replacepkgs), resolve capabilities, validate /dev/shm.
+# Post-debug-rpmbuild: install main RPM (--replacepkgs --replacefiles), resolve capabilities,
+# wait for a full payload, validate /dev/shm. RPM_BUILD=1 runs the debug rpmbuild first.
 #
 # Run from HPCPerfStats/monitor/ after debug rpmbuild (hpc_debug_build 1).
 # RPM_TOPDIR and DIST_TOP default from this checkout when unset.
@@ -11,7 +12,8 @@
 # Optional: ENABLE_SLOW_TIER, HPCPERFSTATS_DEBUG_SHM_DIR, WORKSPACE_ROOT,
 #           SKIP_INSTALL=1, SKIP_SHM_LS=1, FAST (default 30), FULL (default 60),
 #           POST_INSTALL_SLEEP_SECONDS (defaults to FULL; soak via stress-ng --cpu 0),
-#           WAIT_SHM_SECONDS,
+#           WAIT_SHM_SECONDS, WAIT_FULL_SECONDS (default 900; 0 = no wait for full rows),
+#           RPM_BUILD=1 (remove stale daemon RPMs and run the debug rpmbuild first),
 #           CROSS_SAMPLE_CHECK (default 1; set 0 to disable),
 #           STRICT_LIVE_SPOT_CHECK / STRICT_PLAUSIBILITY / STRICT_CROSS_SAMPLE
 #             (default 1; set 0 to disable),
@@ -73,13 +75,19 @@ resolve_workspace_root() {
   printf '%s' "$(cd "${monitor_dir}/.." && pwd)"
 }
 
+# The verify scripts need python >= 3.7 (EL8's python3 is 3.6): repo venv, then the newest
+# python3.N on PATH, then plain python3.
 resolve_python() {
   local ws="$1"
+  local v
   if test -x "${ws}/.venv/bin/python3"; then
     printf '%s' "${ws}/.venv/bin/python3"
-  else
-    command -v python3
+    return 0
   fi
+  for v in python3.12 python3.11 python3.10 python3.9 python3.8; do
+    command -v "${v}" && return 0
+  done
+  command -v python3
 }
 
 find_main_daemon_rpm() {
@@ -100,8 +108,46 @@ install_main_daemon_rpm() {
     echo "ERROR: main hpcperfstatsd RPM not found under ${rpm_topdir}/RPMS" >&2
     return 1
   }
-  echo "Installing ${main_rpm##*/} (--replacepkgs overwrites same-version installs) ..."
-  sudo rpm -Uvh --replacepkgs "${main_rpm}"
+  echo "Installing ${main_rpm##*/} (--replacepkgs --replacefiles: same-version rebuilds) ..."
+  sudo rpm -Uvh --replacepkgs --replacefiles "${main_rpm}"
+}
+
+# RPM_BUILD=1: remove stale daemon RPMs, then run the debug rpmbuild, so a failed build can
+# never install an older package and the node needs no hand-pasted rpmbuild line.
+build_debug_rpm() {
+  local rpm_topdir="$1"
+  local spec="${rpm_topdir}/SPECS/hpcperfstats.spec"
+
+  test -f "${spec}" || {
+    echo "ERROR: ${spec} missing; run prepare_rpmbuild_*.sh --debug-build first" >&2
+    return 1
+  }
+  rm -f "${rpm_topdir}"/RPMS/*/hpcperfstatsd-*.rpm
+  echo "Building the debug RPM (rpmbuild -ba, hpc_debug_build 1) ..."
+  rpmbuild -ba --define "_topdir ${rpm_topdir}" --define "hpc_debug_build 1" "${spec}" \
+    </dev/null || {
+    echo "ERROR: debug rpmbuild failed" >&2
+    return 1
+  }
+}
+
+# Waits up to <seconds> for a full payload with at least one metric row: the shm files exist
+# right after the restart, but a slow-tier daemon writes its first full sample later.
+wait_full_payload() {
+  local shm_dir="$1"
+  local seconds="$2"
+  local deadline
+
+  test "${seconds}" -gt 0 2>/dev/null || return 0
+  deadline=$(($(date +%s) + seconds))
+  echo "Waiting up to ${seconds}s for a full payload with metric rows ..."
+  until grep -qE '^[a-z][a-z0-9_]* ' "${shm_dir}/full" 2>/dev/null; do
+    if test "$(date +%s)" -ge "${deadline}"; then
+      echo "ERROR: no metric rows in ${shm_dir}/full after ${seconds}s" >&2
+      return 1
+    fi
+    sleep "${WAIT_FULL_POLL_SECONDS:-15}"
+  done
 }
 
 usage() {
@@ -117,6 +163,8 @@ Capabilities come from rpmbuild/debug-verify/ (stashed at %install; survives EL1
 Defaults: cross-sample + strict plausibility/live-spot/cross-sample (set *=0 to disable).
 Golden diff is opt-in: GOLDEN_DIR=/path|auto or GOLDEN_CHECK=1.
 Optional: SKIP_INSTALL=1 to re-validate without reinstall or post-install wait.
+Optional: RPM_BUILD=1 to remove stale daemon RPMs and run the debug rpmbuild first.
+Waits up to WAIT_FULL_SECONDS (default 900) for a full payload with metric rows.
 EOF
 }
 
@@ -209,6 +257,10 @@ main() {
   *) tier="slowtier1" ;;
   esac
 
+  if test "${RPM_BUILD:-0}" = "1"; then
+    build_debug_rpm "${rpm_topdir}" || return 1
+  fi
+
   caps="$(ensure_capabilities_json "${monitor_dir}" "${rpm_topdir}" "${dist_top}" "${py}" "${tier}")" \
     || return 1
   test -f "${caps}" || {
@@ -248,6 +300,8 @@ main() {
       echo "WARN: systemctl not found; skipping hpcperfstats.service active check" >&2
     fi
   fi
+
+  wait_full_payload "${shm_dir}" "${WAIT_FULL_SECONDS:-900}" || return 1
 
   slug="$("${py}" -c "import json; print(json.load(open('${caps}'))['capability_slug'])")"
   echo "capability_slug=${slug}"

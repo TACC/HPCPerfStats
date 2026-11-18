@@ -12,7 +12,7 @@ test -x "${verify}" \
 
 # Missing stash + missing BUILD → clear stash error (not sole BUILD-tree dependency).
 err="$(RPM_TOPDIR=/tmp/hps_missing_rpmbuild DIST_TOP=hpcperfstats-3.0 MONITOR_DIR="${ROOT}" \
-  SKIP_INSTALL=1 SKIP_SHM_LS=1 bash "${verify}" 2>&1)" || true
+  SKIP_INSTALL=1 SKIP_SHM_LS=1 WAIT_FULL_SECONDS=0 bash "${verify}" 2>&1)" || true
 echo "${err}" | grep -Fe 'debug-verify stash missing' >/dev/null \
   || { echo "expected debug-verify stash missing error, got: ${err}" >&2; exit 1; }
 echo "${err}" | grep -Fe 'RPM build tree missing' >/dev/null \
@@ -27,7 +27,7 @@ printf '%s\n' '{"capability_slug":"fixture-slug","tier":"slowtier1"}' \
   > "${tmpdir}/debug-verify/monitor-build-capabilities.json"
 touch "${tmpdir}/RPMS/aarch64/hpcperfstatsd-3.0-6.el10.aarch64.rpm"
 stash_out="$(RPM_TOPDIR="${tmpdir}" DIST_TOP=hpcperfstats-3.0 MONITOR_DIR="${ROOT}" \
-  SKIP_INSTALL=1 SKIP_SHM_LS=1 bash "${verify}" 2>&1)" || true
+  SKIP_INSTALL=1 SKIP_SHM_LS=1 WAIT_FULL_SECONDS=0 bash "${verify}" 2>&1)" || true
 echo "${stash_out}" | grep -Fe 'Using stashed capabilities' >/dev/null \
   || { echo "expected Using stashed capabilities with present stash, got: ${stash_out}" >&2; exit 1; }
 echo "${stash_out}" | grep -Fe 'RPM build tree missing' >/dev/null \
@@ -86,8 +86,8 @@ fi
 grep -q 'hpcperfstatsd-\[0-9\]' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must install main hpcperfstatsd RPM only" >&2; exit 1; }
 
-grep -q '\-\-replacepkgs' "${verify}" \
-  || { echo "rpm_debug_shm_verify.sh must reinstall with rpm --replacepkgs" >&2; exit 1; }
+grep -q '\-\-replacepkgs \-\-replacefiles' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must reinstall with rpm --replacepkgs --replacefiles" >&2; exit 1; }
 
 if grep -q 'systemctl restart' "${verify}"; then
   echo "rpm_debug_shm_verify.sh must not call systemctl restart (spec %post)" >&2; exit 1
@@ -143,5 +143,54 @@ grep -q 'GOLDEN_CHECK' "${verify}" \
 
 grep -q 'GOLDEN_CHECK:-0' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must keep golden opt-in (GOLDEN_CHECK default 0)" >&2; exit 1; }
+
+# --- Behavior (functions sourced; main only runs under the script's own name) ---
+fake="${tmpdir}/fake"
+mkdir -p "${fake}/bin" "${fake}/ws" "${fake}/shm" "${fake}/top/SPECS" "${fake}/top/RPMS/x86_64"
+# shellcheck disable=SC1090
+run_fn() { (PATH="${fake}/bin:/usr/bin:/bin"; . "${verify}"; "$@"); }
+
+# EL8: python3 is 3.6, so a python3.N on PATH wins over python3 when there is no repo venv.
+printf '#!/bin/sh\n' > "${fake}/bin/python3.9"
+printf '#!/bin/sh\n' > "${fake}/bin/python3"
+chmod +x "${fake}/bin/python3.9" "${fake}/bin/python3"
+got="$(run_fn resolve_python "${fake}/ws")"
+test "${got}" = "${fake}/bin/python3.9" \
+  || { echo "resolve_python picked ${got}, want python3.9 before python3" >&2; exit 1; }
+
+# Same-NVR rebuild: install passes --replacefiles (rpm refused the files otherwise, #77).
+printf '#!/bin/sh\necho "rpm $*" > "%s/rpm.args"\n' "${fake}" > "${fake}/bin/rpm"
+printf '#!/bin/sh\nexec "$@"\n' > "${fake}/bin/sudo"
+chmod +x "${fake}/bin/rpm" "${fake}/bin/sudo"
+touch "${fake}/top/RPMS/x86_64/hpcperfstatsd-3.1-1.el9.x86_64.rpm"
+run_fn install_main_daemon_rpm "${fake}/top" >/dev/null
+grep -q -- '--replacepkgs --replacefiles' "${fake}/rpm.args" \
+  || { echo "install must pass --replacefiles: $(cat "${fake}/rpm.args")" >&2; exit 1; }
+
+# RPM_BUILD=1: stale daemon RPMs are removed before rpmbuild, so a failed build installs none.
+printf 'Name: x\n' > "${fake}/top/SPECS/hpcperfstats.spec"
+printf '#!/bin/sh\nexit 1\n' > "${fake}/bin/rpmbuild"
+chmod +x "${fake}/bin/rpmbuild"
+if run_fn build_debug_rpm "${fake}/top" >/dev/null 2>&1; then
+  echo "build_debug_rpm must fail when rpmbuild fails" >&2; exit 1
+fi
+test ! -e "${fake}/top/RPMS/x86_64/hpcperfstatsd-3.1-1.el9.x86_64.rpm" \
+  || { echo "build_debug_rpm must remove stale daemon RPMs first" >&2; exit 1; }
+printf '#!/bin/sh\necho "$*" > "%s/rpmbuild.args"\n' "${fake}" > "${fake}/bin/rpmbuild"
+run_fn build_debug_rpm "${fake}/top" >/dev/null \
+  || { echo "build_debug_rpm must succeed when rpmbuild does" >&2; exit 1; }
+grep -q 'hpc_debug_build 1' "${fake}/rpmbuild.args" \
+  || { echo "build_debug_rpm must define hpc_debug_build 1" >&2; exit 1; }
+
+# Slow-tier restart: shm files exist before the first full sample; wait for a metric row.
+printf '\n1795000000.0 - h1\n' > "${fake}/shm/full"
+if WAIT_FULL_POLL_SECONDS=1 run_fn wait_full_payload "${fake}/shm" 2 >/dev/null 2>&1; then
+  echo "wait_full_payload must fail when full has no metric rows" >&2; exit 1
+fi
+printf 'host_cpu - 1 2 3\n' >> "${fake}/shm/full"
+run_fn wait_full_payload "${fake}/shm" 2 >/dev/null \
+  || { echo "wait_full_payload must pass once full has a metric row" >&2; exit 1; }
+run_fn wait_full_payload "${fake}/shm/missing" 0 \
+  || { echo "wait_full_payload 0 must not wait" >&2; exit 1; }
 
 echo "test_rpm_debug_shm_verify passed"
