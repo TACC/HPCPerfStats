@@ -3,6 +3,10 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <string.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "beegfs_ctl_parse.h"
 
@@ -118,14 +122,66 @@ static int argv_has(const struct beegfs_ctl_argv *av, const char *tok)
   return 0;
 }
 
+/* Create a temp dir holding an executable stand-in beegfs-ctl. */
+static void make_ctl_dir(char *dir, size_t dir_sz, char *ctl, size_t ctl_sz)
+{
+  const char *tmp = getenv("TMPDIR");
+  int fd;
+
+  snprintf(dir, dir_sz, "%s/beegfs-ctl-dir-XXXXXX", tmp != NULL ? tmp : "/tmp");
+  assert(mkdtemp(dir) != NULL);
+  snprintf(ctl, ctl_sz, "%s/beegfs-ctl", dir);
+  fd = open(ctl, O_CREAT | O_WRONLY | O_EXCL, 0700);
+  assert(fd >= 0);
+  close(fd);
+}
+
+/* beegfs-ctl is found on the search PATH wherever it is installed (LS6 beegfs-utils 7.3.4
+ * has none in /usr/sbin); argv[0] is the resolved real path, and an untrusted, non-executable
+ * or missing file fails the build instead of being exec'd. */
+static void test_clientstats_argv_ctl_discovery(void)
+{
+  struct beegfs_ctl_argv av;
+  char dir[512], ctl[600], link_dir[512], link_ctl[600], real[PATH_MAX], search[1300];
+  const char *conf = "/etc/beegfs/beegfs-client.conf";
+
+  make_ctl_dir(dir, sizeof(dir), ctl, sizeof(ctl));
+  assert(realpath(ctl, real) != NULL);
+  snprintf(search, sizeof(search), "relative/dir::%s", dir);
+  beegfs_ctl_test_set_search_path(search);
+  assert(beegfs_ctl_build_clientstats_argv(&av, "meta", conf, 0) > 0);
+  assert(strcmp(av.argv[0], real) == 0);
+
+  make_ctl_dir(link_dir, sizeof(link_dir), link_ctl, sizeof(link_ctl));
+  assert(unlink(link_ctl) == 0 && symlink(ctl, link_ctl) == 0);
+  beegfs_ctl_test_set_search_path(link_dir);
+  assert(beegfs_ctl_build_clientstats_argv(&av, "meta", conf, 0) > 0);
+  assert(strcmp(av.argv[0], real) == 0);
+
+  assert(chmod(ctl, 0720) == 0);
+  beegfs_ctl_test_set_search_path(dir);
+  assert(beegfs_ctl_build_clientstats_argv(&av, "meta", conf, 0) < 0);
+  assert(chmod(ctl, 0600) == 0);
+  assert(beegfs_ctl_build_clientstats_argv(&av, "meta", conf, 0) < 0);
+  assert(chmod(ctl, 0700) == 0);
+  assert(beegfs_ctl_build_clientstats_argv(&av, "meta", conf, 0) > 0);
+  assert(unlink(ctl) == 0);
+  assert(beegfs_ctl_build_clientstats_argv(&av, "meta", conf, 0) < 0);
+
+  assert(unlink(link_ctl) == 0 && rmdir(link_dir) == 0 && rmdir(dir) == 0);
+  beegfs_ctl_test_set_search_path(NULL);
+}
+
 static void test_clientstats_argv_equals_form(void)
 {
   struct beegfs_ctl_argv av;
+  char dir[512], ctl[600];
   int i;
 
+  make_ctl_dir(dir, sizeof(dir), ctl, sizeof(ctl));
+  beegfs_ctl_test_set_search_path(dir);
   assert(beegfs_ctl_build_clientstats_argv(&av, "storage", "/etc/beegfs/beegfs-client.conf", 1) >
          0);
-  assert(av.argv[0] != NULL && strcmp(av.argv[0], "/usr/sbin/beegfs-ctl") == 0);
   assert(argv_has(&av, "--nodetype=storage"));
   assert(argv_has(&av, "--cfgFile=/etc/beegfs/beegfs-client.conf"));
   assert(argv_has(&av, "--rwunit=B"));
@@ -146,6 +202,8 @@ static void test_clientstats_argv_equals_form(void)
   assert(beegfs_path_is_safe("etc/beegfs/beegfs-client.conf") == 0);
   assert(beegfs_path_is_safe("/etc/beegfs/../../tmp/evil.conf") == 0);
   assert(beegfs_path_is_safe("/etc/beegfs/./client.conf") == 0);
+  assert(unlink(ctl) == 0 && rmdir(dir) == 0);
+  beegfs_ctl_test_set_search_path(NULL);
 }
 
 static void test_idents_add_ib_aliases(void)
@@ -175,6 +233,7 @@ int main(void)
   test_b_rd_no_scale();
   test_sum_parse_rejected();
   test_clientstats_argv_equals_form();
+  test_clientstats_argv_ctl_discovery();
   test_idents_add_ib_aliases();
   puts("test_beegfs_ctl_parse: OK");
   return 0;

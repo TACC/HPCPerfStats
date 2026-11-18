@@ -8,6 +8,7 @@
 
 # --- Only tests call these (test hooks, parsers and helpers exercised by tests/) ---
 arm_core_perf_event_name
+beegfs_ctl_test_set_search_path
 beegfs_test_set_mounts_path
 collect_tier_effective_phase
 dcgm_gpu_dyn_loaded

@@ -6,6 +6,70 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <limits.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+/* Search list when the daemon environment has no PATH (systemd always sets one). */
+#define BEEGFS_CTL_DEFAULT_SEARCH "/usr/sbin:/usr/bin:/sbin:/bin"
+
+static const char *g_beegfs_ctl_test_search;
+static char g_beegfs_ctl_path[PATH_MAX];
+
+void beegfs_ctl_test_set_search_path(const char *dirs)
+{
+  g_beegfs_ctl_test_search = dirs;
+}
+
+/* 1 when `path` is owned by root (or this process) and not group/other writable. */
+static int beegfs_ctl_owner_trusted(const char *path, struct stat *st)
+{
+  return stat(path, st) == 0 && (st->st_uid == 0 || st->st_uid == geteuid()) &&
+         (st->st_mode & (S_IWGRP | S_IWOTH)) == 0;
+}
+
+/* Resolve `cand` (symlinks followed) into `out` when the target and its directory are
+ * trusted and the target is an executable regular file. */
+static int beegfs_ctl_resolve_trusted(const char *cand, char *out)
+{
+  struct stat st;
+  char dir[PATH_MAX];
+  char *slash;
+
+  if (realpath(cand, out) == NULL || !beegfs_ctl_owner_trusted(out, &st) || !S_ISREG(st.st_mode) ||
+      access(out, X_OK) != 0)
+    return 0;
+  snprintf(dir, sizeof(dir), "%s", out);
+  slash = strrchr(dir, '/');
+  if (slash == NULL)
+    return 0;
+  slash[slash == dir ? 1 : 0] = '\0';
+  return beegfs_ctl_owner_trusted(dir, &st);
+}
+
+/* beegfs-ctl from the search PATH (absolute components only), re-verified on every call.
+ * Exec uses the resolved real path, never a PATH lookup. */
+static const char *beegfs_ctl_find(void)
+{
+  const char *dirs = g_beegfs_ctl_test_search;
+  char cand[PATH_MAX];
+
+  if (dirs == NULL)
+    dirs = getenv("PATH");
+  if (dirs == NULL || dirs[0] == '\0')
+    dirs = BEEGFS_CTL_DEFAULT_SEARCH;
+  while (*dirs != '\0') {
+    size_t len = strcspn(dirs, ":");
+
+    if (len > 0 && dirs[0] == '/' &&
+        snprintf(cand, sizeof(cand), "%.*s/beegfs-ctl", (int)len, dirs) < (int)sizeof(cand) &&
+        beegfs_ctl_resolve_trusted(cand, g_beegfs_ctl_path))
+      return g_beegfs_ctl_path;
+    dirs += len + (dirs[len] == ':');
+  }
+  g_beegfs_ctl_path[0] = '\0';
+  return NULL;
+}
 
 int beegfs_fstype_is_beegfs(const char *fstype)
 {
@@ -271,8 +335,9 @@ int beegfs_ctl_build_clientstats_argv(struct beegfs_ctl_argv *out, const char *n
                                       const char *cfgfile, int rwunit_b)
 {
   int ai = 0;
+  const char *ctl = beegfs_ctl_find();
 
-  if (out == NULL || nodetype == NULL || cfgfile == NULL)
+  if (out == NULL || nodetype == NULL || cfgfile == NULL || ctl == NULL)
     return -1;
   if (strcmp(nodetype, "storage") != 0 && strcmp(nodetype, "meta") != 0)
     return -1;
@@ -287,7 +352,7 @@ int beegfs_ctl_build_clientstats_argv(struct beegfs_ctl_argv *out, const char *n
   if (rwunit_b)
     snprintf(out->rwunit_eq, sizeof(out->rwunit_eq), "%s", "--rwunit=B");
 
-  out->argv[ai++] = "/usr/sbin/beegfs-ctl";
+  out->argv[ai++] = (char *)ctl;
   out->argv[ai++] = "--clientstats";
   out->argv[ai++] = "--interval=0";
   out->argv[ai++] = "--perinterval";

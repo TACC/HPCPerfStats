@@ -89,6 +89,10 @@ int beegfs_path_is_safe(const char *path);
 int beegfs_ctl_build_clientstats_argv(struct beegfs_ctl_argv *out, const char *nodetype,
                                       const char *cfgfile, int rwunit_b);
 
+/*! Test hook: search `dirs` (colon-separated) for beegfs-ctl instead of $PATH; NULL
+ *  restores $PATH. */
+void beegfs_ctl_test_set_search_path(const char *dirs);
+
 /*! Append `name-ib` aliases for hostname-like idents (not IPv4, not already *-ib).
  *  @return new count (may equal n if full or nothing to add) */
 size_t beegfs_idents_add_ib_aliases(char idents[][BEEGFS_IDENT_LEN], size_t n, size_t max_n);
