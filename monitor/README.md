@@ -513,7 +513,7 @@ before the RPM build that carries these keys. `scripts/canary_counter_check.sh` 
 | `lustre_mdc` / `lustre_osc` sources | Prefer modern `md_stats` / `osc_stats`, fall back to legacy `.../stats` |
 | `lustre_osc` | Built and registered when `--enable-lustre` (previously source-only) |
 | `lustre_llite` KEYS | Renamed to usable `vfs_*` names; capacity gauges `fs_bytes_*` / `fs_files_*` from `/sys/fs/lustre/llite` |
-| Legacy proc llite | Still parsed; opcodes emitted under **new** KEY names only |
+| llite opcode `stats` | `/proc/fs/lustre/llite/<inst>/stats` when that dir exists, else debugfs `/sys/kernel/debug/lustre/llite/<inst>/stats` (Lustre 2.15 moved it; root only); with neither, the `vfs_*` keys get the errno code (`NOT_PRESENT`) instead of staying `NOT_UPDATED`. Opcodes are emitted under the **new** KEY names only |
 | Consumer follow-up | Separate plan: `.cursor/plans/lustre-llite-consumer-followup.plan.md` (ship consumer dual-read first or same release; do not deploy dashboards that hard-code old KEY strings without that work) |
 
 Old→new llite event map lives under `type_events.lustre_llite` in

@@ -34,6 +34,7 @@ likwid_rapl_collect_path
 likwid_rapl_is_supported_processor
 likwid_rapl_pwr_amd_eventset
 likwid_rapl_pwr_intel_eventset
+lustre_llite_test_set_roots
 lustre_parse_kv_ull
 monitor_cli_print_usage
 monitor_release_fail_reset_for_test

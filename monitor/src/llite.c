@@ -1,8 +1,10 @@
-/* lustre_llite - VFS client opcodes (proc) + capacity gauges (sysfs). */
+/* lustre_llite - VFS client opcodes (procfs, or debugfs on Lustre 2.15+) + capacity gauges
+ * (sysfs). */
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "stats.h"
 #include "fileio.h"
 #include "trace.h"
@@ -14,7 +16,12 @@
 #include "sys_iter.h"
 
 #define LLITE_PROC_PATH "/proc/fs/lustre/llite"
+#define LLITE_DEBUGFS_PATH "/sys/kernel/debug/lustre/llite"
 #define LLITE_SYSFS_PATH "/sys/fs/lustre/llite"
+
+static const char *g_llite_proc = LLITE_PROC_PATH;
+static const char *g_llite_debugfs = LLITE_DEBUGFS_PATH;
+static const char *g_llite_sysfs = LLITE_SYSFS_PATH;
 
 struct llite_opcode_map {
   const char *src;
@@ -180,14 +187,28 @@ void lustre_llite_collect_obd(struct stats *stats, const char *proc_dir, const c
     llite_collect_sysfs_capacity(stats, sys_dir, d_name);
 }
 
+void lustre_llite_test_set_roots(const char *proc, const char *debugfs, const char *sysfs)
+{
+  g_llite_proc = proc != NULL ? proc : LLITE_PROC_PATH;
+  g_llite_debugfs = debugfs != NULL ? debugfs : LLITE_DEBUGFS_PATH;
+  g_llite_sysfs = sysfs != NULL ? sysfs : LLITE_SYSFS_PATH;
+}
+
+/* One collect: opcode stats come from stats_dir; a sysfs (capacity) instance seen when the
+ * stats_dir walk failed reads stats_dir too, so its opcode keys get the errno code. */
+struct llite_walk {
+  struct stats_type *type;
+  const char *stats_dir;
+  int stats_ok;
+};
+
 static void llite_each(const char *base, const char *name, void *ctx)
 {
-  struct stats_type *type = (struct stats_type *)ctx;
+  const struct llite_walk *w = ctx;
   const char *mnt;
   struct stats *stats;
-  int is_sysfs;
 
-  if (type == NULL || name == NULL || base == NULL)
+  if (w == NULL || name == NULL || base == NULL)
     return;
 
   mnt = lustre_obd_to_mnt(name);
@@ -196,21 +217,27 @@ static void llite_each(const char *base, const char *name, void *ctx)
 
   TRACE("d_name `%s', mnt `%s' (base `%s')\n", name, mnt, base);
 
-  stats = get_current_stats(type, mnt);
+  stats = get_current_stats(w->type, mnt);
   if (stats == NULL)
     return;
 
-  is_sysfs = (strcmp(base, LLITE_SYSFS_PATH) == 0);
-  lustre_llite_collect_obd(stats, is_sysfs ? NULL : LLITE_PROC_PATH,
-                           is_sysfs ? LLITE_SYSFS_PATH : NULL, name);
+  if (base == w->stats_dir)
+    lustre_llite_collect_obd(stats, base, NULL, name);
+  else
+    lustre_llite_collect_obd(stats, w->stats_ok ? NULL : w->stats_dir, base, name);
 }
 
 static void llite_collect(struct stats_type *type)
 {
+  struct llite_walk w = {type, g_llite_proc, 0};
+
   if (type == NULL)
     return;
-  sys_iter_for_each(LLITE_PROC_PATH, llite_each, type);
-  sys_iter_for_each(LLITE_SYSFS_PATH, llite_each, type);
+  /* Lustre 2.15 moved the llite stats file from procfs to debugfs. */
+  if (access(g_llite_proc, F_OK) != 0)
+    w.stats_dir = g_llite_debugfs;
+  w.stats_ok = sys_iter_for_each(w.stats_dir, llite_each, &w) == 0;
+  sys_iter_for_each(g_llite_sysfs, llite_each, &w);
 }
 
 struct stats_type llite_stats_type = {

@@ -26,5 +26,9 @@
  * <sys_dir>/<d_name>/ (either dir may be NULL to skip that half). */
 void lustre_llite_collect_obd(struct stats *stats, const char *proc_dir, const char *sys_dir,
                               const char *d_name);
+/* Test seam: read llite instances from these roots instead of /proc/fs/lustre/llite,
+ * /sys/kernel/debug/lustre/llite and /sys/fs/lustre/llite (NULL restores each). The pointers
+ * are kept, so the strings must outlive the collects. */
+void lustre_llite_test_set_roots(const char *proc, const char *debugfs, const char *sysfs);
 
 #endif
