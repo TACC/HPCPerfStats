@@ -69271,12 +69271,14 @@
       "sig_annotated": true
     },
     {
-      "doc_ok": true,
+      "doc_ok": false,
       "excluded": false,
       "excluded_reason": "",
       "has_docstring": true,
       "is_trivial_dunder": false,
-      "issues": [],
+      "issues": [
+        "missing_attributes_entry:_PCRE_META"
+      ],
       "kind": "module",
       "lineno": 1,
       "name": "<module>",
@@ -69293,10 +69295,10 @@
       "is_trivial_dunder": false,
       "issues": [],
       "kind": "function",
-      "lineno": 35,
-      "name": "_template_to_location_prefix",
+      "lineno": 47,
+      "name": "_escape_literal",
       "path": "services-conf/write_nginx_api_route_allowlist_include.py",
-      "qualname": "_template_to_location_prefix",
+      "qualname": "_escape_literal",
       "repo": "HPCPerfStats",
       "sig_annotated": true
     },
@@ -69308,10 +69310,10 @@
       "is_trivial_dunder": false,
       "issues": [],
       "kind": "function",
-      "lineno": 61,
-      "name": "location_prefixes_from_api_templates",
+      "lineno": 64,
+      "name": "_template_to_location_head",
       "path": "services-conf/write_nginx_api_route_allowlist_include.py",
-      "qualname": "location_prefixes_from_api_templates",
+      "qualname": "_template_to_location_head",
       "repo": "HPCPerfStats",
       "sig_annotated": true
     },
@@ -69323,7 +69325,22 @@
       "is_trivial_dunder": false,
       "issues": [],
       "kind": "function",
-      "lineno": 97,
+      "lineno": 102,
+      "name": "location_heads_from_api_templates",
+      "path": "services-conf/write_nginx_api_route_allowlist_include.py",
+      "qualname": "location_heads_from_api_templates",
+      "repo": "HPCPerfStats",
+      "sig_annotated": true
+    },
+    {
+      "doc_ok": true,
+      "excluded": false,
+      "excluded_reason": "",
+      "has_docstring": true,
+      "is_trivial_dunder": false,
+      "issues": [],
+      "kind": "function",
+      "lineno": 130,
       "name": "render_nginx_api_route_allowlist",
       "path": "services-conf/write_nginx_api_route_allowlist_include.py",
       "qualname": "render_nginx_api_route_allowlist",
@@ -69338,7 +69355,7 @@
       "is_trivial_dunder": false,
       "issues": [],
       "kind": "function",
-      "lineno": 128,
+      "lineno": 161,
       "name": "write_nginx_api_route_allowlist_include",
       "path": "services-conf/write_nginx_api_route_allowlist_include.py",
       "qualname": "write_nginx_api_route_allowlist_include",
@@ -69353,7 +69370,7 @@
       "is_trivial_dunder": false,
       "issues": [],
       "kind": "function",
-      "lineno": 159,
+      "lineno": 192,
       "name": "_default_templates",
       "path": "services-conf/write_nginx_api_route_allowlist_include.py",
       "qualname": "_default_templates",
@@ -69368,7 +69385,7 @@
       "is_trivial_dunder": false,
       "issues": [],
       "kind": "function",
-      "lineno": 194,
+      "lineno": 227,
       "name": "main",
       "path": "services-conf/write_nginx_api_route_allowlist_include.py",
       "qualname": "main",
@@ -70178,7 +70195,7 @@
     "django_migrations": 100,
     "docs_scratch": 52,
     "monitor_read_only": 760,
-    "test_module": 10793,
+    "test_module": 10804,
     "test_tree": 236
   },
   "roots": [
@@ -70186,7 +70203,7 @@
     "/data/HPCPerfStats/HPCPerfStats/hpcperfstats-tools"
   ],
   "summary": {
-    "excluded": 12324,
+    "excluded": 12335,
     "excluded_by_reason": {
       "codon_compile_unit": 141,
       "codon_experiment": 67,
@@ -70194,13 +70211,13 @@
       "django_migrations": 100,
       "docs_scratch": 52,
       "monitor_read_only": 760,
-      "test_module": 10793,
+      "test_module": 10804,
       "test_tree": 236
     },
-    "in_scope": 4678,
-    "in_scope_failed": 0,
+    "in_scope": 4679,
+    "in_scope_failed": 1,
     "in_scope_ok": 4678,
-    "total_defs": 17002
+    "total_defs": 17014
   },
   "version": 1
 }

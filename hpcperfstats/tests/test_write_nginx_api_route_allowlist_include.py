@@ -29,18 +29,37 @@ def _load_writer():
   return mod
 
 
-def test_location_prefixes_collapse_jobs_converters():
+def test_location_heads_exact_and_anchored_regex():
   mod = _load_writer()
-  prefixes = mod.location_prefixes_from_api_templates(
+  heads = mod.location_heads_from_api_templates(
     [
       "api/jobs/",
       "api/jobs/<str:pk>/",
       "api/jobs/<str:pk>/plots/",
+      "api/jobs/<int:n>/x.json",
       "api/jobs/filter_options/",
       "api/schema/",
+      "login/",
     ]
   )
-  assert prefixes == ["/api/jobs/", "/api/schema/"]
+  assert heads == [
+    "= /api/jobs/",
+    "= /api/jobs/filter_options/",
+    "= /api/schema/",
+    "~ ^/api/jobs/[0-9]+/x\\.json$",
+    "~ ^/api/jobs/[^/]+/$",
+    "~ ^/api/jobs/[^/]+/plots/$",
+  ]
+
+
+def test_unknown_converter_raises():
+  mod = _load_writer()
+  try:
+    mod.location_heads_from_api_templates(["api/x/<custom:v>/"])
+  except ValueError as exc:
+    assert "custom" in str(exc)
+  else:
+    raise AssertionError("expected ValueError for unknown converter")
 
 
 def test_empty_templates_raises_on_render():
@@ -53,54 +72,62 @@ def test_empty_templates_raises_on_render():
     raise AssertionError("expected ValueError for empty allowlist")
 
 
+def _location_matches(head, path):
+  if head.startswith("= "):
+    return path == head[2:]
+  return re.fullmatch(head[2:].lstrip("^").rstrip("$"), path) is not None
+
+
 def test_committed_inc_matches_generator_from_catalog():
   mod = _load_writer()
   committed = (
     _repo_root() / "services-conf" / "nginx-api-route-allowlist.inc"
   ).read_text(encoding="utf-8")
   expected = mod.render_nginx_api_route_allowlist(
-    mod.location_prefixes_from_api_templates(EXPECTED_ROUTE_TEMPLATES)
+    mod.location_heads_from_api_templates(EXPECTED_ROUTE_TEMPLATES)
   )
   assert committed == expected
 
 
-def test_all_api_catalog_templates_covered_by_prefixes():
+def test_all_api_catalog_templates_covered_by_locations():
   mod = _load_writer()
-  prefixes = mod.location_prefixes_from_api_templates(EXPECTED_ROUTE_TEMPLATES)
-  assert prefixes, "allowlist must not be empty"
+  heads = mod.location_heads_from_api_templates(EXPECTED_ROUTE_TEMPLATES)
   api_templates = [t for t in EXPECTED_ROUTE_TEMPLATES if t.startswith("api/")]
-  assert api_templates
+  assert heads and api_templates
   for template in api_templates:
-    path = "/" + template
-    # Strip converters for coverage check against collapsed prefixes.
-    path_no_conv = re.sub(r"<[^>]+>", "", path)
-    path_no_conv = path_no_conv.replace("//", "/")
-    covered = any(
-      path_no_conv.startswith(prefix) or path.startswith(prefix)
-      for prefix in prefixes
-    )
-    assert covered, f"{template!r} not covered by {prefixes}"
+    path = "/" + re.sub(r"<[^>]+>", "123", template)
+    assert any(_location_matches(h, path) for h in heads), template
 
 
-def test_probe_api_dot_env_not_covered_by_prefixes():
+def test_probe_paths_under_real_api_routes_not_covered():
+  """Regression: ^~ /api/session/ forwarded /api/session/new to Django."""
   mod = _load_writer()
-  prefixes = mod.location_prefixes_from_api_templates(EXPECTED_ROUTE_TEMPLATES)
-  probe = "/api/.env"
-  assert not any(probe.startswith(prefix) for prefix in prefixes)
-  # Positive control: a real job API path is covered by /api/jobs/.
-  assert any("/api/jobs/abc/".startswith(prefix) for prefix in prefixes)
+  heads = mod.location_heads_from_api_templates(EXPECTED_ROUTE_TEMPLATES)
+  for probe in (
+    "/api/.env",
+    "/api/session/new",
+    "/api/session/properties",
+    "/api/schema/x",
+    "/api/jobs/1/2/3/",
+    "/api/jobs/abc",
+  ):
+    assert not any(_location_matches(h, probe) for h in heads), probe
+  # Positive controls.
+  for ok in ("/api/session/", "/api/jobs/abc/", "/api/jobs/abc/plots/"):
+    assert any(_location_matches(h, ok) for h in heads), ok
 
 
 def test_write_include_round_trip(tmp_path):
   mod = _load_writer()
   out = tmp_path / "nginx-api-route-allowlist.inc"
-  prefixes = mod.write_nginx_api_route_allowlist_include(
+  heads = mod.write_nginx_api_route_allowlist_include(
     templates=EXPECTED_ROUTE_TEMPLATES,
     out_path=out,
   )
   text = out.read_text(encoding="utf-8")
-  assert "location ^~ /api/jobs/" in text
+  assert "location = /api/jobs/ {" in text
+  assert "location ~ ^/api/jobs/[^/]+/$ {" in text
   assert "proxy_pass http://django_server;" in text
-  assert prefixes == mod.location_prefixes_from_api_templates(
+  assert heads == mod.location_heads_from_api_templates(
     EXPECTED_ROUTE_TEMPLATES
   )

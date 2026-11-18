@@ -1,5 +1,6 @@
 """Regression: WSGI must not answer STATIC_URL; nginx serves /static/ in production."""
 
+import re
 from pathlib import Path
 
 from django.test import Client
@@ -240,17 +241,17 @@ def test_nginx_static_files_conf_allowlists_django_prefixes_and_default_404():
     "include /etc/nginx/nginx-api-route-allowlist.inc;",
     "\nlocation /api/ {\n",
     "location = /robots.txt",
-    "location ^~ /csp-report/",
-    "location ^~ /api-key/",
-    "location ^~ /admin_monitor/",
-    "location ^~ /login/",
-    "location ^~ /test-login/",
+    "location = /csp-report/",
+    "location = /api-key/",
+    "location = /admin_monitor/",
+    "location = /login/",
+    "location = /test-login/",
     "location = /login_prompt",
     "location = /logout",
-    "location ^~ /logout/",
+    "location = /logout/",
     "location = /machine/logout",
     "location = /machine/logout/",
-    "location ^~ /oauth_callback/",
+    "location = /oauth_callback/",
     "location / {",
     "return 404;",
   ):
@@ -270,18 +271,18 @@ _GET_ONLY_GATE = "if ($request_method !~ ^(GET|HEAD)$) { return 405; }"
 # scanner POSTs never reach Gunicorn (they used to trip Django CSRF 403s).
 _GET_ONLY_DJANGO_LOCATIONS = (
   "location = / {",
-  "location ^~ /api-key/ {",
-  "location ^~ /admin_monitor/ {",
-  "location ^~ /login/ {",
+  "location = /api-key/ {",
+  "location = /admin_monitor/ {",
+  "location = /login/ {",
   "location = /login_prompt {",
-  "location ^~ /logout/ {",
-  "location ^~ /oauth_callback/ {",
+  "location = /logout/ {",
+  "location = /oauth_callback/ {",
 )
 
 # Routes that legitimately accept POST must stay ungated.
 _POST_DJANGO_LOCATIONS = (
-  "location ^~ /csp-report/ {",
-  "location ^~ /test-login/ {",
+  "location = /csp-report/ {",
+  "location = /test-login/ {",
 )
 
 
@@ -317,18 +318,14 @@ def test_nginx_get_only_django_locations_reject_other_methods_at_edge():
 
 def _nginx_location_head_for_root_route(route):
   """Map a root ``urlpatterns`` route string to its nginx location header."""
-  if route == "":
-    return "location = / {"
-  if route.endswith("/"):
-    return f"location ^~ /{route} {{"
   return f"location = /{route} {{"
 
 
 def test_every_root_django_route_has_an_nginx_method_decision():
   """New root routes are not gated automatically: force a GET-only/POST choice.
 
-  Add the route's nginx location to ``_GET_ONLY_DJANGO_LOCATIONS`` (with
-  ``limit_except GET { deny all; }``) or ``_POST_DJANGO_LOCATIONS``.
+  Add the route's exact nginx location to ``_GET_ONLY_DJANGO_LOCATIONS`` (with
+  the ``$request_method`` 405 gate) or ``_POST_DJANGO_LOCATIONS``.
   Nested ``api/`` is covered by the generated allowlist and stays ungated.
   """
   from django.urls import get_resolver
@@ -379,8 +376,61 @@ def test_nginx_django_proxy_common_hides_upstream_security_headers():
   allowlist = (_SERVICES / "nginx-api-route-allowlist.inc").read_text(
     encoding="utf-8"
   )
-  assert "location ^~ /api/jobs/" in allowlist
+  assert "location = /api/jobs/ {" in allowlist
   assert "proxy_pass http://django_server;" in allowlist
+
+
+def test_nginx_proxies_django_root_routes_by_exact_match_only():
+  """Regression: ^~ /login/ forwarded /login/index.php etc. to Django (404 log spam)."""
+  conf = (_SERVICES / "nginx-static-files.conf").read_text(encoding="utf-8")
+  allowlist = (_SERVICES / "nginx-api-route-allowlist.inc").read_text(
+    encoding="utf-8"
+  )
+  for text in (conf, allowlist):
+    for block in text.split("\nlocation ")[1:]:
+      head = block.split("{", 1)[0].strip()
+      if "proxy_pass http://django_server;" in block.split("\n}\n", 1)[0]:
+        assert head.startswith(("= ", "~ ^")), head
+        assert not head.startswith("~ ^") or head.endswith("$"), head
+
+
+_RAW_URI_GUARD = (
+  'if ($request_uri ~ "^[^?]*(//|/\\.\\.?(/|\\?|$)|\\x5c|;|'
+  '%(2[eEfF]|5[cC]|[01][0-9a-fA-F]|7[fF]))") {\n    return 404;\n}\n'
+)
+
+
+def test_nginx_rejects_non_normalized_raw_uris_before_location_match():
+  """Regression: //oast.me//.. normalized to / and was proxied raw to Django."""
+  conf = (_SERVICES / "nginx-static-files.conf").read_text(encoding="utf-8")
+  assert _RAW_URI_GUARD in conf
+  # Server-level: must precede every location so it runs before matching.
+  assert conf.index(_RAW_URI_GUARD) < conf.index("\nlocation ")
+  pattern = re.compile(_RAW_URI_GUARD.split('"', 2)[1].replace("\\x5c", "\\\\"))
+  for probe in (
+    "//",
+    "///",
+    "//oast.me//..",
+    "/%5C%5Coast.me//..",
+    "/%0ASet-Cookie:crlfinjection/..",
+    "/actuator/prometheus;/../../",
+    "/%3Cstyle%20onload=alert%60document.domain%60;%3E../../",
+    "/login/./",
+    "/api/jobs/%2e%2e/",
+    "/a\\b",
+  ):
+    assert pattern.search(probe), probe
+  for ok in (
+    "/",
+    "/?next=//evil",
+    "/login/?next=/machine/",
+    "/oauth_callback/?code=a;b&state=..",
+    "/api/jobs/123/plots/",
+    "/static/frontend/_next/static/chunks/app-1a2b.js",
+    "/machine/job/123",
+    "/.well-known/x",
+  ):
+    assert not pattern.search(ok), ok
 
 
 def test_nginx_conf_completes_ocsp_stapling_contract():

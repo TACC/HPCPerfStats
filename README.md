@@ -462,7 +462,12 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    Static/media routing is split into a reusable include mounted at
    **`services-conf/nginx-static-files.conf`**; nginx serves **`/static/`** and
    **`/media/`** directly, shells the SPA under **`/machine/`** and **`/pub/`**,
-   and proxies only an explicit Django URL prefix list (shared **`proxy_*`**
+   and proxies only an explicit list of Django routes, one exact
+   (**`location = /login/`**) or anchored-regex location per route, never a
+   **`^~`** prefix, so probes such as **`/login/index.php`** 404 at the edge.
+   A server-level guard also 404s raw URIs that are not normalized (**`//`**,
+   dot segments, **`\`**, **`;`**, encoded **`. / \`** or control bytes),
+   because nginx matches the normalized path but forwards the raw one (shared **`proxy_*`**
    directives in **`services-conf/nginx-django-proxy-common.inc`**; nested
    **`/api/`** locations come from generated
    **`services-conf/nginx-api-route-allowlist.inc`**, regenerated from
