@@ -45,6 +45,7 @@ canonical layout.
    | Rebuild shared hpcperfstats image; down proxy; ``up -d web proxy pipeline`` (db/valkey/rabbitmq stay up; proxy image not rebuilt); does **not** set pipeline ``memory.high`` | `./scripts/rebuild_pipeline.sh` |
    | Full stack: ``podman build`` web/proxy/db_pg18 (ThinLTO + CPython ``--enable-optimizations``); compose down + ``up -d --no-build`` (default profile — the ``db_pg18`` container is built but **not** started); does **not** set pipeline ``memory.high`` | `./scripts/rebuild_full_site.sh` |
    | Detached recreate of web+pipeline only (no image build) | `./scripts/recreate_web_pipeline.sh` |
+   | Rebuild only the proxy image (nginx / OpenSSL pin bumps) while the old proxy serves, then recreate only ``proxy`` (``--no-deps``; nothing else stops); checks the container runs the new image and ``nginx -t`` | `./scripts/rebuild_proxy.sh` |
    | Rebuild just the app and keep persistent services running | `docker compose stop -t 30 web proxy && docker compose stop -t 480 pipeline && docker compose up --build -d web pipeline && docker compose start proxy` |
 
    **`./scripts/rebuild_pipeline.sh`** rebuilds **`hpcperfstats`**, preserves live SPA, takes **proxy** down (same image), then starts **web**, **proxy**, and **pipeline** through the shared Podman adapter. Leaves **db** / **valkey** / **rabbitmq** running. After Let's Encrypt renew or changing **`server=`** / TLS source path, run **`podman-compose -p hpcperfstats restart proxy`**.
