@@ -3,6 +3,7 @@
  * rendered "sentinels" lines, the /dev/shm files, and the debug_fault_inject table. */
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -160,11 +161,20 @@ static void test_fault_inject_table(void)
   assert(stats_fault_inject_fired(5) == 0);
 }
 
+/* Opens dfd/name without following links and asserts mode 0600 on the opened fd. */
+static int open_mode_0600(int dfd, const char *name)
+{
+  struct stat st;
+  int fd = openat(dfd, name, O_RDONLY | O_NOFOLLOW);
+
+  assert(fd >= 0 && fstat(fd, &st) == 0 && (st.st_mode & 0777) == 0600);
+  return fd;
+}
+
 static void test_shm_files(void)
 {
   char dir[96];
-  char path[160];
-  struct stat st;
+  int dfd;
   char *buf;
   FILE *f;
   char got[4096];
@@ -179,9 +189,9 @@ static void test_shm_files(void)
   stats_buffer_debug_shm_init();
   stats_sentinel_debug_write_shm();
 
-  snprintf(path, sizeof(path), "%s/sentinels", dir);
-  assert(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
-  f = fopen(path, "r");
+  dfd = open(dir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+  assert(dfd >= 0);
+  f = fdopen(open_mode_0600(dfd, "sentinels"), "r");
   assert(f != NULL);
   n = fread(got, 1, sizeof(got) - 1, f);
   got[n] = '\0';
@@ -189,11 +199,11 @@ static void test_shm_files(void)
   buf = render();
   assert(strcmp(got, buf) == 0);
   free(buf);
-  assert(unlink(path) == 0);
+  assert(unlinkat(dfd, "sentinels", 0) == 0);
 
-  snprintf(path, sizeof(path), "%s/sentinel_sites", dir);
-  assert(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
-  assert(unlink(path) == 0);
+  close(open_mode_0600(dfd, "sentinel_sites"));
+  assert(unlinkat(dfd, "sentinel_sites", 0) == 0);
+  close(dfd);
   assert(rmdir(dir) == 0);
 }
 
