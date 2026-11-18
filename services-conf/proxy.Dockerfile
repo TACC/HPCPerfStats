@@ -16,8 +16,8 @@ COPY services-conf/clang_march_native_probe.sh /usr/local/lib/hpcperfstats/clang
 RUN chmod +x /usr/local/lib/hpcperfstats/bake_clang_flags.sh /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # nginx and /opt deps: unified -O2 ThinLTO bake (+ ThinLTO via bake_clang_flags.sh).
-ARG NGINX_VERSION=1.31.8
-ARG NGINX_SHA256=0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1
+ARG NGINX_VERSION=1.31.9
+ARG NGINX_SHA256=a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad
 ARG PCRE2_VERSION=10.49
 ARG PCRE2_SHA256=53c156e1ba416a20da8e65395daa132da0d80e76910424caca3fcdae7831d384
 ARG OPENSSL_VERSION=3.5.9
@@ -381,7 +381,7 @@ BASH
 # ---------------------------------------------------------------------------
 FROM alpine:${ALPINE_VERSION}
 
-ARG NGINX_VERSION=1.31.8
+ARG NGINX_VERSION=1.31.9
 
 RUN apk add --no-cache \
     ca-certificates \

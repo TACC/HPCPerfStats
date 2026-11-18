@@ -695,10 +695,10 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   """Regression: proxy must SHA-pin source nginx/jemalloc/zlib-ng/OpenSSL/brotli; no apk edge nginx."""
   repo_root = Path(__file__).resolve().parents[2]
   dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
-  assert "ARG NGINX_VERSION=1.31.8" in dockerfile
-  assert dockerfile.count("ARG NGINX_VERSION=1.31.8") == 2
+  assert "ARG NGINX_VERSION=1.31.9" in dockerfile
+  assert dockerfile.count("ARG NGINX_VERSION=1.31.9") == 2
   assert (
-    "ARG NGINX_SHA256=0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1"
+    "ARG NGINX_SHA256=a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad"
     in dockerfile
   )
   assert "ARG PCRE2_VERSION=10.49" in dockerfile
