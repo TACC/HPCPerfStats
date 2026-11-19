@@ -99,6 +99,9 @@ NOT_UPDATED = _code("NOT_UPDATED")
 NOT_PRESENT = _code("NOT_PRESENT")
 NOT_BUILT = _code("NOT_BUILT")
 
+_MAD_SLUG_TOKENS = {"host_ib": frozenset({"ib", "ibdyn"}), "host_opa": frozenset({"opa", "opadyn"})}
+_MAD_RUNTIME_CODES = [_code("READ_FAILED"), _code("BACKEND_ERROR"), _code("BACKOFF")]
+
 # Keys of types whose static codes depend on the build; patterns ending in "*" match a prefix.
 _UNCORE_NOT_BUILT_PREFIXES = ("intel_x86_uncore_imc", "amd_x86_uncore_df")
 _NOT_BUILT_TYPE_PREFIXES = ("host_cpu_hw",) + _UNCORE_NOT_BUILT_PREFIXES
@@ -113,7 +116,8 @@ def allowed_sentinels(slug: str, type_names) -> tuple[dict[str, dict[str, list[i
     against the host probe where one exists). NOT_BUILT is allowed only where the build or the
     programmed eventset leaves a key unread: arm host_cpu_hw keys (dram_chan*), x86 uncore keys
     without a verified encoding, Intel GPU xpumcli link keys, IB / OPA MAD keys on a build without
-    MAD, and every amd_gpu key (no reader). x86 host_cpu_hw (``x86perf``) programs every key it
+    MAD, and every amd_gpu key (no reader). On a MAD build (``ib`` / ``ibdyn``, ``opa`` / ``opadyn``),
+    host_ib / host_opa keys may also carry READ_FAILED, BACKEND_ERROR, and BACKOFF. x86 host_cpu_hw (``x86perf``) programs every key it
     publishes, so a NOT_BUILT there fails.
     """
     tokens = set(slug.split("-"))
@@ -128,11 +132,11 @@ def allowed_sentinels(slug: str, type_names) -> tuple[dict[str, dict[str, list[i
             rules["*"] = with_nb
         elif t == "intel_gpu":
             rules.update({k: with_nb for k in _INTEL_GPU_NOT_BUILT})
-        elif t == "host_ib" and not tokens & {"ib", "ibdyn"}:
-            rules["*"] = with_nb
-            expect_nb[t] = ["sw_*"]
-        elif t == "host_opa" and not tokens & {"opa", "opadyn"}:
-            rules["*"] = with_nb
+        elif t in _MAD_SLUG_TOKENS:
+            mad = tokens & _MAD_SLUG_TOKENS[t]
+            rules["*"] = base + _MAD_RUNTIME_CODES if mad else with_nb
+            if t == "host_ib" and not mad:
+                expect_nb[t] = ["sw_*"]
         elif t == "amd_gpu":
             rules["*"] = [NOT_UPDATED, NOT_BUILT]
             expect_nb[t] = ["*"]

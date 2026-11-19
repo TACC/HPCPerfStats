@@ -35,6 +35,53 @@ CONDITIONAL_TYPES = frozenset({
     "host_tmpfs", "host_nfs", "beegfs_client", "lustre_llite", "lustre_mdc", "lustre_osc",
     "host_mem_job", "host_proc",
 })
+# collect_tier_slow_table (src/collect_tier.c); keys ending in _error/_errors are slow as well.
+_SLOW_TIER_TABLE = frozenset(
+    [
+        *[(t, k) for t, keys in (
+            ("host_lnet", ("msgs_alloc_max", "msgs_alloc", "errors", "rx_msgs_dropped", "rx_bytes_dropped")),
+            ("lustre_mdc", ("ldlm_cancel", "mds_close", "mds_getattr", "mds_getattr_lock", "mds_getxattr", "mds_readpage", "mds_statfs", "mds_sync")),
+            ("host_mem", ("anon_huge_pages", "anon_pages", "bounce", "dirty", "huge_pages_free", "huge_pages_total", "inactive", "mapped", "nfs_unstable", "page_tables", "writeback")),
+            ("host_net", ("collisions", "rx_dropped", "tx_dropped")),
+            ("host_nfs", ("xprt_bad_xids", "xprt_bklog_u", "xprt_req_u", "read_timeouts", "write_timeouts")),
+            ("host_proc", ("uid", "vm_lck", "vm_pte", "vm_hwm")),
+            ("host_ps", ("load_1", "load_5", "load_15")),
+            ("host_numa", ("local_node", "interleave_hit")),
+            ("host_tmpfs", ("bytes_avail", "bytes_used", "files_used")),
+            ("host_vfs", ("dentry_use", "file_use", "inode_use")),
+            ("host_vm", (
+                "nr_anon_transparent_hugepages", "pgpgin", "pgpgout", "pswpin", "pswpout", "pgalloc_normal",
+                "pgfree", "pgactivate", "pgdeactivate", "pgfault", "pgmajfault", "pgrefill_normal",
+                "pgsteal_normal", "pgscan_kswapd_normal", "pgscan_direct_normal", "pginodesteal",
+                "slabs_scanned", "kswapd_steal", "kswapd_inodesteal", "pageoutrun", "allocstall", "pgrotated",
+                "thp_fault_alloc", "thp_fault_fallback", "thp_collapse_alloc", "thp_collapse_alloc_failed",
+                "thp_split",
+            )),
+            ("host_cpu_hw", (
+                "cpu_util_total_accum_us", "cpu_util_user_accum_us", "cpu_util_sys_accum_us",
+                "cpu_util_irq_accum_us", "cpu_util_nice_accum_us", "dcgm_cpu_power_util_w",
+                "dcgm_cpu_power_limit_w",
+            )),
+        ) for k in keys],
+        *[(f"beegfs_client", f"vfs_{k}") for k in (
+            "read_ops", "write_ops", "read_bytes", "write_bytes", "open_ops", "close_ops", "getattr_ops",
+            "setattr_ops", "truncate_ops", "readdir_ops", "create_ops", "mkdir_ops", "rmdir_ops",
+            "rename_ops", "unlink_ops", "link_ops", "statfs_ops",
+        )],
+        *[(t, "gpu_count") for t in ("nvidia_gpu", "amd_gpu", "intel_gpu")],
+    ]
+)
+
+
+def _schema_type_has_slow_key(type_name: str, keys: list[str]) -> bool:
+    for tok in keys:
+        name = schema_key_name(tok)
+        if name.endswith(("_error", "_errors")):
+            return True
+        if (type_name, name) in _SLOW_TIER_TABLE:
+            return True
+    return False
+
 POWER_SOCKET_MAX_W = 2000
 POWER_SOCKET_SLACK_W = 2  # meters average over different windows
 
@@ -184,11 +231,26 @@ def check_plausibility(
             require_tier=enable_slow,
             allowed_tier="@full" if enable_slow else None,
         )
-        for type_name in schema_by_type:
+        fast_rows = (
+            rows_by_type(fast_body, schema_by_type, require_tier=True, allowed_tier="@fast")
+            if enable_slow and fast_body
+            else {}
+        )
+        for type_name, keys in schema_by_type.items():
             # Mount- or job-scoped types emit no rows without a mount/job; warn only when
-            # the manifest's probed devices expect some.
+            # the manifest's probed devices expect some. A type on @fast with no slow-tier keys
+            # need not appear on @full when slow tier is enabled.
             devices = manifest.get("types", {}).get(type_name, {}).get("devices")
-            if type_name not in full_rows and not (type_name in CONDITIONAL_TYPES and not devices):
+            fast_only = (
+                enable_slow
+                and type_name in fast_rows
+                and not _schema_type_has_slow_key(type_name, keys)
+            )
+            if (
+                type_name not in full_rows
+                and not fast_only
+                and not (type_name in CONDITIONAL_TYPES and not devices)
+            ):
                 warn(f"type {type_name!r} missing from full payload")
 
         for type_name, rows in full_rows.items():
