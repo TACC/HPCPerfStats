@@ -42,7 +42,7 @@ grep -q 'require_prefix_core_static_archives' "${bundle}" \
 grep -q "CMAKE_C_FLAGS='-fPIC'" "${cross}" \
   || { echo "cross_compile_test.sh foreign rabbitmq must pass -DCMAKE_C_FLAGS=-fPIC" >&2; exit 1; }
 grep -q "CFLAGS='-fPIC'" "${cross}" \
-  || { echo "cross_compile_test.sh foreign libev/likwid must use CFLAGS=-fPIC" >&2; exit 1; }
+  || { echo "cross_compile_test.sh foreign libev must use CFLAGS=-fPIC" >&2; exit 1; }
 
 # prepare: fail before make dist if core static deps missing (all arches).
 grep -q 'libev.a' "${prepare}" \

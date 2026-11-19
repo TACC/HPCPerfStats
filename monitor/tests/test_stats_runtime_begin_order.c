@@ -1,7 +1,6 @@
-/* host_cpu_hw begins before every other type when the exclusive LIKWID backend runs in it
- * (HPMinit before AMD DF/RAPL). Built again as test_stats_runtime_arm_begin_order: since 3.1 the
- * aarch64 `arm` backend has no LIKWID and arm_aarch64_imc reads SCF on its own perf fds, so
- * types begin in plain registry order there (the old overlay begin-order case is gone). */
+/* Every type begins in plain registry order, host_cpu_hw included: each CPU backend (x86 and arm)
+ * and every uncore / RAPL collector opens its own perf fds, so no type depends on another having
+ * begun first. Covers the daemon and the batch (main) prepare paths. */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,7 +29,7 @@ static int find_type_index(struct stats_type *type)
   return -1;
 }
 
-static void record_begin(struct stats_type *type)
+static int record_begin(struct stats_type *type)
 {
   int idx = find_type_index(type);
 
@@ -38,29 +37,6 @@ static void record_begin(struct stats_type *type)
   g_begin_calls[idx]++;
   assert(g_begin_order_len < N_TYPES);
   g_begin_order[g_begin_order_len++] = idx;
-}
-
-static int amd_df_begin(struct stats_type *type)
-{
-  record_begin(type);
-  return 0;
-}
-
-static int amd_rapl_begin(struct stats_type *type)
-{
-  record_begin(type);
-  return 0;
-}
-
-static int host_cpu_hw_begin(struct stats_type *type)
-{
-  record_begin(type);
-  return 0;
-}
-
-static int host_net_begin(struct stats_type *type)
-{
-  record_begin(type);
   return 0;
 }
 
@@ -141,19 +117,19 @@ static void reset_state(void)
   g_begin_order_len = 0;
 
   snprintf(g_types[0].st_name, sizeof(g_types[0].st_name), "%s", "amd_x86_uncore_df_turin");
-  g_types[0].st_begin = amd_df_begin;
+  g_types[0].st_begin = record_begin;
   g_types[0].st_enabled = 1;
 
   snprintf(g_types[1].st_name, sizeof(g_types[1].st_name), "%s", "amd_x86_rapl");
-  g_types[1].st_begin = amd_rapl_begin;
+  g_types[1].st_begin = record_begin;
   g_types[1].st_enabled = 1;
 
   snprintf(g_types[2].st_name, sizeof(g_types[2].st_name), "%s", CPU_COUNTER_METRICS_ST_NAME);
-  g_types[2].st_begin = host_cpu_hw_begin;
+  g_types[2].st_begin = record_begin;
   g_types[2].st_enabled = 1;
 
   snprintf(g_types[3].st_name, sizeof(g_types[3].st_name), "%s", "host_net");
-  g_types[3].st_begin = host_net_begin;
+  g_types[3].st_begin = record_begin;
   g_types[3].st_enabled = 1;
 
   unsetenv("HPCPERFSTATS_DISABLE_TYPES");
@@ -161,91 +137,43 @@ static void reset_state(void)
   stats_runtime_daemon_reset_types();
 }
 
-static int begin_index(const char *name)
+static void assert_registry_order(void)
 {
-  size_t i;
-
-  for (i = 0; i < N_TYPES; i++) {
-    if (strcmp(g_types[i].st_name, name) == 0)
-      return (int)i;
-  }
-  return -1;
-}
-
-static void test_daemon_prepare_begins_host_cpu_hw_first(void)
-{
-  int host_idx;
-  int df_idx;
-
-#if !defined(MONITOR_WITH_HARDWARE) || !defined(MONITOR_CPU_BACKEND_LIKWID)
-  return;
-#endif
-
-  reset_state();
-  host_idx = begin_index(CPU_COUNTER_METRICS_ST_NAME);
-  df_idx = begin_index("amd_x86_uncore_df_turin");
-  assert(host_idx >= 0);
-  assert(df_idx >= 0);
-
-  stats_runtime_daemon_prepare_types();
+  int i;
 
   assert(g_begin_order_len == N_TYPES);
-  assert(g_begin_order[0] == host_idx);
-  assert(g_begin_calls[host_idx] == 1);
-  assert(g_begin_calls[df_idx] == 1);
-  assert(g_begin_order[1] == 0 || g_begin_order[1] == 1);
+  for (i = 0; i < N_TYPES; i++) {
+    assert(g_begin_order[i] == i);
+    assert(g_begin_calls[i] == 1);
+  }
+}
 
+static void test_daemon_prepare_begins_in_registry_order(void)
+{
+  reset_state();
+  stats_runtime_daemon_prepare_types();
+  assert_registry_order();
   stats_runtime_daemon_reset_types();
 }
 
-static void test_main_prepare_begins_host_cpu_hw_first(void)
+static void test_main_prepare_begins_in_registry_order(void)
 {
   stats_runtime_main_prepare_spec spec = {
       .enable_all = 0,
       .select_all = 0,
       .call_begin = 1,
   };
-  int host_idx;
-
-#if !defined(MONITOR_WITH_HARDWARE) || !defined(MONITOR_CPU_BACKEND_LIKWID)
-  return;
-#endif
 
   reset_state();
-  host_idx = begin_index(CPU_COUNTER_METRICS_ST_NAME);
-  assert(host_idx >= 0);
-
   stats_runtime_main_prepare_types(&spec);
-
-  assert(g_begin_order_len == N_TYPES);
-  assert(g_begin_order[0] == host_idx);
-
-  stats_runtime_daemon_reset_types();
-}
-
-static void test_arm_backend_begins_in_registry_order(void)
-{
-  int i;
-
-#if !defined(MONITOR_WITH_HARDWARE) || !defined(MONITOR_CPU_BACKEND_ARM)
-  return;
-#endif
-
-  reset_state();
-  stats_runtime_daemon_prepare_types();
-
-  assert(g_begin_order_len == N_TYPES);
-  for (i = 0; i < N_TYPES; i++)
-    assert(g_begin_order[i] == i);
-
+  assert_registry_order();
   stats_runtime_daemon_reset_types();
 }
 
 int main(void)
 {
-  test_daemon_prepare_begins_host_cpu_hw_first();
-  test_main_prepare_begins_host_cpu_hw_first();
-  test_arm_backend_begins_in_registry_order();
-  printf("test_stats_runtime_likwid_begin_order passed\n");
+  test_daemon_prepare_begins_in_registry_order();
+  test_main_prepare_begins_in_registry_order();
+  printf("test_stats_runtime_begin_order passed\n");
   return 0;
 }

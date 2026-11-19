@@ -1,9 +1,9 @@
 /* Fault coverage for cpu_counter_metrics.c (built with -DDEBUG in every build). Each backend
- * compiles one site: on LIKWID x86 a failed core-group prepare marks every CPU row with its code;
- * on the aarch64 arm backend whatever the backend did not set is NOT_PRESENT. The backend helpers
- * are stubbed so the collect path runs without LIKWID or a core PMU. */
+ * compiles one site: whatever the backend did not set this cycle is NOT_PRESENT. On x86 that is
+ * every key when no core counter opened, else every key the publish left unset; on the aarch64 arm
+ * backend every measured key without a core PMU. The backend reader and publish are stubbed so the
+ * collect path runs without a core PMU. */
 #include <assert.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -77,45 +77,72 @@ static void test_backend_marks_unset_keys(void)
          STATS_SENTINEL_OK);
 }
 #else
-#include "cpu_counter_metrics_likwid_begin.h"
-#include "likwid_pmc_adapter.h"
+#include "cpu_counter_metrics_x86_publish.h"
+#include "x86_core_perf.h"
 
-int cpu_counter_metrics_likwid_ready(void)
+static int g_x86_ready;
+
+int x86_core_perf_begin(int ncpus, processor_t proc, const struct x86_core_perf_cfg *cfg)
 {
-  return 1;
+  (void)ncpus;
+  (void)proc;
+  (void)cfg;
+  return g_x86_ready ? 0 : -1;
 }
 
-int likwid_backend_begin(struct stats_type *type)
+int x86_core_perf_ready(void)
 {
-  (void)type;
-  return 0;
+  return g_x86_ready;
 }
 
-enum stats_sentinel likwid_pmc_adapter_prepare_collect(void)
+void x86_core_perf_collect_cpu(int cpu, struct x86_core_counts *out)
 {
-  return STATS_SENTINEL_PMU_BUSY;
-}
-
-int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, int nr_events,
-                                int max_events)
-{
-  (void)stats;
   (void)cpu;
-  (void)events;
-  (void)nr_events;
-  (void)max_events;
-  return 0;
+  memset(out, 0, sizeof(*out));
+}
+
+void x86_core_perf_cleanup(void) {}
+
+void publish_x86_measured_stats(struct stats *stats, const struct x86_core_counts *c, int is_amd)
+{
+  (void)c;
+  (void)is_amd;
+  stats_set(stats, "instr_retired", 1);
+}
+
+static unsigned int state_of(struct stats *s, const char *key)
+{
+  int i = schema_ref(&s->s_type->st_schema, key);
+
+  assert(i >= 0);
+  return s->s_val_state[i];
+}
+
+static void collect_cycle(void)
+{
+  stats_type_mark_not_updated(&cpu_counter_metrics_stats_type);
+  cpu_counter_metrics_stats_type.st_collect(&cpu_counter_metrics_stats_type);
 }
 
 static void test_backend_marks_unset_keys(void)
 {
-  struct stats *cpu0;
+  struct stats *cpu1;
 
-  stats_type_mark_not_updated(&cpu_counter_metrics_stats_type);
-  cpu_counter_metrics_stats_type.st_collect(&cpu_counter_metrics_stats_type);
-  cpu0 = get_current_stats(&cpu_counter_metrics_stats_type, "1");
-  for (size_t k = 0; k < cpu0->s_type->st_schema.sc_len; k++)
-    assert(cpu0->s_val_state[k] == STATS_SENTINEL_PMU_BUSY);
+  /* No core counter opened: every key of every CPU row is NOT_PRESENT. */
+  g_x86_ready = 0;
+  assert(cpu_counter_metrics_stats_type.st_begin(&cpu_counter_metrics_stats_type) == 0);
+  collect_cycle();
+  cpu1 = get_current_stats(&cpu_counter_metrics_stats_type, "1");
+  for (size_t k = 0; k < cpu1->s_type->st_schema.sc_len; k++)
+    assert(cpu1->s_val_state[k] == STATS_SENTINEL_NOT_PRESENT);
+
+  /* Counters open: the published key keeps its value, the rest are NOT_PRESENT. */
+  g_x86_ready = 1;
+  assert(cpu_counter_metrics_stats_type.st_begin(&cpu_counter_metrics_stats_type) == 0);
+  collect_cycle();
+  assert(state_of(cpu1, "instr_retired") == STATS_SENTINEL_OK);
+  assert(state_of(cpu1, "aperf") == STATS_SENTINEL_NOT_PRESENT);
+  assert(state_of(cpu1, "cpu_util_user_accum_us") == STATS_SENTINEL_NOT_PRESENT);
 }
 #endif
 

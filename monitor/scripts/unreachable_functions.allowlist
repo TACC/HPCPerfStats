@@ -8,14 +8,15 @@
 
 # --- Only tests call these (test hooks, parsers and helpers exercised by tests/) ---
 arm_core_perf_event_name
-beegfs_test_set_procfs_root
 beegfs_test_set_mounts_path
+beegfs_test_set_procfs_root
 collect_tier_effective_phase
 dcgm_gpu_dyn_loaded
 dcgm_gpu_dyn_test_set_hooks
 dcgm_gpu_dyn_unload
 dcgm_watch_policy_interval_s
 dict_remv
+host_edac_scan_mem_classes
 hwdetect_reset_nvidia_disable_state
 ib_family_test_set_sysfs_root
 ib_mad_dyn_last_error
@@ -30,15 +31,12 @@ job_gpu_assign_set_gres_conf_path
 job_gpu_assign_set_nvml_hooks
 job_gpu_set_exact_equal
 job_sched_affinity_set_inject
-likwid_rapl_collect_path
-likwid_rapl_is_supported_processor
-likwid_rapl_pwr_amd_eventset
-likwid_rapl_pwr_intel_eventset
 lustre_llite_test_set_roots
 lustre_parse_kv_ull
 monitor_cli_print_usage
 monitor_release_fail_reset_for_test
 nfs_test_set_mountstats_path
+nvidia_gpu_flops_per_sm_clock
 nvidia_gpu_nvml_test_set_api
 nvidia_gpu_watch_profile_has_field
 opa_hfi_unit_from_name
@@ -56,10 +54,12 @@ roofline_nvidia_hbm_bw_from_name
 stats_fault_inject_fired
 stats_format_snprintf_stats_row
 stats_format_value_sentinels
+stats_inc
 stats_runtime_main_prepare_types
 stats_schema_key_active_this_phase
 str_collect_prefix_key_list
 tmpfs_test_set_mounts_path
+x86_core_perf_event_name
 xpum_gpu_dyn_loaded
 xpum_gpu_dyn_test_set_hooks
 xpum_gpu_dyn_unload

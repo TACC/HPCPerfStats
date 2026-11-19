@@ -1,7 +1,6 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdint.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
@@ -16,8 +15,8 @@
 #include "cpu_counter_metrics_arm_util.h"
 #include "arm_core_perf.h"
 #else
-#include "likwid_pmc_adapter.h"
-#include "cpu_counter_metrics_likwid_begin.h"
+#include "cpu_counter_metrics_x86_publish.h"
+#include "x86_core_perf.h"
 #endif
 #include "cpu_counter_metrics.h"
 
@@ -26,7 +25,7 @@
  * `arm` backend (aarch64 / Grace): util from /proc/stat jiffies over the daemon's own collect
  * interval, clock from cpufreq scaling_cur_freq (nominal chain fallback), and the measured core
  * counters (cycles, instructions, FP / SVE INT) from arm_core_perf (direct perf, scaled by
- * enabled/running; no LIKWID on aarch64). No DCGM: the embedded DCGM engine ran five 100-200 Hz timer
+ * enabled/running; no third-party PMU library on aarch64). No DCGM: the embedded DCGM engine ran five 100-200 Hz timer
  * loops whatever the watch cadence. Socket power is host_power_socket.
  */
 unsigned long long *g_arm_ctr0 = NULL;
@@ -202,6 +201,25 @@ static void arm_collect_cpu(struct stats *stats, int i, int proc_stat_ok, long l
    * when no core PMU opened. */
   stats_set_missing_all(stats, STATS_SENTINEL_NOT_PRESENT);
 }
+#else
+/*
+ * x86 backend (Intel / AMD): core counters from x86_core_perf (direct perf on the sysfs `cpu`
+ * PMU, scaled by enabled/running, never pinned). Counters open in begin (startup / SIGHUP)
+ * only; collect is one read per open fd. Fail soft: the type stays enabled and keys without a
+ * counter emit their sentinel.
+ */
+static void x86_collect_cpu(struct stats *stats, int i, int is_amd)
+{
+  if (x86_core_perf_ready()) {
+    struct x86_core_counts counts;
+
+    x86_core_perf_collect_cpu(i, &counts);
+    publish_x86_measured_stats(stats, &counts, is_amd);
+  }
+  /* What x86 did not set is not on this CPU: util / arm / dram_chan keys, the other vendor's
+   * events, or every key when no core counter opened. */
+  stats_set_missing_all(stats, STATS_SENTINEL_NOT_PRESENT);
+}
 #endif
 
 static int cpu_counter_metrics_begin(struct stats_type *type)
@@ -209,7 +227,11 @@ static int cpu_counter_metrics_begin(struct stats_type *type)
 #ifdef MONITOR_CPU_BACKEND_ARM
   return arm_backend_begin(type);
 #else
-  return likwid_backend_begin(type);
+  (void)type;
+  x86_core_perf_cleanup();
+  if (x86_core_perf_begin(nr_cpus, processor, NULL) != 0)
+    TRACE("x86 core perf unavailable; host_cpu_hw keys emit NOT_PRESENT\n");
+  return 0;
 #endif
 }
 
@@ -240,25 +262,17 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
     g_arm_stat_seeded = 1;
   }
 #else
-  /* Re-program core LIKWID group once per tick after DF/RAPL setupCounters. */
-  enum stats_sentinel prepare = cpu_counter_metrics_likwid_ready()
-                                    ? likwid_pmc_adapter_prepare_collect()
-                                    : STATS_SENTINEL_BACKEND_ERROR;
+  int is_amd = processor <= AMD_TURIN; /* AMD_10H .. AMD_TURIN lead processor_t */
 
   for (i = 0; i < nr_cpus; i++) {
     char cpu[80];
     struct stats *stats;
+
     snprintf(cpu, sizeof(cpu), "%d", i);
     stats = get_current_stats(type, cpu);
     if (stats == NULL)
       continue;
-    /* LIKWID-only: no MSR fallback when setup failed or read_cpu fails. */
-    if (prepare == STATS_SENTINEL_OK) {
-      uint64_t ctls[8] = {0};
-      (void)likwid_pmc_adapter_read_cpu(stats, i, ctls, 8, 8);
-    } else {
-      stats_set_missing_all(stats, prepare);
-    }
+    x86_collect_cpu(stats, i, is_amd);
   }
 #endif
 }

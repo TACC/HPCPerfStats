@@ -15,13 +15,11 @@ readonly REPO_ROOT
 # Keep pins aligned with scripts/build_static_bundle.sh where applicable.
 LIBEV_VER="${LIBEV_VER:-4.33}"
 RABBITMQ_VER="${RABBITMQ_VER:-0.17.0}"
-LIKWID_TAG="${LIKWID_TAG:-5.5.2}"
 LIBBPF_VER="${LIBBPF_VER:-1.7.0}"
 QEMU_VER="${QEMU_VER:-11.0.1}"
 
 LIBEV_URL_FMT="${LIBEV_URL_FMT:-http://dist.schmorp.de/libev/libev-%s.tar.gz}"
 RABBITMQ_C_URL_FMT="${RABBITMQ_C_URL_FMT:-https://github.com/alanxz/rabbitmq-c/archive/refs/tags/v%s.tar.gz}"
-LIKWID_URL_FMT="${LIKWID_URL_FMT:-https://github.com/RRZE-HPC/likwid/archive/refs/tags/v%s.tar.gz}"
 LIBBPF_URL_FMT="${LIBBPF_URL_FMT:-https://github.com/libbpf/libbpf/archive/refs/tags/v%s.tar.gz}"
 QEMU_URL_FMT="${QEMU_URL_FMT:-https://download.qemu.org/qemu-%s.tar.xz}"
 
@@ -89,9 +87,8 @@ Notes:
   - Foreign mode is rootless: no sudo, no binfmt registration, no podman/docker.
   - Foreign mode uses host make/cmake/pkg-config with qemu-wrapped target tools.
   - Foreign monitor builds use --disable-all-static (dynamic libc/libm from sysroot); native path still uses the static bundle.
-  - Foreign x86 installs static LIKWID (.a only); configure probes perfmon_init with -llikwid-hwloc -llikwid-lua -lm first (see configure.ac).
-  - LIKWID is built for x86 targets only (aarch64 / POWER use the arm backend: direct perf,
-    no LIKWID). likwid_compiler_for_target still maps GCCARMv8 / GCCPOWER for manual builds.
+  - Every target builds the same static deps (libev, rabbitmq-c; libbpf for the eBPF profiler).
+    CPU counters are direct perf on every arch (x86 backend on x86, arm backend elsewhere).
   - For deterministic foreign smoke, monitor configure is passed:
       --disable-amd-gpu --disable-infiniband --disable-opa
       --disable-lustre (nvidia_gpu stays on: DCGM/NVML are dlopen()ed at runtime)
@@ -134,25 +131,6 @@ normalize_cpu_family() {
     ppc64) echo "ppc64" ;;
     riscv64) echo "riscv64" ;;
     *) echo "$1" ;;
-  esac
-}
-
-is_x86_triplet() {
-  case "$(triplet_cpu "$1")" in
-    x86_64|i?86) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-# LIKWID 5.5.2 config.mk defaults to COMPILER=GCC (x86 sources: rdpmc, .intel_syntax).
-# Cross gcc cannot assemble those; pass the ISA makefile from LIKWID's README.
-likwid_compiler_for_target() {
-  case "$(triplet_cpu "$1")" in
-    x86_64|i?86) printf '%s\n' "GCC" ;;
-    aarch64|arm64) printf '%s\n' "GCCARMv8" ;;
-    armv7*|arm) printf '%s\n' "GCCARMv7" ;;
-    powerpc64le|ppc64le|ppc64|powerpc64) printf '%s\n' "GCCPOWER" ;;
-    *) printf '%s\n' "" ;;
   esac
 }
 
@@ -994,41 +972,6 @@ build_foreign_rabbitmq_c() {
     bash -c "set -euo pipefail; cd '${b}' && cmake .. -DCMAKE_INSTALL_PREFIX='${prefix}' -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_C_FLAGS='-fPIC' -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DENABLE_SSL_SUPPORT=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TOOLS=OFF -DBUILD_TESTS=OFF && cmake --build . -j'${JOBS}' && cmake --install . && test -f '${prefix}/lib/librabbitmq.a'"
 }
 
-build_foreign_likwid() {
-  local target="$1"
-  local sysroot="$2"
-  local srcroot prefix d t likwid_compiler
-  srcroot="$(foreign_src_root "${target}")"
-  prefix="$(foreign_prefix "${target}")"
-  d="${srcroot}/likwid-${LIKWID_TAG}"
-  t="${srcroot}/likwid-${LIKWID_TAG}.tar.gz"
-  likwid_compiler="$(likwid_compiler_for_target "${target}")"
-  test -n "${likwid_compiler}" \
-    || fail "LIKWID ${LIKWID_TAG} has no COMPILER for ${target} (supported: x86 GCC, aarch64 GCCARMv8, POWER GCCPOWER)"
-
-  mkdir -p "${srcroot}"
-  if test ! -d "${d}"; then
-    # shellcheck disable=SC2059  # *_FMT / *_MIRROR_BASE is the printf format
-    fetch_url "$(printf "${LIKWID_URL_FMT}" "${LIKWID_TAG}")" "${t}"
-    tar -C "${srcroot}" -xzf "${t}"
-    if test ! -d "${d}" && test -d "${srcroot}/likwid-${LIKWID_TAG#v}"; then
-      mv "${srcroot}/likwid-${LIKWID_TAG#v}" "${d}"
-    fi
-  fi
-  test -d "${d}" || fail "Could not locate LIKWID source directory at ${d}"
-
-  run_foreign "${target}" "${sysroot}" bash -c "
-    set -euo pipefail
-    cd '${d}'
-    if grep -q '^SHARED_LIBRARY = true' config.mk 2>/dev/null; then
-      sed -i 's/^SHARED_LIBRARY = true/SHARED_LIBRARY = false/' config.mk
-    fi
-    make clean >/dev/null 2>&1 || true
-    make -j'${JOBS}' PREFIX='${prefix}' INSTALLED_PREFIX='${prefix}' BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=perf_event COMPILER='${likwid_compiler}' CFLAGS='-fPIC' SHARED_LFLAGS='-shared -fvisibility=hidden -pthread' LIBS='-lm -lrt -pthread -ldl'
-    make install PREFIX='${prefix}' INSTALLED_PREFIX='${prefix}' BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=perf_event COMPILER='${likwid_compiler}' CFLAGS='-fPIC' SHARED_LFLAGS='-shared -fvisibility=hidden -pthread' LIBS='-lm -lrt -pthread -ldl'
-  "
-}
-
 build_foreign_libbpf() {
   local target="$1"
   local sysroot="$2"
@@ -1064,9 +1007,6 @@ build_foreign_deps() {
   echo "Foreign ${target}: building static deps into ${prefix}"
   build_foreign_libev "${target}" "${sysroot}" || return $?
   build_foreign_rabbitmq_c "${target}" "${sysroot}" || return $?
-  if is_x86_triplet "${target}"; then
-    build_foreign_likwid "${target}" "${sysroot}" || return $?
-  fi
   if test "${WANT_METRIC_PROFILER_EBPF}" = "1"; then
     build_foreign_libbpf "${target}" "${sysroot}" || return $?
   fi
@@ -1085,15 +1025,9 @@ foreign_monitor_cfg_args() {
     --disable-lustre
   )
 
-  # Under emulation, /proc/cpuinfo may reflect host details. Keep x86 deterministic.
-  if is_x86_triplet "${target}"; then
-    args+=(--with-monitor-arch=intel --with-cpu-counter-backend=auto)
-  else
-    # auto -> arm: the production Grace backend (/proc/stat util, cpufreq clock, direct perf core
-    # and SCF counters, host_power_socket). No LIKWID or libdcgm, so the foreign sysroot builds
-    # the real config.
-    args+=(--with-cpu-counter-backend=auto)
-  fi
+  # auto -> x86 on x86 targets, else arm (the production Grace backend). Both read counters by
+  # direct perf with no PMU library or libdcgm, so the foreign sysroot builds the real config.
+  args+=(--with-cpu-counter-backend=auto)
   printf '%s\n' "${args[@]}"
 }
 

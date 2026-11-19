@@ -22,7 +22,7 @@ fail() {
 # --- --parse-gc-log ---
 cat >"${WORK}/gc.log" <<'EOF'
 /usr/bin/ld: removing unused section '.text.dict_remv' in file 'hpcperfstatsd-dict.o'
-/usr/bin/ld: removing unused section '.text.str_eq_nocase.part.0' in file 'hpcperfstatsd-likwid_arch_map.o'
+/usr/bin/ld: removing unused section '.text.str_eq_nocase.part.0' in file 'hpcperfstatsd-ib_family.o'
 /usr/bin/ld: removing unused section '.text.ring_buffer_resend' in file '../src/hpcperfstatsd-stats_buffer.o'
 /usr/bin/ld: removing unused section '.rodata.some_table' in file 'hpcperfstatsd-dict.o'
 /usr/bin/ld: removing unused section '.text.ev_run' in file '/prefix/lib/libev.a(ev.o)'
@@ -37,7 +37,7 @@ got="$("${GATE}" --parse-gc-log "${WORK}/gc.log")"
 want="$(printf '%s\n' \
   'hpcperfstatsd-arm_imc.o arm_imc_probe' \
   'hpcperfstatsd-dict.o dict_remv' \
-  'hpcperfstatsd-likwid_arch_map.o str_eq_nocase' \
+  'hpcperfstatsd-ib_family.o str_eq_nocase' \
   'hpcperfstatsd-perf_util.o perf_util_open_group' \
   'hpcperfstatsd-stats_buffer.o ring_buffer_resend')"
 test "${got}" = "${want}" || fail "parse-gc-log (GNU ld + lld): got [${got}] want [${want}]"

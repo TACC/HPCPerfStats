@@ -39,7 +39,7 @@ struct arm_core_midr_row {
 };
 
 static const struct arm_core_midr_row g_midr_rows[] = {
-    /* Arm Neoverse V2 (NVIDIA Grace, MIDR 0x410fd4f0); LIKWID nvidia_grace + perf r<code>.
+    /* Arm Neoverse V2 (NVIDIA Grace, MIDR 0x410fd4f0); perf r<code>.
      * 6 general counters: canary finding #18, 12 general events ran exactly 50% with no other
      * PMU user on both Vista nodes. */
     {0x41, 0xd4f, {0, 0, 0x801C, 0x8018, 0x8014, 0x80C1, 0x80C0, 0x80E3, 0x80E7}, 6},

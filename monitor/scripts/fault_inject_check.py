@@ -69,8 +69,11 @@ _FILE_TYPES = {
     "arm_power_socket.c": ["host_power_socket"],
     "cpu_counter_metrics.c": ["host_cpu_hw"],
     "cpu_counter_metrics_arm_publish.c": ["host_cpu_hw"],
-    "likwid_pmc_adapter.c": ["host_cpu_hw"],
-    "rapl_likwid_stats.c": ["intel_x86_rapl", "amd_x86_rapl"],
+    "cpu_counter_metrics_x86_publish.c": ["host_cpu_hw"],
+    "x86_uncore_perf.c": [f"intel_x86_uncore_imc_{g}" for g in ("skx", "icx", "spr", "emr", "gnr", "srf")]
+    + [f"amd_x86_uncore_df_{g}" for g in ("rome", "milan", "genoa", "turin")],
+    "intel_rapl.c": ["intel_x86_rapl"],
+    "amd64_rapl.c": ["amd_x86_rapl"],
 }
 
 
@@ -107,6 +110,10 @@ def build_plan(caps: dict, manifest: dict, *, ticks: int, sys_root: Path) -> lis
     if "host_cpu_hw" in schema and backend == "arm":
         # Opens happen at begin / SIGHUP only, so the code holds until the restart that ends the run.
         add(f"perf_open:fp_dp_spec!{EBUSY}", "host_cpu_hw", ["arm_fp_dp_spec"], [PMU_BUSY], False)
+    if "host_cpu_hw" in schema and backend == "x86":
+        # x86_core_perf "instructions" (instr_retired; also instr_retired_any on Intel).
+        add(f"perf_open:instructions!{EBUSY}", "host_cpu_hw", ["instr_retired", "instr_retired_any"],
+            [PMU_BUSY], False)
     return plan
 
 

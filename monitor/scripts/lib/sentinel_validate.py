@@ -100,7 +100,8 @@ NOT_PRESENT = _code("NOT_PRESENT")
 NOT_BUILT = _code("NOT_BUILT")
 
 # Keys of types whose static codes depend on the build; patterns ending in "*" match a prefix.
-_NOT_BUILT_TYPE_PREFIXES = ("host_cpu_hw", "intel_x86_uncore_imc", "amd_x86_uncore_df")
+_UNCORE_NOT_BUILT_PREFIXES = ("intel_x86_uncore_imc", "amd_x86_uncore_df")
+_NOT_BUILT_TYPE_PREFIXES = ("host_cpu_hw",) + _UNCORE_NOT_BUILT_PREFIXES
 _INTEL_GPU_NOT_BUILT = ("gpu_pcie_rx_bytes", "gpu_pcie_tx_bytes", "gpu_xe_link_rx_bytes", "gpu_xe_link_tx_bytes")
 
 
@@ -110,17 +111,20 @@ def allowed_sentinels(slug: str, type_names) -> tuple[dict[str, dict[str, list[i
 
     Every key may be NOT_UPDATED (transient; persistence is its own layer) and NOT_PRESENT (checked
     against the host probe where one exists). NOT_BUILT is allowed only where the build or the
-    programmed eventset leaves a key unread: host_cpu_hw and LIKWID uncore keys, Intel GPU xpumcli
-    link keys, IB / OPA MAD keys on a build without MAD, and every amd_gpu key (no reader).
+    programmed eventset leaves a key unread: arm host_cpu_hw keys (dram_chan*), x86 uncore keys
+    without a verified encoding, Intel GPU xpumcli link keys, IB / OPA MAD keys on a build without
+    MAD, and every amd_gpu key (no reader). x86 host_cpu_hw (``x86perf``) programs every key it
+    publishes, so a NOT_BUILT there fails.
     """
     tokens = set(slug.split("-"))
+    nb_types = _UNCORE_NOT_BUILT_PREFIXES if "x86perf" in tokens else _NOT_BUILT_TYPE_PREFIXES
     base = [NOT_UPDATED, NOT_PRESENT]
     with_nb = base + [NOT_BUILT]
     allowed: dict[str, dict[str, list[int]]] = {}
     expect_nb: dict[str, list[str]] = {}
     for t in sorted(type_names):
         rules = {"*": base}
-        if t.startswith(_NOT_BUILT_TYPE_PREFIXES):
+        if t.startswith(nb_types):
             rules["*"] = with_nb
         elif t == "intel_gpu":
             rules.update({k: with_nb for k in _INTEL_GPU_NOT_BUILT})

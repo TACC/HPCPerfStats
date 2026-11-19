@@ -11,6 +11,13 @@ and the ACPI hwmon power meters (host_power_socket).
   source reads non-zero.
 
 A collector that silently stopped reading (flat, or stuck at 0) fails this even when idle.
+
+On a MAD build (capability slug token ``ib`` or ``ibdyn``) host_ib port_xmit_data / port_rcv_data
+come from the 64-bit PortCountersExtended, a separate counter that can sit a constant away from
+sysfs ``counters/*`` (a reset of one but not the other) while advancing at the same rate. One
+live read cannot bound an unknown offset, so those two keys are bracketed only on rows the MAD
+query did not fill in either capture (every MAD extended key a sentinel, so sysfs supplied them)
+and are otherwise reported as one NOTE. Every other host_ib key is sysfs on every build.
 """
 from __future__ import annotations
 
@@ -33,6 +40,14 @@ _OPA_HW_COUNTERS = {
     "port_xmit_data": "TxWords", "port_rcv_data": "RxWords", "port_xmit_pkts": "TxPkt",
     "port_rcv_pkts": "RxPkt", "port_xmit_wait": "TxWait",
 }
+# host_ib keys the MAD extended query overwrites on top of sysfs (ib_mad.c IB_PC_EXT_F); the
+# rest of IB_PC_EXT_F has no sysfs file, so a value there proves MAD filled the row.
+_IB_MAD_SYSFS_KEYS = frozenset({"port_xmit_data", "port_rcv_data"})
+_IB_MAD_ONLY_KEYS = (
+    "port_select", "counter_select", "port_xmit_pkts", "port_rcv_pkts", "port_unicast_xmit_pkts",
+    "port_unicast_rcv_pkts", "port_multicast_xmit_pkts", "port_multicast_rcv_pkts",
+)
+_IB_MAD_SLUG_TOKENS = frozenset({"ib", "ibdyn"})
 _HOST_KEY_ALIAS = Path(__file__).resolve().parents[2] / "src" / "host_key_alias.c"
 
 
@@ -181,6 +196,18 @@ def _width(token: str) -> int:
     return int(w[0]) if w else 64
 
 
+def _ib_mad_filled(values: dict[tuple[str, str, str], int], dev: str, evidence: list[str],
+                   slug_mad: bool | None) -> bool:
+    """True when the MAD extended query, not sysfs, supplied port_*_data on host_ib ``dev`` in
+    this capture. ``slug_mad``: the slug has a MAD token (None: no slug). With extended-only keys
+    in the schema their values decide; without them only a MAD slug says MAD."""
+    if slug_mad is False:
+        return False
+    if evidence:
+        return any(("host_ib", dev, k) in values for k in evidence)
+    return bool(slug_mad)
+
+
 def check_independent_reads(
     schema_by_type: dict[str, list[str]],
     body_a: str,
@@ -191,11 +218,20 @@ def check_independent_reads(
     *,
     require_tier: bool,
     allowed_tier: str | None,
+    capability_slug: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Notes and errors: FAIL for a counter read outside [v_a, v_b] (mod 2^W), or a gauge emitted 0
-    in both captures while its source reads non-zero."""
+    in both captures while its source reads non-zero.
+
+    ``capability_slug`` says whether host_ib may be MAD-sourced (tokens ``ib`` / ``ibdyn``);
+    without it the payload decides (a MAD extended-only key carrying a value)."""
     notes: list[str] = []
     errors: list[str] = []
+    slug_mad = None if capability_slug is None else bool(
+        set(capability_slug.split("-")) & _IB_MAD_SLUG_TOKENS
+    )
+    ib_names = {schema_key_name(k) for k in schema_by_type.get("host_ib", [])}
+    evidence = [k for k in _IB_MAD_ONLY_KEYS if k in ib_names]
     if not live:
         notes.append("SKIP independent_read: no covered source on this host")
         return notes, errors
@@ -216,8 +252,14 @@ def check_independent_reads(
                         values[(type_name, row.dev, name)] = v
         maps.append(values)
     checked = 0
+    mad_skipped: list[str] = []
     for key, r in sorted(live.items()):
         if key not in maps[0] or key not in maps[1]:
+            continue
+        if key[0] == "host_ib" and key[2] in _IB_MAD_SYSFS_KEYS and any(
+            _ib_mad_filled(m, key[1], evidence, slug_mad) for m in maps
+        ):
+            mad_skipped.append(f"{key[1]} {key[2]}")
             continue
         va, vb = maps[0][key], maps[1][key]
         token = _token(schema_by_type[key[0]], key[2])
@@ -234,6 +276,11 @@ def check_independent_reads(
             errors.append(
                 f"FAIL independent_read {key[0]}/{key[1]} {key[2]}: live {r} outside emitted [{va}, {vb}]"
             )
+    if mad_skipped:
+        notes.append(
+            "NOTE independent_read host_ib MAD PortCountersExtended (may differ from sysfs by a"
+            f" constant), not bracketed: {', '.join(mad_skipped)}"
+        )
     if checked and not errors:
         notes.append(f"PASS independent_read ({checked} keys)")
     elif not checked:

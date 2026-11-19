@@ -18,11 +18,11 @@ SHM="${WORK}/shm"
 mkdir "${SHM}"
 
 cat >"${WORK}/caps.json" <<'J'
-{"capability_slug": "x86_64-ver3.1-debug-hw-likwid-sent1-slowtier0", "configure": {"debug": true, "cpu_backend": "likwid"}}
+{"capability_slug": "x86_64-ver3.1-debug-hw-x86perf-sent1-slowtier0", "configure": {"debug": true, "cpu_backend": "x86"}}
 J
 sed 's/"debug": true/"debug": false/' "${WORK}/caps.json" >"${WORK}/caps_release.json"
 cat >"${WORK}/manifest.json" <<'J'
-{"capability_slug": "x86_64-ver3.1-debug-hw-likwid-sent1-slowtier0", "enable_slow_tier": false,
+{"capability_slug": "x86_64-ver3.1-debug-hw-x86perf-sent1-slowtier0", "enable_slow_tier": false,
  "types": {"host_ps": {"schema_keys": ["ctxt,E", "processes,E", "load_1,", "load_5,", "load_15,", "nr_running,", "nr_threads,"]}}}
 J
 # shellcheck disable=SC2016 # literal $ banner lines

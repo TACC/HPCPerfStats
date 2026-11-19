@@ -74,13 +74,6 @@ def _build_event_map(
     return out
 
 
-def _bridge_unproven(manifest: dict, type_name: str) -> bool:
-    """host_cpu_hw on LIKWID without x86perf: its bridge is not proven, so a gap breaks the chain
-    and a bridge violation is informational. A manifest without a slug counts as LIKWID."""
-    tokens = set(str(manifest.get("capability_slug") or "likwid").split("-"))
-    return type_name == "host_cpu_hw" and "likwid" in tokens and "x86perf" not in tokens
-
-
 def _valid_only(event_map: dict[tuple[str, str, str], int]) -> dict[tuple[str, str, str], int]:
     """Drop sentinel entries (stored as -code) so value comparisons see readings only."""
     return {k: v for k, v in event_map.items() if v >= 0}
@@ -181,13 +174,6 @@ def _check_monotonic_pair(
                 bridge = bool(gap) and all(is_bridgeable(c) for c in gap)
                 if not gap and moved < 0:
                     warn(f"{type_name}/{dev} {metric}: decreased {last} -> {val} (possible restart?)")
-                elif bridge and _bridge_unproven(manifest, type_name):
-                    chain_breaks += 1
-                    if moved < 0:
-                        notes.append(
-                            f"NOTE cross_sample bridge {type_name}/{dev} {metric}: {last} -> {val}"
-                            " across a gap (LIKWID host_cpu_hw bridge unproven, informational)"
-                        )
                 elif bridge:
                     bridged += 1
                     if moved < 0:

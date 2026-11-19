@@ -3,7 +3,7 @@
 
 #include "stats.h"
 
-#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
+#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_X86)
 extern struct stats_type amd_x86_uncore_df_rome_stats_type;
 extern struct stats_type amd_x86_uncore_df_milan_stats_type;
 extern struct stats_type amd_x86_uncore_df_genoa_stats_type;
@@ -38,7 +38,7 @@ extern struct stats_type block_stats_type;
 extern struct stats_type cpu_stats_type;
 
 #if defined(MONITOR_WITH_HARDWARE) &&                                                              \
-    (defined(MONITOR_CPU_BACKEND_LIKWID) || defined(MONITOR_CPU_BACKEND_ARM))
+    (defined(MONITOR_CPU_BACKEND_X86) || defined(MONITOR_CPU_BACKEND_ARM))
 extern struct stats_type cpu_counter_metrics_stats_type;
 #endif
 
@@ -80,7 +80,7 @@ extern struct stats_type vfs_stats_type;
 extern struct stats_type vm_stats_type;
 
 struct stats_type *const stats_type_table[] = {
-#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
+#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_X86)
     &amd_x86_uncore_df_genoa_stats_type,
     &amd_x86_uncore_df_milan_stats_type,
     &amd_x86_uncore_df_rome_stats_type,
@@ -101,11 +101,11 @@ struct stats_type *const stats_type_table[] = {
     &block_stats_type,
     &cpu_stats_type,
 #if defined(MONITOR_WITH_HARDWARE) &&                                                              \
-    (defined(MONITOR_CPU_BACKEND_LIKWID) || defined(MONITOR_CPU_BACKEND_ARM))
+    (defined(MONITOR_CPU_BACKEND_X86) || defined(MONITOR_CPU_BACKEND_ARM))
     &cpu_counter_metrics_stats_type,
 #endif
     &ib_stats_type,
-#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
+#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_X86)
     &intel_rapl_stats_type,
     &intel_emr_imc_stats_type,
     &intel_gnr_imc_stats_type,

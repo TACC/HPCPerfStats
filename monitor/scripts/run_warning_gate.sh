@@ -45,7 +45,7 @@
 #   HPC_WARN_GATE_LOG       Log path (default: <workspace>/test_runs/warning-gate-<mode>.log)
 #
 # SKIPS: the gate needs Linux, gcc, autoreconf and the static prefix (libev.a,
-# librabbitmq.a, plus liblikwid.a on x86). Without them it prints a bold SKIPPED banner
+# librabbitmq.a). Without them it prints a bold SKIPPED banner
 # and exits 0, so commits from such hosts (macOS checkouts, fresh clones) are NOT
 # warning-checked. --push also needs clang, ld.lld, the aarch64 sysroot and prefix
 # (sysroot and prefix come from scripts/cross_compile_test.sh); without those the x86
@@ -192,9 +192,6 @@ preflight() {
   command -v autoreconf >/dev/null 2>&1 || skip_or_fail "autoreconf not on PATH"
   local lib
   local -a need=(libev.a librabbitmq.a)
-  case "$(uname -m)" in
-    x86_64 | i?86) need+=(liblikwid.a) ;;
-  esac
   for lib in "${need[@]}"; do
     test -f "${PREFIX}/lib/${lib}" || test -f "${PREFIX}/lib64/${lib}" \
       || skip_or_fail "${lib} missing under PREFIX=${PREFIX}"

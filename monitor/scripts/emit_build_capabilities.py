@@ -26,12 +26,14 @@ _RE_CONFIG_LOG_BOOL = re.compile(
 )
 _RE_PACKAGE_VERSION = re.compile(r'#define\s+PACKAGE_VERSION\s+"([^"]+)"')
 _RE_MONITOR_WITH = re.compile(r"-DMONITOR_WITH_([A-Z_]+)")
-_RE_CPU_BACKEND = re.compile(r"-DMONITOR_CPU_BACKEND_([A-Z]+)")
+_RE_CPU_BACKEND = re.compile(r"-DMONITOR_CPU_BACKEND_([A-Z0-9]+)")
 _RE_IB_MAD_DLOPEN = re.compile(r"-DMONITOR_IB_MAD_DLOPEN\b")
 _RE_OPA_MAD_DLOPEN = re.compile(r"-DMONITOR_OPA_MAD_DLOPEN\b")
-_RE_LIKWID_OVERLAY = re.compile(r"-DMONITOR_CPU_LIKWID_OVERLAY\b")
 _RE_SHARED_NODE = re.compile(r"-DMONITOR_SHARED_NODE_MULTI_JID\b")
 _RE_SENTINEL_CATALOG_VERSION = re.compile(r"#define\s+STATS_SENTINEL_CATALOG_VERSION\s+(\d+)")
+# Slug token per configure CPU backend where it differs from the backend name: x86 host_cpu_hw
+# is read by direct perf (x86_core_perf), which validators key on (sentinel allowlist).
+_CPU_BACKEND_SLUG_TOKEN = {"x86": "x86perf"}
 
 
 def _read_text(path: Path) -> str:
@@ -59,7 +61,7 @@ def _parse_config_log(build_dir: Path) -> Dict[str, bool]:
 
 def _parse_src_makefile(
     build_dir: Path,
-) -> Tuple[Set[str], Optional[str], bool, bool, bool, bool, bool]:
+) -> Tuple[Set[str], Optional[str], bool, bool, bool, bool]:
     # Automake writes a false conditional's lines with a leading `#`; they are not flags.
     text = "\n".join(
         line
@@ -72,7 +74,6 @@ def _parse_src_makefile(
     debug = "-DDEBUG" in text
     ib_mad_dlopen = bool(_RE_IB_MAD_DLOPEN.search(text))
     opa_mad_dlopen = bool(_RE_OPA_MAD_DLOPEN.search(text))
-    likwid_overlay = bool(_RE_LIKWID_OVERLAY.search(text))
     shared_node = bool(_RE_SHARED_NODE.search(text))
     return (
         features,
@@ -80,7 +81,6 @@ def _parse_src_makefile(
         debug,
         ib_mad_dlopen,
         opa_mad_dlopen,
-        likwid_overlay,
         shared_node,
     )
 
@@ -159,7 +159,7 @@ def build_capability_slug(
     if opa_mad_dlopen:
         parts.append("opadyn")
     if cpu_backend:
-        parts.append(cpu_backend)
+        parts.append(_CPU_BACKEND_SLUG_TOKEN.get(cpu_backend, cpu_backend))
     elif "HARDWARE" in features:
         parts.append("none")
     parts.append(f"sent{sentinel_version}")
@@ -253,7 +253,6 @@ def emit_capabilities(build_dir: Path, tier: str) -> dict:
         debug_from_make,
         ib_mad_dlopen,
         opa_mad_dlopen,
-        likwid_overlay,
         shared_node,
     ) = _parse_src_makefile(build_dir)
     debug = cfg_log.get("debug", False) or debug_from_make
@@ -314,8 +313,6 @@ def emit_capabilities(build_dir: Path, tier: str) -> dict:
             "opa_mad_dlopen": opa_mad_dlopen,
             "shared_node_multi_jid": shared_node,
             "cpu_backend": cpu_backend or "none",
-            "likwid_overlay": likwid_overlay,
-            "papi_hybrid": likwid_overlay,  # alias for older shm validators
             "slow_tier": tier,
         },
         "sentinel_catalog_version": sentinel_version,

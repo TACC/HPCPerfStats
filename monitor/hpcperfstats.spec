@@ -26,7 +26,7 @@ Source: %{srcname}-%{version}.tar.gz
 # SOURCES. %%build only links hpcperfstatsd against embedded-static-prefix (SKIP_DEPS=1).
 # The script prints the rpmbuild -ba command to run next.
 
-# Static third-party archives (libev, rabbitmq-c, LIKWID on x86) ship inside the source
+# Static third-party archives (libev, rabbitmq-c) ship inside the source
 # tarball from prepare; %%build does not recompile them. build_static_bundle.sh still runs
 # host probes and configures with --enable-all-static for the daemon link only.
 
@@ -61,14 +61,14 @@ control. The daemon publishes job-level host statistics (CPU, memory, optional
 InfiniBand, Omni-Path/Cornelis HFI via host_opa, Lustre, BeeGFS client (beegfs_client), NVIDIA DCGM GPU, AMD
 GPU, etc.).
 
-The binary is linked with pre-built static libev, rabbitmq-c, and (on x86)
-LIKWID archives that are included in the source tarball from
-prepare_rpmbuild_dirs.sh, so the RPM does not depend on those distro packages at
+The binary is linked with pre-built static libev and rabbitmq-c archives that
+are included in the source tarball from prepare_rpmbuild_dirs.sh, so the RPM does not depend on those distro packages at
 runtime. Shared-only stacks (DCGM, optional IB, etc.) remain dynamic per
 configure flags.
 
-Optional features and branch highlights: LIKWID (x86) or the arm backend
-(/proc/stat, cpufreq, direct perf core and Grace SCF counters; aarch64, no LIKWID) CPU counters, per-socket hwmon power
+Optional features and branch highlights: CPU counters by direct perf_event on every
+arch (x86: core, IMC/HBM/DF uncore and RAPL power counters with powercap fallback;
+aarch64 arm backend: /proc/stat, cpufreq, core and Grace SCF counters), per-socket hwmon power
 (host_power_socket), NVIDIA GPUs through NVML+GPM with a DCGM fallback (both loaded at
 runtime), stats buffer/file handling, and RabbitMQ robustness.
 
@@ -167,6 +167,13 @@ fi
 
 %changelog
 * Fri Nov 13 2026 sharrell@tacc.utexas.edu - 3.1-1
+- x86 (Phases 2 and 3, added 2026-11-18): the PMU library is no longer built or linked on any
+  arch. configure --with-cpu-counter-backend={auto|x86|arm} (x86 auto = x86); the
+  --with-monitor-arch option is gone (the vendor is the runtime processor). host_cpu_hw reads
+  core events by direct perf (x86_core_perf), IMC / HBM / DF rows by direct perf on the sysfs
+  uncore PMUs (x86_uncore_perf), and intel_x86_rapl / amd_x86_rapl read the perf power PMU with
+  powercap energy_uj as fallback (x86_rapl); every read is scaled by enabled/running and never
+  pinned. Static deps are libev and rabbitmq-c only; the capability slug carries x86perf.
 - aarch64 / Grace (Phase 1b, D6, added 2026-11-14; version stays 3.1 for the whole
   cpu-precision plan): PMU sharing keys. host_cpu_hw adds pmu_enabled_time,
   pmu_running_time and pmu_solo_running_time, arm_aarch64_imc adds pmu_enabled_time and
@@ -175,7 +182,7 @@ fi
   (Neoverse V2: 6 general counters); running below solo means another program (for example
   nvidia-powerd) holds counters. Counters, not a gauge, because ingest sums host_cpu_hw rows
   across CPUs. x86 schema unchanged.
-- aarch64 / Grace: LIKWID is no longer built or linked. host_cpu_hw reads nine core events per
+- aarch64 / Grace: the PMU library is no longer built or linked. host_cpu_hw reads nine core events per
   CPU (CYC, INS, FP_DP/SP/HP_SPEC, FP_FIXED/SCALE_OPS_SPEC, ASE_SVE_INT8/16_SPEC) by direct
   perf_event, scaled by time_enabled / time_running (nvidia-powerd shares the PMU); sysfs event
   names first, Neoverse V2 raw codes by MIDR otherwise.
@@ -184,7 +191,7 @@ fi
   synthetic instr/FLOP estimate is removed. Grace instr_retired and cycle rates rise (scaled).
 - arm_aarch64_imc reads nvidia_scf_pmu_N cmem_rd_data / cmem_wr_total_bytes by direct perf on
   1 or 2 sockets and re-scans when the PMUs bind after start.
-- configure: --with-cpu-counter-backend=likwid is x86-only.
+- configure: the library CPU backend is x86-only.
 
 * Thu Nov 05 2026 sharrell@tacc.utexas.edu - 3.0-9
 - Monitor CPU seconds round 2: aarch64 CPU backend renamed dcgm -> arm and taken off DCGM
@@ -208,7 +215,7 @@ fi
 * Sun Apr 05 2026 sharrell@tacc.utexas.edu - 3.0-5
 - Ship embedded-static-prefix inside the source tarball from prepare_rpmbuild_dirs.sh;
   %%build uses SKIP_DEPS=1 and only compiles hpcperfstatsd. Drop %%build-only dep tools
-  (curl, cmake, autotools chain for vendored sources, perl/gawk for LIKWID build).
+  (curl, cmake, autotools chain for vendored sources, perl/gawk for the PMU library build).
 
 * Sat Mar 28 2026 sharrell@tacc.utexas.edu - 3.0-4
 - Rename package to hpcperfstatsd; source tarball prefix stays hpcperfstats (AC_INIT / make dist).
@@ -228,17 +235,17 @@ fi
 
 * Sat Mar 28 2026 sharrell@tacc.utexas.edu - 2.4-3
 - Build via scripts/build_static_bundle.sh (--enable-all-static): pinned static
-  libev, rabbitmq-c, LIKWID (x86); drop runtime deps on those distro packages.
+  libev, rabbitmq-c, PMU library (x86); drop runtime deps on those distro packages.
 - BuildRequires: gcc-c++, cmake, curl, gzip, tar, perl, gawk; aarch64 BR
   libdcgm-devel for DCGM CPU backend link.
 - Install binary from .build-static/src/hpcperfstatsd; document offline SKIP_DEPS workflows.
 
 * Sat Mar 28 2026 sharrell@tacc.utexas.edu - 2.4-2
 - Align packaging notes and BuildRequires with monitor_woooosah branch.
-- Document CPU backends (LIKWID / DCGM), DCGM attach (embedded + 127.0.0.1
+- Document CPU backends (PMU library / DCGM), DCGM attach (embedded + 127.0.0.1
   nv-hostengine), bundled third_party/nvidia-dcgm headers, and static bundle
   script for dev builds.
-- Add build deps: autotools, libev, librabbitmq, likwid, rdma-core (InfiniBand).
+- Add build deps: autotools, libev, librabbitmq, PMU library, rdma-core (InfiniBand).
 - Summarize branch: DCGM CPU counter parity (field watch, /proc/stat + monotonic
   fallbacks, cpufreq sysfs clock fallback), shared dcgm_session for GPU, IB
   detection/collection updates, stats buffer/file cadence and format changes,

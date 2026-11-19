@@ -13,6 +13,8 @@ int main(void)
 {
   assert(strstr(amd_df_schema_def, " dram_chan0_bytes,") != NULL);
   assert(strstr(amd_df_schema_def, " dram_chan3_bytes,") != NULL);
+  assert(strstr(amd_df_schema_def, " pmu_enabled_time,E,W=64,U=ns") != NULL);
+  assert(strstr(amd_df_schema_def, " pmu_running_time,E,W=64,U=ns") != NULL);
   assert(strstr(amd_df_schema_def, " EVENT_DRAM") == NULL);
   assert(strstr(amd_df_schema_def, "amd_x86_pmc") == NULL);
   printf("test_amd_x86_uncore_df_schema passed\n");

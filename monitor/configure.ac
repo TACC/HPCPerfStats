@@ -4,15 +4,15 @@ AC_CANONICAL_HOST
 AC_PROG_CC
 AM_PROG_CC_C_O
 
-dnl aarch64 builds no LIKWID (the arm backend reads core and Grace SCF counters by direct perf).
-dnl Reject the exclusive LIKWID backend on non-x86 before any library probe (silent on x86).
+dnl Every CPU backend reads hardware counters by direct perf (no PMU library). Reject the x86
+dnl backend on non-x86 hosts before any probe (silent on x86).
 case "${with_cpu_counter_backend}:${host_cpu}" in
-  likwid:x86_64|likwid:i?86) ;;
-  likwid:*) AC_MSG_ERROR([--with-cpu-counter-backend=likwid is x86-only (host_cpu=${host_cpu}); non-x86 uses --with-cpu-counter-backend=arm (direct perf core and SCF counters, no LIKWID)]) ;;
+  x86:x86_64|x86:i?86) ;;
+  x86:*) AC_MSG_ERROR([--with-cpu-counter-backend=x86 is x86-only (host_cpu=${host_cpu}); non-x86 uses --with-cpu-counter-backend=arm (direct perf core and SCF counters)]) ;;
 esac
 
 AC_ARG_ENABLE([all-static],
-[AS_HELP_STRING([--enable-all-static], [Link most third-party libraries as static archives (linker groups) (default: yes). Use --disable-all-static for dynamic linking where available. Requires static .a for ev, rabbitmq-c, and likwid (+ likwid-hwloc, likwid-lua for the static liblikwid link); for workspace .build/prefix run monitor/scripts/ensure_dotbuild_prefix_static.sh. Vendor stacks usually shipped as shared only (DCGM, RDMA/OPA, libibmad) are linked after -Wl,-Bdynamic. See monitor/scripts/build_static_bundle.sh.])],
+[AS_HELP_STRING([--enable-all-static], [Link most third-party libraries as static archives (linker groups) (default: yes). Use --disable-all-static for dynamic linking where available. Requires static .a for ev and rabbitmq-c; for workspace .build/prefix run monitor/scripts/ensure_dotbuild_prefix_static.sh. Vendor stacks usually shipped as shared only (DCGM, RDMA/OPA, libibmad) are linked after -Wl,-Bdynamic. See monitor/scripts/build_static_bundle.sh.])],
 [enable_all_static=$enableval],
 [enable_all_static=yes])
 
@@ -102,131 +102,46 @@ esac],
 AM_CONDITIONAL([HARDWARE], [test x$hardware = xtrue])
 
 AC_ARG_WITH([cpu-counter-backend],
-[AS_HELP_STRING([--with-cpu-counter-backend={auto|likwid|arm}], [CPU counter backend selection (default: auto; x86 auto = likwid; aarch64 auto = arm: /proc/stat util, cpufreq clock, direct perf core and Grace SCF counters; no LIKWID, no DCGM; likwid is x86 only)])],
+[AS_HELP_STRING([--with-cpu-counter-backend={auto|x86|arm}], [CPU counter backend selection (default: auto; x86 auto = x86: direct perf core, IMC/HBM/DF uncore and RAPL power counters; aarch64 auto = arm: /proc/stat util, cpufreq clock, direct perf core and Grace SCF counters; no DCGM; x86 is x86 only)])],
 [cpu_counter_backend="$withval"],
 [cpu_counter_backend="auto"])
 
 case "$cpu_counter_backend" in
-  auto|likwid|arm) ;;
+  auto|x86|arm) ;;
   *) AC_MSG_ERROR([bad value ${cpu_counter_backend} for --with-cpu-counter-backend]) ;;
 esac
 
-is_x86=false
-case "$host_cpu" in
-  x86_64|i?86) is_x86=true ;;
-esac
-
-likwid=false
 CPU_COUNTER_BACKEND_CPPFLAG=""
-MONITOR_ARCH_CPPFLAG=""
 
 if test "x$hardware" != "xtrue"; then
   cpu_counter_backend="none"
   AC_MSG_NOTICE([CPU counter backend: disabled (--disable-hardware)])
 else
-if test "x$cpu_counter_backend" = "xauto"; then
-  if test "x$is_x86" = "xtrue"; then
-    cpu_counter_backend="likwid"
-  else
-    cpu_counter_backend="arm"
-  fi
-fi
-
-need_likwid=false
-if test "x$cpu_counter_backend" = "xlikwid"; then
-  need_likwid=true
-fi
-
-if test "x$need_likwid" = "xtrue"; then
-  dnl Static liblikwid.a (prefix-static, foreign cross deps) needs hwloc/lua archives and -lm
-  dnl plus -lpthread/-ldl/-lrt on some hosts (Lonestar6). AC_SEARCH_LIBS only adds -llikwid to
-  dnl LIBS; extras are for the try link only. Unset cache before the shared-only retry (same
-  dnl ac_cv_search_* key — mirror rabbitmq probe).
-  have_likwid=no
-  likwid_static_bundle=no
-  AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes likwid_static_bundle=yes],
-    [], [-llikwid-hwloc -llikwid-lua -lm -lrt -pthread -ldl])
-  if test "x${have_likwid}" != xyes; then
-    AS_UNSET([ac_cv_search_perfmon_init])
-    AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
-      [AC_MSG_ERROR([Unable to find liblikwid!])])
-  fi
-  if test "x${have_likwid}" = xyes; then
-    AC_CHECK_HEADERS([likwid.h], [likwid=true],
-      [AC_MSG_ERROR([Unable to find likwid.h!])])
-  fi
-  dnl Static LIKWID: nested liblikwid-hwloc.a provides likwid_hwloc_*; liblikwid-lua.a for Lua.
-  dnl Do not append -lm here: final link uses shared libm outside -Wl,-Bstatic; probe above used -lm only for the try link.
-  if test "x$enable_all_static" = xyes || test "x$likwid_static_bundle" = xyes; then
-    case " ${LIBS} " in
-      *" -llikwid-hwloc "*) ;;
-      *) LIBS="$LIBS -llikwid-hwloc -llikwid-lua" ;;
+  if test "x$cpu_counter_backend" = "xauto"; then
+    case "$host_cpu" in
+      x86_64|i?86) cpu_counter_backend="x86" ;;
+      *) cpu_counter_backend="arm" ;;
     esac
   fi
-fi
-
-if test "x$cpu_counter_backend" = "xarm"; then
-  dnl arm backend: kernel sources only (/proc/stat, cpufreq, perf_event core and SCF counters
-  dnl via perf_util); socket power is host_power_socket.
-  CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_ARM"
-  MONITOR_ARCH_CPPFLAG=""
-elif test "x$cpu_counter_backend" = "xlikwid"; then
-  CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_LIKWID"
-fi
-
-if test "x$hardware" = "xtrue"; then
+  dnl Kernel sources only: perf_event core, uncore and power PMUs via perf_util (x86 also
+  dnl powercap energy_uj; arm also /proc/stat and cpufreq). arm socket power is host_power_socket.
+  if test "x$cpu_counter_backend" = "xarm"; then
+    CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_ARM"
+  else
+    CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_X86"
+  fi
   AC_MSG_NOTICE([CPU counter backend: ${cpu_counter_backend} (host_cpu=${host_cpu})])
-fi
 fi
 AC_SUBST([CPU_COUNTER_BACKEND_CPPFLAG])
 
-AC_ARG_WITH([monitor-arch],
-[AS_HELP_STRING([--with-monitor-arch={intel|amd|auto}], [Compile-time LIKWID architecture selection (default: auto)])],
-[monitor_arch="$withval"],
-[monitor_arch="auto"])
-
-case "$monitor_arch" in
-  intel|amd|auto) ;;
-  *) AC_MSG_ERROR([bad value ${monitor_arch} for --with-monitor-arch]) ;;
-esac
-
-if test "x$monitor_arch" = "xauto"; then
-  case "$host_cpu" in
-    x86_64|i?86)
-      monitor_arch="intel"
-      # Prefer AuthenticAMD build hosts so MONITOR_ARCH_AMD matches the machine.
-      # RAPL MSR selection is runtime (likwid_rapl_collect_path); this flag must not
-      # force Intel power_read on EPYC.
-      if test -r /proc/cpuinfo && \
-         grep -m1 -E '^vendor_id[[:space:]]*:[[:space:]]*AuthenticAMD$' /proc/cpuinfo >/dev/null 2>&1; then
-        monitor_arch="amd"
-      fi
-      ;;
-    aarch64|arm*|ppc64*|riscv64) monitor_arch="intel" ;;
-    *) monitor_arch="intel" ;;
-  esac
-fi
-AC_MSG_NOTICE([--with-monitor-arch resolved to: ${monitor_arch}])
-
-if test "x$cpu_counter_backend" = "xlikwid"; then
-  if test "x$monitor_arch" = "xintel"; then
-    MONITOR_ARCH_CPPFLAG="-DMONITOR_ARCH_INTEL"
-  else
-    MONITOR_ARCH_CPPFLAG="-DMONITOR_ARCH_AMD"
-  fi
-fi
-AC_SUBST([MONITOR_ARCH_CPPFLAG])
-AM_CONDITIONAL([MONITOR_ARCH_INTEL], [test "x$monitor_arch" = "xintel"])
-AM_CONDITIONAL([MONITOR_ARCH_AMD], [test "x$monitor_arch" = "xamd"])
 monitor_arch_arm=false
 case "$host_cpu" in
   aarch64|arm*) monitor_arch_arm=true ;;
 esac
 AM_CONDITIONAL([MONITOR_ARCH_ARM], [test x$monitor_arch_arm = xtrue])
 
-AM_CONDITIONAL([LIKWID], [test x$likwid = xtrue])
-AM_CONDITIONAL([CPU_BACKEND_LIKWID],
-  [test x$hardware = xtrue -a x$cpu_counter_backend = xlikwid])
+AM_CONDITIONAL([CPU_BACKEND_X86],
+  [test x$hardware = xtrue -a x$cpu_counter_backend = xx86])
 AM_CONDITIONAL([CPU_BACKEND_ARM],
   [test x$hardware = xtrue -a x$cpu_counter_backend = xarm])
 

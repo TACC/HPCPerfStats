@@ -26,8 +26,8 @@ void publish_arm_cpu_stats(struct stats *stats, int i)
   /* Fail-soft util x freq cycle estimates; publish_arm_measured_stats overwrites these three
    * keys when the measured CYC lifetime is > 0 (O16). */
   stats_set(stats, "cpu_clock_est_cycles", g_arm_ctr5[i]);
-  stats_set(stats, "aperf", g_arm_aperf[i]);
-  stats_set(stats, "mperf", g_arm_mperf[i]);
+  stats_set(stats, "aperf", g_arm_aperf[i] & ARM_W48_MASK);
+  stats_set(stats, "mperf", g_arm_mperf[i] & ARM_W48_MASK);
   /* No per-channel DRAM reader on Grace (DRAM traffic is arm_aarch64_imc SCF). */
   stats_set_missing(stats, "dram_chan0_bytes", STATS_SENTINEL_NOT_BUILT);
   stats_set_missing(stats, "dram_chan1_bytes", STATS_SENTINEL_NOT_BUILT);

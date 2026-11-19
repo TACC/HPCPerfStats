@@ -1,22 +1,25 @@
 /*! \file intel_gnr_imc.c
- *  Intel Granite Rapids DRAM IMC via LIKWID uncore PMON (CAS_COUNT_SCH0_*).
+ *  Intel Granite Rapids SCH0 IMC DRAM CAS via direct perf on the uncore PMUs (x86_uncore_perf.c).
  */
 
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_gnr_imc.h"
-#include "likwid_uncore_adapter.h"
+#include "intel_processor.h"
+#include "x86_uncore_perf.h"
 
 #define KEYS INTEL_GNR_IMC_KEYS
 
+static struct x86_uncore_perf g_intel_gnr_imc = X86_UNCORE_PERF_INIT(&x86_uncore_profile_imc_gnr);
+
 static int intel_gnr_imc_begin(struct stats_type *type)
 {
-  return likwid_uncore_adapter_begin(type, LIKWID_UNCORE_PROFILE_IMC_GNR);
+  return x86_uncore_perf_begin(type, &g_intel_gnr_imc, intel_processor_is_gnr(processor));
 }
 
 static void intel_gnr_imc_collect(struct stats_type *type)
 {
-  likwid_uncore_adapter_collect(type, LIKWID_UNCORE_PROFILE_IMC_GNR);
+  x86_uncore_perf_collect(type, &g_intel_gnr_imc);
 }
 
 struct stats_type intel_gnr_imc_stats_type = {

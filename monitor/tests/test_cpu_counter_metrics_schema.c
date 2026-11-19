@@ -1,4 +1,4 @@
-/* host_cpu_hw schema contract. Built twice: the configured backend (x86: likwid) and
+/* host_cpu_hw schema contract. Built twice: the configured backend (x86 on x86 hosts) and
  * test_cpu_counter_metrics_schema_arm (-DMONITOR_CPU_BACKEND_ARM, the Grace schema). */
 #include <assert.h>
 #include <stdio.h>
@@ -30,25 +30,28 @@ static void assert_shared_key_widths(const char *schema)
   assert(strstr(schema, " arm_est_flops,E,W=64,U=FLOP") != NULL);
 }
 
-/* D1: Grace measured FP instruction keys are W=64 software lifetimes, on arm builds only
- * (the x86 host_cpu_hw schema is unchanged). */
+/* D1: Grace measured FP instruction keys are W=64 software lifetimes, on arm builds only. */
 static void assert_d1_keys(const char *schema)
 {
 #ifdef MONITOR_CPU_BACKEND_ARM
   assert(strstr(schema, " arm_fp_dp_spec,E,W=64") != NULL);
   assert(strstr(schema, " arm_fp_sp_spec,E,W=64") != NULL);
   assert(strstr(schema, " arm_fp_hp_spec,E,W=64") != NULL);
-  /* D6 (Phase 1b): PMU sharing time lifetimes (nanoseconds), arm builds only. */
-  assert(strstr(schema, " pmu_enabled_time,E,W=64,U=ns") != NULL);
-  assert(strstr(schema, " pmu_running_time,E,W=64,U=ns") != NULL);
-  assert(strstr(schema, " pmu_solo_running_time,E,W=64,U=ns") != NULL);
 #else
   assert(strstr(schema, "arm_fp_dp_spec") == NULL);
   assert(strstr(schema, "arm_fp_sp_spec") == NULL);
   assert(strstr(schema, "arm_fp_hp_spec") == NULL);
-  assert(strstr(schema, "pmu_enabled_time") == NULL);
-  assert(strstr(schema, "pmu_running_time") == NULL);
 #endif
+}
+
+/* Direct-perf keys on every backend: D6 PMU sharing lifetimes (ns) and the W=64 FLOP totals. */
+static void assert_direct_perf_keys(const char *schema)
+{
+  assert(strstr(schema, " pmu_enabled_time,E,W=64,U=ns") != NULL);
+  assert(strstr(schema, " pmu_running_time,E,W=64,U=ns") != NULL);
+  assert(strstr(schema, " pmu_solo_running_time,E,W=64,U=ns") != NULL);
+  assert(strstr(schema, " fp_ops_retired,E,W=64,U=FLOP") != NULL);
+  assert(strstr(schema, " amd_fp_dp_ops,E,W=64,U=FLOP") != NULL);
 }
 
 int main(void)
@@ -63,6 +66,7 @@ int main(void)
   assert_forbidden_legacy_keys_absent(cpu_counter_schema_def);
   assert_shared_key_widths(cpu_counter_schema_def);
   assert_d1_keys(cpu_counter_schema_def);
+  assert_direct_perf_keys(cpu_counter_schema_def);
   printf("test_cpu_counter_metrics_schema passed\n");
   return 0;
 }

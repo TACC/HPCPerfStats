@@ -201,7 +201,7 @@ class BuildScriptsPy36Test(unittest.TestCase):
             build = Path(tmp)
             (build / "src").mkdir()
             (build / "src" / "Makefile").write_text(
-                "AM_CPPFLAGS = -DMONITOR_WITH_HARDWARE -DMONITOR_CPU_BACKEND_LIKWID\n",
+                "AM_CPPFLAGS = -DMONITOR_WITH_HARDWARE -DMONITOR_CPU_BACKEND_X86\n",
                 encoding="utf-8",
             )
             header = build / "src" / "monitor_capability_slug.h"

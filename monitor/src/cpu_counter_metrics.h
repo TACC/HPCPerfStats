@@ -3,15 +3,16 @@
 
 #define CPU_COUNTER_METRICS_ST_NAME "host_cpu_hw"
 
+/* Direct-perf FLOP and PMU-sharing keys on every backend: fp_ops_retired (AMD total FLOPs,
+ * D10 / D12), amd_fp_dp_ops (Zen5 double-precision FLOPs, D12), and the D6 sharing lifetimes
+ * in ns summed over the CPU's open core events (enabled, running on a counter, solo-expected). */
+
 /* Grace measured FP instruction counts (D1, arm_core_perf): scaled software lifetimes, so W=64
- * (O11). D6 PMU sharing (Phase 1b): enabled / running / solo-expected counter time lifetimes in
- * ns, summed over the CPU's open events (arm_core_counts). Declared on `arm` builds only, so the
- * x86 host_cpu_hw schema is unchanged. */
+ * (O11). Declared on `arm` builds only. */
 #ifdef MONITOR_CPU_BACKEND_ARM
 #define CPU_COUNTER_METRICS_ARM_FP_KEYS                                                            \
   , X(arm_fp_dp_spec, "E,W=64", ""), X(arm_fp_sp_spec, "E,W=64", ""),                              \
-      X(arm_fp_hp_spec, "E,W=64", ""), X(pmu_enabled_time, "E,W=64,U=ns", ""),                     \
-      X(pmu_running_time, "E,W=64,U=ns", ""), X(pmu_solo_running_time, "E,W=64,U=ns", "")
+      X(arm_fp_hp_spec, "E,W=64", "")
 #else
 #define CPU_COUNTER_METRICS_ARM_FP_KEYS
 #endif
@@ -38,7 +39,9 @@
       X(fp_arith_inst_retired_256b_packed_single, "E,W=48", ""),                                   \
       X(fp_arith_inst_retired_512b_packed_single, "E,W=48", ""),                                   \
       X(arm_est_flops, "E,W=64,U=FLOP", ""), X(arm_int8_ops, "E,W=48", ""),                        \
-      X(arm_int16_ops, "E,W=48", ""),                                                              \
-      X(arm_dram_bw_bytes, "E,W=64,U=B", "") CPU_COUNTER_METRICS_ARM_FP_KEYS
+      X(arm_int16_ops, "E,W=48", ""), X(arm_dram_bw_bytes, "E,W=64,U=B", ""),                      \
+      X(fp_ops_retired, "E,W=64,U=FLOP", ""), X(amd_fp_dp_ops, "E,W=64,U=FLOP", ""),               \
+      X(pmu_enabled_time, "E,W=64,U=ns", ""), X(pmu_running_time, "E,W=64,U=ns", ""),              \
+      X(pmu_solo_running_time, "E,W=64,U=ns", "") CPU_COUNTER_METRICS_ARM_FP_KEYS
 
 #endif

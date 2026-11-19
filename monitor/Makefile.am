@@ -10,7 +10,8 @@ capabilities:
 distclean-local:
 	rm -rf .build-static
 
-# Pre-built static libev / rabbitmq-c / (x86) LIKWID from scripts/prepare_rpmbuild_dirs.sh.
+# Pre-built static libev / rabbitmq-c (plus libbpf for the eBPF profiler) from
+# scripts/prepare_rpmbuild_dirs.sh.
 # Shipped inside the release tarball for rpmbuild; the spec links the daemon against this tree only.
 # make dist requires HPC_BUNDLE_EMBED_PREFIX=1 and a populated embedded-static-prefix/; see prepare script.
 dist-hook:

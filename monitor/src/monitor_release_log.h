@@ -68,7 +68,7 @@ void monitor_release_sentinel_note(unsigned int code);
  *  Returns the untruncated length, or -1 for an empty buffer. */
 int monitor_release_sentinel_summary(char *buf, size_t len);
 
-/*! Redirect stderr to /dev/null (LIKWID-style). Sets *saved_fd / *null_fd to -1 on failure. */
+/*! Redirect stderr to /dev/null around a noisy library call. Sets *saved_fd / *null_fd to -1 on failure. */
 void monitor_stderr_quiet_begin(int *saved_fd, int *null_fd);
 
 /*! Restore stderr after monitor_stderr_quiet_begin. */

@@ -56,12 +56,6 @@ hpcperfstatsd_CPPFLAGS += \
 	-DDEBUG
 endif
 
-if LIKWID
-hpcperfstatsd_CPPFLAGS += \
-	-DHAVE_LIKWID \
-	@MONITOR_ARCH_CPPFLAG@
-endif
-
 if MONITOR_SHARED_NODE_MULTI_JID
 hpcperfstatsd_CPPFLAGS += \
 	-DMONITOR_SHARED_NODE_MULTI_JID
@@ -83,6 +77,8 @@ hpcperfstatsd_SOURCES = \
 	cpuid.c \
 	intel_cpuid_match.h \
 	intel_cpuid_match.c \
+	amd_cpuid_match.h \
+	amd_cpuid_match.c \
 	intel_processor.h \
 	intel_processor.c \
 	daemonize.h \
@@ -236,11 +232,21 @@ TYPES 	= \
 if HARDWARE
 hpcperfstatsd_SOURCES += \
 	cpu_counter_metrics.h
-if CPU_BACKEND_LIKWID
+if CPU_BACKEND_X86
 TYPES 	+= \
 	cpu_counter_metrics.c \
-	cpu_counter_metrics_likwid_begin.c \
-	cpu_counter_metrics_likwid_begin.h \
+	cpu_counter_metrics_x86_publish.c \
+	cpu_counter_metrics_x86_publish.h \
+	perf_util.c \
+	perf_util.h \
+	x86_core_perf.c \
+	x86_core_perf.h \
+	x86_uncore_perf.c \
+	x86_uncore_perf.h \
+	x86_rapl.c \
+	x86_rapl.h \
+	rapl_powercap.c \
+	rapl_powercap.h \
 	amd64_rapl.c \
 	intel_rapl.c \
 	amd_x86_uncore_df.c \
@@ -251,9 +257,15 @@ TYPES 	+= \
 	intel_srf_imc.c \
 	intel_skx_imc.c
 hpcperfstatsd_SOURCES += \
-	cpu_counter_metrics.h \
-	rapl_likwid_stats.h \
-	rapl_likwid_stats.c
+	intel_skx_imc.h \
+	intel_icx_imc.h \
+	intel_spr_imc.h \
+	intel_emr_imc.h \
+	intel_gnr_imc.h \
+	intel_srf_imc.h \
+	amd_x86_uncore_df.h \
+	amd_processor.h \
+	amd_processor.c
 endif
 if CPU_BACKEND_ARM
 TYPES += \
@@ -276,42 +288,6 @@ hpcperfstatsd_SOURCES += \
 	arm_imc_scf.h
 endif
 endif
-endif
-
-if LIKWID
-hpcperfstatsd_SOURCES += \
-	likwid_rapl.h \
-	likwid_rapl.c \
-	likwid_rapl_pwr.h \
-	likwid_rapl_pwr.c \
-	rapl_powercap.h \
-	rapl_powercap.c \
-	likwid_pmc_adapter.h \
-	likwid_pmc_adapter.c \
-	likwid_pmc_access_mode.h \
-	likwid_pmc_access_mode.c \
-	likwid_pmc_force_env.c \
-	likwid_pmc_schema_map.h \
-	likwid_pmc_schema_map.c \
-	likwid_arch_map.h \
-	likwid_arch_map.c \
-	likwid_uncore_adapter.h \
-	likwid_uncore_adapter.c \
-	likwid_uncore_profiles.h \
-	likwid_uncore_profiles.c \
-	likwid_result_convert.h \
-	likwid_result_convert.c \
-	intel_skx_imc.h \
-	intel_icx_imc.h \
-	intel_spr_imc.h \
-	intel_emr_imc.h \
-	intel_gnr_imc.h \
-	intel_srf_imc.h \
-	amd_x86_uncore_df.h \
-	amd_cpuid_match.h \
-	amd_cpuid_match.c \
-	amd_processor.h \
-	amd_processor.c
 endif
 
 if INFINIBAND

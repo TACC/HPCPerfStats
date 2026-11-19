@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Install static archives (libev, rabbitmq-c, LIKWID) into <repo>/.build/prefix
-# so monitor default --enable-all-static can link (-llikwid -llikwid-lua ...).
+# Install static archives (libev, rabbitmq-c) into <repo>/.build/prefix
+# so monitor default --enable-all-static can link (-lev -lrabbitmq ...).
 #
 # Reuses trees under <repo>/.build/src where possible; may download tarballs if
 # missing. See build_static_bundle.sh for pins and env overrides.

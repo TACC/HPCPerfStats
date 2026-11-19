@@ -1,5 +1,5 @@
 #!/bin/sh
-# Regression: legacy AMD MSR PMC/DF collectors must be gone (LIKWID-only).
+# Regression: legacy AMD MSR PMC/DF collectors must be gone (direct perf only).
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 

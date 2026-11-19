@@ -7,7 +7,6 @@
 
 #include "collect.h"
 #include "collect_tier.h"
-#include "cpu_counter_metrics.h"
 #include "hwdetect.h"
 #include "metric_profiler.h"
 #include "monitor_log.h"
@@ -111,33 +110,15 @@ static void stats_runtime_begin_one_type(struct stats_type *type)
     (*type->st_begin)(type);
 }
 
-/*! Registry iteration reaches AMD DF/RAPL before host_cpu_hw. The exclusive
- *  LIKWID backend runs HPMinit in host_cpu_hw begin, so begin it first. The aarch64 `arm` backend
- *  needs no order: arm_aarch64_imc reads Grace SCF by direct perf on its own fds. */
-#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
-#define STATS_RUNTIME_BEGIN_CPU_HW_FIRST 1
-#endif
+/*! Every type opens its own counters, so types begin in registry order. */
 static void stats_runtime_begin_enabled_types(void)
 {
   size_t i = 0;
   struct stats_type *type;
-#ifdef STATS_RUNTIME_BEGIN_CPU_HW_FIRST
-  struct stats_type *host_cpu_hw;
 
-  host_cpu_hw = stats_type_get(CPU_COUNTER_METRICS_ST_NAME);
-  if (host_cpu_hw != NULL && host_cpu_hw->st_enabled)
-    stats_runtime_begin_one_type(host_cpu_hw);
-#endif
-
-  i = 0;
   while ((type = stats_type_for_each(&i)) != NULL) {
-    if (!type->st_enabled)
-      continue;
-#ifdef STATS_RUNTIME_BEGIN_CPU_HW_FIRST
-    if (host_cpu_hw != NULL && type == host_cpu_hw)
-      continue;
-#endif
-    stats_runtime_begin_one_type(type);
+    if (type->st_enabled)
+      stats_runtime_begin_one_type(type);
   }
 }
 

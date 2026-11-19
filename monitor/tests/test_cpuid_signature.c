@@ -5,7 +5,7 @@
 
 static void test_intel_signatures(void)
 {
-  /* SKX vs CLX: LIKWID splits model 0x55 by stepping. */
+  /* SKX vs CLX: model 0x55 splits by stepping. */
   assert(intel_cpuid_sig_to_processor("GenuineIntel", "06_55", 0) == SKYLAKE_X);
   assert(intel_cpuid_sig_to_processor("GenuineIntel", "06_55", 4) == SKYLAKE_X);
   assert(intel_cpuid_sig_to_processor("GenuineIntel", "06_55", 5) == CASCADE_LAKE);

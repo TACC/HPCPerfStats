@@ -1,7 +1,7 @@
 /* `arm` host_cpu_hw accumulate/publish math: util, fail-soft cycles, and the measured
  * arm_core_perf keys.
  *
- * O15 (3.1): removing MONITOR_CPU_LIKWID_OVERLAY must never revive the /proc/stat synthetic
+ * O15 (3.1): the removed aarch64 overlay must never revive the /proc/stat synthetic
  * instr / FLOP / FP estimate; those keys come only from measured counters.
  * O16: measured CYC > 0 overwrites aperf / mperf / cpu_clock_est_cycles, else fail-soft stays. */
 #include <assert.h>
@@ -223,6 +223,21 @@ static void test_measured_cycles_overwrite_or_fail_soft(void)
   assert(test_stats_stub_find(&stub, "aperf", &val) && val == 7ULL);
   assert(test_stats_stub_find(&stub, "mperf", &val) && val == 7ULL);
   assert(test_stats_stub_find(&stub, "cpu_clock_est_cycles", &val) && val == W48 + 7ULL);
+
+  /* The fail-soft util x freq aperf / mperf are W=48 keys too: modulo 2^48, while the W=64
+   * cpu_clock_est_cycles keeps the full estimate (O11). They used to go out unmasked. */
+  m.have[ARM_CORE_CYC] = 0;
+  reset_arm_arrays();
+  s_ctr5[0] = W48 + 3ULL;
+  s_aperf[0] = W48 + 3ULL;
+  s_mperf[0] = 2 * W48 + 9ULL;
+  test_stats_stub_reset(&stub);
+  test_stats_stub_bind(&stub);
+  publish_arm_cpu_stats(&g_dummy_stats, 0);
+  publish_arm_measured_stats(&g_dummy_stats, &m);
+  assert(test_stats_stub_find(&stub, "aperf", &val) && val == 3ULL);
+  assert(test_stats_stub_find(&stub, "mperf", &val) && val == 9ULL);
+  assert(test_stats_stub_find(&stub, "cpu_clock_est_cycles", &val) && val == W48 + 3ULL);
   test_stats_stub_unbind();
 }
 

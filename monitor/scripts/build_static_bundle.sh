@@ -41,17 +41,15 @@
 # host: libdcgm and libnvidia-ml are dlopen()ed at runtime against vendored headers. Extra
 # CONFIGURE_ARGS still override or extend (e.g. --disable-lustre).
 #
-# CPU counters: configure uses --with-cpu-counter-backend=auto (x86 -> LIKWID,
-# else arm: /proc/stat util, cpufreq clock, direct perf core + Grace SCF counters; no LIKWID,
-# no DCGM).
+# CPU counters: configure uses --with-cpu-counter-backend=auto (x86 -> x86: direct perf core,
+# IMC/HBM/DF uncore and RAPL power counters with powercap fallback; else arm: /proc/stat util,
+# cpufreq clock, direct perf core + Grace SCF counters). No PMU library and no DCGM on any arch.
 #
 # Pinned versions: edit STATIC_PIN_* below. Runtime overrides: LIBEV_VER,
-# RABBITMQ_VER, LIKWID_TAG, and *_URL_FMT for mirrors.
+# RABBITMQ_VER, and *_URL_FMT for mirrors.
 #
 # Architecture (deps + configure):
-#   x86_64 / i686: build LIKWID static libs (ACCESSMODE=perf_event); configure auto-selects
-#   the exclusive LIKWID CPU backend.
-#   Other (e.g. aarch64): no LIKWID build; configure auto-selects the arm backend (direct perf).
+#   Every arch builds the same static deps (libev, rabbitmq-c; libbpf for the eBPF profiler).
 #   DCGM and NVML headers are vendored under monitor/third_party/nvidia-{dcgm,nvml}; both
 #   libraries are loaded at runtime on every arch (nothing to link).
 #
@@ -74,15 +72,11 @@ readonly REPO_ROOT
 # Release tarballs: upstream version strings exactly as used in URLs and paths.
 STATIC_PIN_LIBEV_VERSION="4.33"
 STATIC_PIN_RABBITMQ_C_VERSION="0.17.0"
-# LIKWID: Git tag name without a leading "v" (archive is .../tags/v${VER}.tar.gz).
-STATIC_PIN_LIKWID_VERSION="5.5.2"
 STATIC_PIN_LIBBPF_VERSION="1.7.0"
-# LIKWID is the PMU library on x86 only (aarch64 reads Grace counters by direct perf).
 # Optional: override tarball base URLs (must contain a single %s for version where used).
 STATIC_PIN_LIBEV_URL_FMT="http://dist.schmorp.de/libev/libev-%s.tar.gz"
 # rabbitmq-c: source-of-truth repo is alanxz/rabbitmq-c; github.com/rabbitmq/rabbitmq-c archive URLs return 404.
 STATIC_PIN_RABBITMQ_C_URL_FMT="https://github.com/alanxz/rabbitmq-c/archive/refs/tags/v%s.tar.gz"
-STATIC_PIN_LIKWID_URL_FMT="https://github.com/RRZE-HPC/likwid/archive/refs/tags/v%s.tar.gz"
 STATIC_PIN_LIBBPF_URL_FMT="https://github.com/libbpf/libbpf/archive/refs/tags/v%s.tar.gz"
 # =============================================================================
 
@@ -197,11 +191,9 @@ static_bundle_apply_release_build_flags() {
 # Effective pins (env overrides keep legacy names working).
 LIBEV_VER="${LIBEV_VER:-${STATIC_PIN_LIBEV_VERSION}}"
 RABBITMQ_VER="${RABBITMQ_VER:-${STATIC_PIN_RABBITMQ_C_VERSION}}"
-LIKWID_TAG="${LIKWID_TAG:-${STATIC_PIN_LIKWID_VERSION}}"
 LIBBPF_VER="${LIBBPF_VER:-${STATIC_PIN_LIBBPF_VERSION}}"
 LIBEV_URL_FMT="${LIBEV_URL_FMT:-${STATIC_PIN_LIBEV_URL_FMT}}"
 RABBITMQ_C_URL_FMT="${RABBITMQ_C_URL_FMT:-${STATIC_PIN_RABBITMQ_C_URL_FMT}}"
-LIKWID_URL_FMT="${LIKWID_URL_FMT:-${STATIC_PIN_LIKWID_URL_FMT}}"
 LIBBPF_URL_FMT="${LIBBPF_URL_FMT:-${STATIC_PIN_LIBBPF_URL_FMT}}"
 
 WANT_METRIC_PROFILER_EBPF=0
@@ -240,23 +232,11 @@ fetch_url() {
   fetch_url_validate_gzip "${dest}" "${url}"
 }
 
-# True when this host matches monitor configure's x86 LIKWID backend (see configure.ac is_x86).
+# True on an x86 build host (configure auto selects the x86 CPU backend there).
 is_x86_build_host() {
   case "$(uname -m)" in
   x86_64 | i?86) return 0 ;;
   *) return 1 ;;
-  esac
-}
-
-# LIKWID 5.5.2 config.mk defaults to COMPILER=GCC (x86). Native aarch64/POWER
-# must pass GCCARMv8 / GCCPOWER or make compiles rdpmc / .intel_syntax.
-likwid_compiler_for_host() {
-  case "$(uname -m)" in
-  x86_64 | i?86) printf '%s\n' "GCC" ;;
-  aarch64 | arm64) printf '%s\n' "GCCARMv8" ;;
-  armv7* | arm) printf '%s\n' "GCCARMv7" ;;
-  ppc64le | ppc64 | powerpc64le | powerpc64) printf '%s\n' "GCCPOWER" ;;
-  *) printf '%s\n' "" ;;
   esac
 }
 
@@ -321,15 +301,13 @@ monitor_lspci_sees_intel() {
 # Prints detection summary and sets STATIC_BUNDLE_FEAT_FLAGS (configure --disable-* list).
 static_bundle_print_detection_summary() {
   STATIC_BUNDLE_FEAT_FLAGS=()
-  local mach cpu_backend likwid_build lspci_path pci_nvidia pci_amd pci_intel ib_ok opa_ok dcgm_ok amd_ok intel_ok
+  local mach cpu_backend lspci_path pci_nvidia pci_amd pci_intel ib_ok opa_ok dcgm_ok amd_ok intel_ok
 
   mach="$(uname -m 2>/dev/null || echo unknown)"
   if is_x86_build_host; then
-    cpu_backend="LIKWID"
-    likwid_build="yes (this run compiles LIKWID into PREFIX unless SKIP_DEPS=1)"
+    cpu_backend="x86 (direct perf core, uncore and RAPL counters)"
   else
     cpu_backend="arm (direct perf core + SCF counters)"
-    likwid_build="no (x86 only; aarch64 uses direct perf)"
   fi
 
   if command -v lspci >/dev/null 2>&1; then
@@ -419,7 +397,6 @@ static_bundle_print_detection_summary() {
   printf '%s\n' "=== Static bundle: build host detection (before any compile) ==="
   printf '%-36s %s\n' "Machine (uname -m):" "${mach}"
   printf '%-36s %s\n' "CPU counter backend (configure auto):" "${cpu_backend}"
-  printf '%-36s %s\n' "LIKWID static dependency build:" "${likwid_build}"
   if fleet_stampede3_enabled; then
     printf '%-36s %s\n' "Fleet matrix:" "stampede3 (HPCS_BUNDLE_FLEET or scripts/fleet/stampede3.force)"
   elif fleet_ls6_enabled; then
@@ -546,58 +523,6 @@ build_rabbitmq_c() {
   fi
 }
 
-build_likwid() {
-  local d="${SRCDIR}/likwid-${LIKWID_TAG}"
-  local t="${SRCDIR}/likwid-${LIKWID_TAG}.tar.gz"
-  local likwid_cflags likwid_compiler
-  likwid_compiler="$(likwid_compiler_for_host)"
-  if test -z "${likwid_compiler}"; then
-    echo "error: LIKWID ${LIKWID_TAG} has no COMPILER for host $(uname -m) (supported: x86 GCC, aarch64 GCCARMv8, POWER GCCPOWER)" >&2
-    exit 1
-  fi
-  if test ! -d "$d"; then
-    # shellcheck disable=SC2059  # *_URL_FMT is the printf format
-    fetch_url "$(printf "${LIKWID_URL_FMT}" "${LIKWID_TAG}")" "$t"
-    tar -C "${SRCDIR}" -xzf "$t"
-    if test ! -d "$d"; then
-      if test -d "${SRCDIR}/likwid-${LIKWID_TAG#v}"; then
-        mv "${SRCDIR}/likwid-${LIKWID_TAG#v}" "$d"
-      else
-        echo "Could not locate extracted LIKWID directory under ${SRCDIR}" >&2
-        exit 1
-      fi
-    fi
-  fi
-  cd "$d"
-  if grep -q '^SHARED_LIBRARY = true' config.mk 2>/dev/null; then
-    sed -i 's/^SHARED_LIBRARY = true/SHARED_LIBRARY = false/' config.mk
-  fi
-  likwid_cflags="$(append_fpic_flags "${CFLAGS-}")"
-  # LIKWID still builds shared liblikwidpin.so even when SHARED_LIBRARY=false.
-  # GCC's pinlib link uses SHARED_LFLAGS + LIBS but not LFLAGS; without -pthread,
-  # pthread_setaffinity_np is undefined on some hosts (seen on Lonestar6).
-  # Command-line LIBS= replaces makefile LIBS; pinlib's `LIBS += -ldl` does NOT
-  # append (GNU make ignores += on cmdline vars without override) - keep -ldl here
-  # or dlopen/dlsym fail on LS6 for pinlib and the lua helper binary.
-  local -a likwid_mk=(
-    COMPILER="${likwid_compiler}"
-    CFLAGS="${likwid_cflags}"
-    SHARED_LFLAGS="-shared -fvisibility=hidden -pthread"
-    LIBS="-lm -lrt -pthread -ldl"
-  )
-  make clean >/dev/null 2>&1 || true
-  # Makefile ACCESSMODE=perf_event sets -DLIKWID_USE_PERFEVENT so runtime PERF
-  # can call perfmon_init (cpu/power/uncore_imc sysfs). A DIRECT-built archive
-  # with runtime PERF leaves access_init NULL -> ENODEV. Runtime is PERF-only
-  # (HPCPERFSTATS_LIKWID_ACCESS=direct is rejected).
-  make -j"${JOBS}" PREFIX="${PREFIX}" INSTALLED_PREFIX="${PREFIX}" \
-    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=perf_event \
-    "${likwid_mk[@]}"
-  make install PREFIX="${PREFIX}" INSTALLED_PREFIX="${PREFIX}" \
-    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=perf_event \
-    "${likwid_mk[@]}"
-}
-
 build_libbpf() {
   local d="${SRCDIR}/libbpf-${LIBBPF_VER}"
   local t="${SRCDIR}/libbpf-${LIBBPF_VER}.tar.gz"
@@ -671,11 +596,7 @@ build_monitor() {
   echo ""
   echo "Built: ${daemon}"
   if command -v ldd >/dev/null 2>&1; then
-    if is_x86_build_host; then
-      echo "Dynamic dependencies (libc/libpthread; plus libdcgm/ibmad if those features stayed enabled):"
-    else
-      echo "Dynamic dependencies (expect system libc and libdcgm when DCGM CPU backend is used):"
-    fi
+    echo "Dynamic dependencies (system libc/libm; plus libibmad / OPA libs if linked, not dlopen'd):"
     ldd "${daemon}" || true
   fi
   if test "${SKIP_CAPABILITIES:-0}" != "1"; then
@@ -696,19 +617,16 @@ Notes
 EOF
   if is_x86_build_host; then
     cat <<'EOF'
-- This path links rabbitmq-c, libev, and LIKWID statically into hpcperfstatsd.
-  LIKWID's static lib embeds bundled Lua and internal hwloc objects; configure also
-  pulls -llikwid-hwloc and -llikwid-lua when using --enable-all-static.
-- This path builds LIKWID with ACCESSMODE=perf_event (-DLIKWID_USE_PERFEVENT).
-  Runtime always uses ACCESSMODE_PERF (HPCPERFSTATS_LIKWID_ACCESS unset/empty/perf).
-  HPCPERFSTATS_LIKWID_ACCESS=direct is rejected (no MSR path).
+- This path links rabbitmq-c and libev statically into hpcperfstatsd. The CPU counter
+  backend is x86: direct perf core, IMC/HBM/DF uncore and RAPL power counters (powercap
+  energy_uj fallback), scaled by enabled/running, never pinned; no MSR access.
   Run with privileges appropriate for perf_event and RAPL on your site.
 EOF
   else
     cat <<'EOF'
-- On non-x86, this path links rabbitmq-c and libev statically; LIKWID is not built. The CPU
-  counter backend is arm (/proc/stat util, cpufreq clock) plus direct perf core and Grace SCF
-  counters scaled by enabled/running; no DCGM. NVIDIA GPU code loads libnvidia-ml / libdcgm at
+- On non-x86, this path links rabbitmq-c and libev statically. The CPU counter backend is
+  arm (/proc/stat util, cpufreq clock) plus direct perf core and Grace SCF counters scaled
+  by enabled/running; no DCGM. NVIDIA GPU code loads libnvidia-ml / libdcgm at
   runtime (vendored headers).
 EOF
   fi
@@ -735,10 +653,6 @@ build_static_dependencies() {
     echo "Pinned static deps: libev=${LIBEV_VER} rabbitmq-c=${RABBITMQ_VER}"
     build_libev
     build_rabbitmq_c
-    if is_x86_build_host; then
-      echo "Pinned static deps: likwid=${LIKWID_TAG}"
-      build_likwid
-    fi
     if test "${WANT_METRIC_PROFILER_EBPF}" = "1"; then
       echo "Pinned static deps (metric profiler ebpf): libbpf=${LIBBPF_VER}"
       build_libbpf
@@ -750,7 +664,7 @@ usage_exit() {
   cat <<EOF
 Usage: $(basename "$0") [--deps-only] [--print-configure-flags] [--release] [CONFIGURE_ARGS...]
 
-  --deps-only   Build and install static archives (libev, rabbitmq-c, LIKWID on x86) into PREFIX
+  --deps-only   Build and install static archives (libev, rabbitmq-c) into PREFIX
                 only. Use this when monitor configure
                 --enable-all-static fails at link time with missing static .a
                 archives.
@@ -819,11 +733,7 @@ main() {
   if test "${deps_only}" = "1"; then
     echo ""
     echo "Static dependency install complete: PREFIX=${PREFIX}"
-    if is_x86_build_host; then
-      echo "Expected archives include: libev.a librabbitmq.a liblikwid.a liblikwid-hwloc.a liblikwid-lua.a"
-    else
-      echo "Expected archives include: libev.a librabbitmq.a (no LIKWID on non-x86)"
-    fi
+    echo "Expected archives include: libev.a librabbitmq.a"
     if test "${WANT_METRIC_PROFILER_EBPF}" = "1"; then
       echo "Expected archives include: libbpf.a (metric profiler eBPF backend selected)."
     fi

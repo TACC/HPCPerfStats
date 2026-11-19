@@ -1,8 +1,9 @@
 /* perf_util: sysfs PMU parse and the enabled/running scaled read.
  *
  * Regression for finding #5 (c122-018, 2026-11-13): nvidia-powerd holds most Grace core PMCs, so
- * events run ~25% of the time; LIKWID read bare counts without time_enabled/time_running and the
- * monitor published ~4x low instr/cycles. Every read must scale by d_enabled / d_running. */
+ * events run ~25% of the time; the old PMU library read bare counts without time_enabled /
+ * time_running and the monitor published ~4x low instr/cycles. Every read must scale by
+ * d_enabled / d_running. */
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>

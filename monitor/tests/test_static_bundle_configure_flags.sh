@@ -15,7 +15,7 @@ if ! test -f /usr/include/gpu_performance_api/gpu_perf_api.h \
     || { echo "expected --disable-amd-gpu when GPUPerfAPI header is absent" >&2; exit 1; }
 fi
 
-# x86 LIKWID fleet builds compile nvidia_gpu with runtime DCGM dlopen; missing
+# x86 fleet builds compile nvidia_gpu with runtime DCGM dlopen; missing
 # link-time libdcgm must not force --disable-gpu.
 case "$(uname -m)" in
   x86_64|amd64|i?86)
@@ -113,37 +113,6 @@ case "$(uname -m)" in
       || { echo "stampede3 fleet must pass --enable-intel-gpu when XPUM headers exist" >&2; exit 1; }
     ;;
 esac
-
-# LIKWID pinlib (liblikwidpin.so) is still built with SHARED_LIBRARY=false; its
-# GCC link omits LFLAGS (-pthread). Bundle must pass -pthread or LS6 fails with
-# undefined reference to pthread_setaffinity_np. Command-line LIBS= must also
-# include -ldl (makefile LIBS += -ldl does not append to cmdline vars).
-if ! awk '/^build_likwid\(\)/{p=1} p&&/^}$/{print; exit} p' ./scripts/build_static_bundle.sh \
-  | grep -q -- '-pthread'; then
-  echo "build_likwid must pass -pthread for liblikwidpin.so (Lonestar6 link)" >&2
-  exit 1
-fi
-if ! awk '/^build_likwid\(\)/{p=1} p&&/^}$/{print; exit} p' ./scripts/build_static_bundle.sh \
-  | grep -q 'SHARED_LFLAGS=.*-pthread'; then
-  echo "build_likwid must set SHARED_LFLAGS with -pthread for pinlib" >&2
-  exit 1
-fi
-if ! awk '/^build_likwid\(\)/{p=1} p&&/^}$/{print; exit} p' ./scripts/build_static_bundle.sh \
-  | grep -q 'LIBS=.*-ldl'; then
-  echo "build_likwid LIBS= must include -ldl (cmdline override drops makefile += -ldl)" >&2
-  exit 1
-fi
-if ! awk '/^build_likwid\(\)/{p=1} p&&/^}$/{print; exit} p' ./scripts/build_static_bundle.sh \
-  | grep -q 'ACCESSMODE=perf_event'; then
-  echo "build_likwid must use ACCESSMODE=perf_event (runtime PERF needs LIKWID_USE_PERFEVENT)" >&2
-  exit 1
-fi
-if awk '/^build_likwid\(\)/{p=1} p&&/^}$/{print; exit} p' ./scripts/build_static_bundle.sh \
-  | grep -E '[[:space:]]ACCESSMODE=direct([[:space:]]|$)' >/dev/null; then
-  echo "build_likwid must not use ACCESSMODE=direct (ENODEV under runtime PERF)" >&2
-  exit 1
-fi
-
 
 # Regression (c122-018 2026-11-09): a fleet marker must skip the no-fleet asserts, not fail.
 if test -z "${FLEET_MARKER_SELFTEST:-}"; then

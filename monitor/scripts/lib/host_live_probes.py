@@ -35,6 +35,16 @@ def probe_cpu_devices() -> list[str]:
     return devs
 
 
+def probe_x86_cpu_vendor(cpuinfo: str = "/proc/cpuinfo") -> str | None:
+    """"intel" / "amd" from the first /proc/cpuinfo vendor_id line (x86_core_perf picks its
+    event table the same way); None on other architectures or when unreadable."""
+    for line in _read_lines(cpuinfo):
+        key, _, val = line.partition(":")
+        if key.strip() == "vendor_id":
+            return {"GenuineIntel": "intel", "AuthenticAMD": "amd"}.get(val.strip())
+    return None
+
+
 def probe_net_devices() -> list[str]:
     """Match host_net collector: IFF_UP interfaces from /sys/class/net (net.c)."""
     net_base = Path("/sys/class/net")
@@ -443,75 +453,42 @@ def probe_intel_gpu_devices() -> list[str]:
     return [str(i) for i in range(n)]
 
 
-def _edac_mc_root() -> Path:
-    env = os.environ.get("HPCPERFSTATS_EDAC_MC_ROOT", "")
-    if env:
-        return Path(env)
-    return Path("/sys/devices/system/edac/mc")
+# x86_uncore_perf.c: one row per uncore PMU instance under the perf devices dir, named by the
+# instance index (pmu_index: decimal suffix below X86_UNCORE_MAX_INDEX); never a fixed box count.
+_X86_UNCORE_MAX_INDEX = 4096
+_X86_UNCORE_ROWS = {
+    "intel_x86_uncore_imc_skx": (("uncore_imc_", "mbox"),),
+    "intel_x86_uncore_imc_icx": (("uncore_imc_", "mdev"),),
+    "intel_x86_uncore_imc_spr": (("uncore_imc_", "mbox"), ("uncore_hbm_", "hbm")),
+    "intel_x86_uncore_imc_emr": (("uncore_imc_", "mbox"), ("uncore_hbm_", "hbm")),
+    "intel_x86_uncore_imc_gnr": (("uncore_imc_", "mbox"),),
+    "intel_x86_uncore_imc_srf": (("uncore_imc_", "mbox"),),
+}
+_AMD_DF_TYPES = ("amd_x86_uncore_df_rome", "amd_x86_uncore_df_milan", "amd_x86_uncore_df_genoa",
+                 "amd_x86_uncore_df_turin")
 
 
-def _dimm_mem_type_is_hbm(mem_type: str) -> bool:
-    if not mem_type:
-        return False
-    upper = mem_type.upper()
-    return "HBM" in upper
+def _perf_devices_dir() -> Path:
+    return Path(os.environ.get("HPCPERFSTATS_PERF_DEVICES_DIR", "/sys/bus/event_source/devices"))
 
 
-def probe_edac_mem_classes() -> tuple[bool, bool]:
-    """Mirror host_edac_scan_mem_classes() from host_edac_mem_topology.c."""
-    root = _edac_mc_root()
-    has_ddr = False
-    has_hbm = False
-    if not root.is_dir():
-        return has_ddr, has_hbm
-    for mc in sorted(root.iterdir()):
-        if not mc.is_dir() or not mc.name.startswith("mc"):
-            continue
-        for dimm in sorted(mc.iterdir()):
-            if not dimm.is_dir() or not dimm.name.startswith("dimm"):
-                continue
-            speed_path = dimm / "dimm_mem_speed"
-            try:
-                mtps = int(speed_path.read_text(encoding="utf-8").strip())
-            except (OSError, ValueError):
-                continue
-            if mtps <= 0:
-                continue
-            type_path = dimm / "dimm_mem_type"
-            mem_type = ""
-            try:
-                mem_type = type_path.read_text(encoding="utf-8").strip()
-            except OSError:
-                mem_type = ""
-            if _dimm_mem_type_is_hbm(mem_type):
-                has_hbm = True
-            else:
-                has_ddr = True
-    return has_ddr, has_hbm
-
-
-def _spr_imc_mbox_devices() -> list[str]:
-    return [f"mbox{i}" for i in range(16)]
-
-
-def _spr_imc_hbm_devices() -> list[str]:
-    return [f"hbm{i}" for i in range(16)]
-
-
-def probe_spr_imc_devices(
-    has_ddr: bool | None = None,
-    has_hbm: bool | None = None,
-) -> list[str]:
-    """SPR IMC dev ids matching runtime LIKWID eventset selection."""
-    if has_ddr is None or has_hbm is None:
-        has_ddr, has_hbm = probe_edac_mem_classes()
-    if has_ddr and has_hbm:
-        return sorted(_spr_imc_mbox_devices() + _spr_imc_hbm_devices())
-    if has_ddr:
-        return _spr_imc_mbox_devices()
-    if has_hbm:
-        return _spr_imc_hbm_devices()
-    return sorted(_spr_imc_mbox_devices() + _spr_imc_hbm_devices())
+def probe_x86_uncore_devices(type_name: str) -> list[str]:
+    """Rows of an x86_uncore_perf collector: <dev><N> per <pmu><N> PMU of each class (SPR / EMR:
+    uncore_imc_<N> -> mbox<N> and uncore_hbm_<N> -> hbm<N>; ICX rows are mdev<N>), or "df" when the
+    amd_df PMU exists. Ascending index per class, classes in collector order."""
+    root = _perf_devices_dir()
+    try:
+        names = [p.name for p in root.iterdir()]
+    except OSError:
+        return []
+    if type_name in _AMD_DF_TYPES:
+        return ["df"] if "amd_df" in names else []
+    rows: list[str] = []
+    for prefix, dev in _X86_UNCORE_ROWS.get(type_name, ()):
+        pat = re.compile(re.escape(prefix) + r"([0-9]+)")
+        idx = sorted(int(m.group(1)) for m in map(pat.fullmatch, names) if m)
+        rows.extend(f"{dev}{i}" for i in idx if i < _X86_UNCORE_MAX_INDEX)
+    return rows
 
 
 def merge_device_lists(
@@ -569,16 +546,9 @@ def default_devices_for_type(type_name: str) -> list[str] | None:
     if type_name == "host_power_socket":
         devs = probe_power_socket_devices()
         return devs if devs else None
-    if type_name in (
-        "intel_x86_uncore_imc_spr",
-        "intel_x86_uncore_imc_emr",
-    ):
-        return probe_spr_imc_devices()
-    if type_name in (
-        "intel_x86_uncore_imc_gnr",
-        "intel_x86_uncore_imc_srf",
-    ):
-        return _spr_imc_mbox_devices()
+    if type_name in _X86_UNCORE_ROWS or type_name in _AMD_DF_TYPES:
+        devs = probe_x86_uncore_devices(type_name)
+        return devs if devs else None
     if type_name == "amd_gpu":
         return ["0"]
     if type_name in (

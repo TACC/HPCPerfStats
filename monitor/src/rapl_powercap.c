@@ -4,16 +4,13 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "rapl_powercap.h"
-
-unsigned long long rapl_powercap_uj_to_mj(unsigned long long uj)
-{
-  return (uj + 500ULL) / 1000ULL;
-}
 
 int rapl_powercap_parse_package_id(const char *name, unsigned *socket_out)
 {
@@ -28,35 +25,20 @@ int rapl_powercap_parse_package_id(const char *name, unsigned *socket_out)
   return 0;
 }
 
-const char *rapl_powercap_schema_key_from_name(const char *name, int amd_path)
+/* Parses one unsigned decimal sysfs value from fd at offset 0. 0, or -errno (-EIO if garbled). */
+static int pread_ull(int fd, uint64_t *out)
 {
-  if (name == NULL || name[0] == '\0')
-    return NULL;
-  if (strcmp(name, "core") == 0 || strcmp(name, "cores") == 0)
-    return amd_path ? "core_energy" : "pp0_energy";
-  if (strcmp(name, "dram") == 0 || strcmp(name, "ram") == 0)
-    return "dram_energy";
-  return NULL;
-}
-
-/* 0 on success; -EACCES / -EPERM when the file is denied (root-only energy_uj), else -EIO. */
-static int read_ull_file(const char *path, unsigned long long *out)
-{
-  FILE *fp;
-  char buf[64];
+  char buf[32];
   char *end = NULL;
+  ssize_t n;
   unsigned long long v;
 
-  if (path == NULL || out == NULL)
+  n = pread(fd, buf, sizeof(buf) - 1, 0);
+  if (n < 0)
+    return -errno;
+  if (n == 0)
     return -EIO;
-  fp = fopen(path, "r");
-  if (fp == NULL)
-    return (errno == EACCES || errno == EPERM) ? -errno : -EIO;
-  if (fgets(buf, sizeof(buf), fp) == NULL) {
-    fclose(fp);
-    return -EIO;
-  }
-  fclose(fp);
+  buf[n] = '\0';
   errno = 0;
   v = strtoull(buf, &end, 10);
   if (end == buf || errno != 0)
@@ -65,35 +47,38 @@ static int read_ull_file(const char *path, unsigned long long *out)
   return 0;
 }
 
+/* Opens <dir>/<file> read-only; fd, or -errno. */
+static int open_zone_file(const char *dir, const char *file)
+{
+  char path[576];
+  int fd;
+
+  if (snprintf(path, sizeof(path), "%s/%s", dir, file) >= (int)sizeof(path))
+    return -ENAMETOOLONG;
+  fd = open(path, O_RDONLY | O_CLOEXEC);
+  return fd >= 0 ? fd : -errno;
+}
+
 static int read_name_file(const char *dir, char *name_out, size_t name_cap)
 {
-  char path[512];
-  FILE *fp;
-  size_t n;
+  int fd = open_zone_file(dir, "name");
+  ssize_t n;
 
-  if (dir == NULL || name_out == NULL || name_cap == 0)
+  if (fd < 0)
     return -1;
-  snprintf(path, sizeof(path), "%s/name", dir);
-  fp = fopen(path, "r");
-  if (fp == NULL)
+  n = pread(fd, name_out, name_cap - 1, 0);
+  close(fd);
+  if (n <= 0)
     return -1;
-  if (fgets(name_out, (int)name_cap, fp) == NULL) {
-    fclose(fp);
-    return -1;
-  }
-  fclose(fp);
-  n = strlen(name_out);
-  while (n > 0 && (name_out[n - 1] == '\n' || name_out[n - 1] == '\r')) {
-    name_out[n - 1] = '\0';
-    n--;
-  }
-  return name_out[0] != '\0' ? 0 : -1;
+  name_out[n] = '\0';
+  while (n > 0 && (name_out[n - 1] == '\n' || name_out[n - 1] == '\r'))
+    name_out[--n] = '\0';
+  return n > 0 ? 0 : -1;
 }
 
 static int is_rapl_zone_dir(const char *d_name)
 {
-  return d_name != NULL &&
-         (strncmp(d_name, "intel-rapl:", 11) == 0 || strncmp(d_name, "amd-rapl:", 9) == 0);
+  return strncmp(d_name, "intel-rapl:", 11) == 0 || strncmp(d_name, "amd-rapl:", 9) == 0;
 }
 
 /* Top package zones: intel-rapl:N (one index). Children: intel-rapl:N:M. */
@@ -104,22 +89,27 @@ static int zone_is_package_top(const char *d_name)
   if (!is_rapl_zone_dir(d_name))
     return 0;
   colon = strchr(d_name, ':');
-  if (colon == NULL)
-    return 0;
   return strchr(colon + 1, ':') == NULL;
 }
 
-int rapl_powercap_available_under(const char *powercap_root)
+static int name_in_list(const char *name, const char *const *names)
 {
-  DIR *dir;
-  struct dirent *ent;
-  int found = 0;
+  for (; *names != NULL; names++)
+    if (strcmp(name, *names) == 0)
+      return 1;
+  return 0;
+}
 
-  if (powercap_root == NULL || powercap_root[0] == '\0')
-    return 0;
-  dir = opendir(powercap_root);
+/* Directory entry (not path) of socket_id's package zone into pkg_base; 0 or -ENOENT. */
+static int find_package_entry(const char *powercap_root, unsigned socket_id, char *pkg_base,
+                              size_t cap)
+{
+  DIR *dir = opendir(powercap_root);
+  struct dirent *ent;
+  int rc = -ENOENT;
+
   if (dir == NULL)
-    return 0;
+    return -ENOENT;
   while ((ent = readdir(dir)) != NULL) {
     char zone[512];
     char name[128];
@@ -128,176 +118,110 @@ int rapl_powercap_available_under(const char *powercap_root)
     if (!zone_is_package_top(ent->d_name))
       continue;
     snprintf(zone, sizeof(zone), "%s/%s", powercap_root, ent->d_name);
-    if (read_name_file(zone, name, sizeof(name)) < 0)
+    if (read_name_file(zone, name, sizeof(name)) < 0 ||
+        rapl_powercap_parse_package_id(name, &sock) < 0 || sock != socket_id)
       continue;
-    if (rapl_powercap_parse_package_id(name, &sock) == 0) {
-      found = 1;
-      break;
-    }
-  }
-  closedir(dir);
-  return found;
-}
-
-int rapl_powercap_available(void)
-{
-  return rapl_powercap_available_under(RAPL_POWERCAP_DEFAULT_ROOT);
-}
-
-static int read_energy_mj(const char *zone_dir, unsigned long long *mj_out)
-{
-  char path[576];
-  unsigned long long uj = 0;
-  int rc;
-
-  if (zone_dir == NULL || mj_out == NULL)
-    return -EIO;
-  snprintf(path, sizeof(path), "%s/energy_uj", zone_dir);
-  rc = read_ull_file(path, &uj);
-  if (rc < 0)
-    return rc;
-  *mj_out = rapl_powercap_uj_to_mj(uj);
-  return 0;
-}
-
-static void apply_domain_mj(const char *key, unsigned long long mj, unsigned long long *pkg_mj,
-                            unsigned long long *core_mj, unsigned long long *dram_mj, int *has_pkg,
-                            int *has_core, int *has_dram, unsigned long long *pp1_mj, int *has_pp1)
-{
-  if (key == NULL)
-    return;
-  if (strcmp(key, "pkg_energy") == 0) {
-    *pkg_mj = mj;
-    *has_pkg = 1;
-  } else if (strcmp(key, "pp0_energy") == 0 || strcmp(key, "core_energy") == 0) {
-    *core_mj = mj;
-    *has_core = 1;
-  } else if (strcmp(key, "pp1_energy") == 0) {
-    if (pp1_mj != NULL && has_pp1 != NULL) {
-      *pp1_mj = mj;
-      *has_pp1 = 1;
-    }
-  } else if (strcmp(key, "dram_energy") == 0) {
-    *dram_mj = mj;
-    *has_dram = 1;
-  }
-}
-
-/* 0 when the zone was read or is not a schema domain; read_energy_mj's code otherwise. */
-static int collect_child_zone(const char *child_dir, int amd_path, unsigned long long *pkg_mj,
-                              unsigned long long *core_mj, unsigned long long *dram_mj,
-                              int *has_pkg, int *has_core, int *has_dram,
-                              unsigned long long *pp1_mj, int *has_pp1)
-{
-  char cname[128];
-  const char *key;
-  unsigned long long mj = 0;
-  int rc;
-
-  if (read_name_file(child_dir, cname, sizeof(cname)) < 0)
-    return 0;
-  key = rapl_powercap_schema_key_from_name(cname, amd_path);
-  if (key == NULL)
-    return 0;
-  rc = read_energy_mj(child_dir, &mj);
-  if (rc == 0)
-    apply_domain_mj(key, mj, pkg_mj, core_mj, dram_mj, has_pkg, has_core, has_dram, pp1_mj,
-                    has_pp1);
-  return rc;
-}
-
-int rapl_powercap_collect_socket_mj_under(const char *powercap_root, unsigned socket_id,
-                                          unsigned long long *pkg_mj, unsigned long long *core_mj,
-                                          unsigned long long *dram_mj, int *has_pkg, int *has_core,
-                                          int *has_dram, unsigned long long *pp1_mj, int *has_pp1,
-                                          int amd_path)
-{
-  DIR *dir;
-  struct dirent *ent;
-  char pkg_zone[512];
-  char pkg_base[256];
-  char pkg_name[128];
-  unsigned long long mj = 0;
-  int found_pkg_dir = 0;
-  int err = -EIO;
-  int rc;
-  size_t pkg_base_len;
-
-  if (pkg_mj == NULL || core_mj == NULL || dram_mj == NULL || has_pkg == NULL || has_core == NULL ||
-      has_dram == NULL || powercap_root == NULL)
-    return -EIO;
-  *pkg_mj = *core_mj = *dram_mj = 0;
-  *has_pkg = *has_core = *has_dram = 0;
-  if (pp1_mj != NULL && has_pp1 != NULL) {
-    *pp1_mj = 0;
-    *has_pp1 = 0;
-  }
-
-  dir = opendir(powercap_root);
-  if (dir == NULL)
-    return -EIO;
-
-  pkg_zone[0] = '\0';
-  pkg_base[0] = '\0';
-  while ((ent = readdir(dir)) != NULL) {
-    unsigned sock = 0;
-
-    if (!zone_is_package_top(ent->d_name))
-      continue;
-    snprintf(pkg_zone, sizeof(pkg_zone), "%s/%s", powercap_root, ent->d_name);
-    if (read_name_file(pkg_zone, pkg_name, sizeof(pkg_name)) < 0)
-      continue;
-    if (rapl_powercap_parse_package_id(pkg_name, &sock) < 0)
-      continue;
-    if (sock != socket_id)
-      continue;
-    snprintf(pkg_base, sizeof(pkg_base), "%s", ent->d_name);
-    found_pkg_dir = 1;
+    snprintf(pkg_base, cap, "%s", ent->d_name);
+    rc = 0;
     break;
   }
   closedir(dir);
-
-  if (!found_pkg_dir)
-    return -EIO;
-
-  rc = read_energy_mj(pkg_zone, &mj);
-  if (rc == 0)
-    apply_domain_mj("pkg_energy", mj, pkg_mj, core_mj, dram_mj, has_pkg, has_core, has_dram, pp1_mj,
-                    has_pp1);
-  else
-    err = rc;
-
-  /* Kernel layout: children are peers under powercap root (intel-rapl:0:0). */
-  pkg_base_len = strlen(pkg_base);
-  dir = opendir(powercap_root);
-  if (dir != NULL) {
-    while ((ent = readdir(dir)) != NULL) {
-      char child[576];
-
-      if (!is_rapl_zone_dir(ent->d_name) || zone_is_package_top(ent->d_name))
-        continue;
-      if (strncmp(ent->d_name, pkg_base, pkg_base_len) != 0 || ent->d_name[pkg_base_len] != ':')
-        continue;
-      snprintf(child, sizeof(child), "%s/%s", powercap_root, ent->d_name);
-      rc = collect_child_zone(child, amd_path, pkg_mj, core_mj, dram_mj, has_pkg, has_core,
-                              has_dram, pp1_mj, has_pp1);
-      if (rc < 0 && err == -EIO)
-        err = rc;
-    }
-    closedir(dir);
-  }
-
-  if (*has_pkg || *has_core || *has_dram || (has_pp1 != NULL && *has_pp1))
-    return 0;
-  return err;
+  return rc;
 }
 
-int rapl_powercap_collect_socket_mj(unsigned socket_id, unsigned long long *pkg_mj,
-                                    unsigned long long *core_mj, unsigned long long *dram_mj,
-                                    int *has_pkg, int *has_core, int *has_dram,
-                                    unsigned long long *pp1_mj, int *has_pp1, int amd_path)
+int rapl_powercap_find_zone(const char *powercap_root, unsigned socket_id,
+                            const char *const *child_names, char *out, size_t cap)
 {
-  return rapl_powercap_collect_socket_mj_under(RAPL_POWERCAP_DEFAULT_ROOT, socket_id, pkg_mj,
-                                               core_mj, dram_mj, has_pkg, has_core, has_dram,
-                                               pp1_mj, has_pp1, amd_path);
+  DIR *dir;
+  struct dirent *ent;
+  char pkg_base[256];
+  size_t base_len;
+  int rc = -ENOENT;
+
+  if (powercap_root == NULL || out == NULL || cap == 0 ||
+      find_package_entry(powercap_root, socket_id, pkg_base, sizeof(pkg_base)) < 0)
+    return -ENOENT;
+  if (child_names == NULL) {
+    snprintf(out, cap, "%s/%s", powercap_root, pkg_base);
+    return 0;
+  }
+  /* Kernel layout: children are peers under the powercap root (intel-rapl:0:0). */
+  base_len = strlen(pkg_base);
+  dir = opendir(powercap_root);
+  if (dir == NULL)
+    return -ENOENT;
+  while ((ent = readdir(dir)) != NULL) {
+    char child[576];
+    char name[128];
+
+    if (strncmp(ent->d_name, pkg_base, base_len) != 0 || ent->d_name[base_len] != ':')
+      continue;
+    snprintf(child, sizeof(child), "%s/%s", powercap_root, ent->d_name);
+    if (read_name_file(child, name, sizeof(name)) < 0 || !name_in_list(name, child_names))
+      continue;
+    snprintf(out, cap, "%s", child);
+    rc = 0;
+    break;
+  }
+  closedir(dir);
+  return rc;
+}
+
+int rapl_powercap_wrap_delta(uint64_t prev_uj, uint64_t cur_uj, uint64_t max_uj, uint64_t *delta_uj)
+{
+  if (cur_uj >= prev_uj) {
+    *delta_uj = cur_uj - prev_uj;
+    return 0;
+  }
+  if (max_uj < prev_uj)
+    return -ERANGE;
+  *delta_uj = max_uj - prev_uj + cur_uj;
+  return 0;
+}
+
+int rapl_powercap_counter_open(struct rapl_powercap_counter *c, const char *zone_dir)
+{
+  int max_fd;
+  int rc;
+
+  c->fd = -1;
+  c->max_uj = 0;
+  c->prev_uj = 0;
+  rc = open_zone_file(zone_dir, "energy_uj");
+  if (rc < 0)
+    return rc;
+  c->fd = rc;
+  rc = pread_ull(c->fd, &c->prev_uj);
+  if (rc < 0) {
+    rapl_powercap_counter_close(c);
+    return rc;
+  }
+  max_fd = open_zone_file(zone_dir, "max_energy_range_uj");
+  if (max_fd >= 0) {
+    if (pread_ull(max_fd, &c->max_uj) < 0)
+      c->max_uj = 0;
+    close(max_fd);
+  }
+  return 0;
+}
+
+int rapl_powercap_counter_read(struct rapl_powercap_counter *c, uint64_t *delta_uj)
+{
+  uint64_t cur = 0;
+  int rc;
+
+  *delta_uj = 0;
+  rc = pread_ull(c->fd, &cur);
+  if (rc < 0)
+    return rc;
+  rc = rapl_powercap_wrap_delta(c->prev_uj, cur, c->max_uj, delta_uj);
+  c->prev_uj = cur;
+  return rc;
+}
+
+void rapl_powercap_counter_close(struct rapl_powercap_counter *c)
+{
+  if (c->fd >= 0)
+    close(c->fd);
+  c->fd = -1;
 }

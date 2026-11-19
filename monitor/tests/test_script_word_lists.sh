@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Regression: flag / package lists held in one string (CC, CPPFLAGS, LDFLAGS, LIBS,
-# CFLAGS, CXXFLAGS, ROCKY9_RPM_TOOLCHAIN_PACKAGES) are split on whitespace but never
+# Regression: flag / package lists held in one string (CFLAGS, CXXFLAGS, LDFLAGS,
+# ROCKY9_RPM_TOOLCHAIN_PACKAGES) are split on whitespace but never
 # glob-expanded. Unquoted $VAR expansion used to turn `-I*` into matching file names
 # in the current directory. Runs the real functions extracted from the scripts.
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
@@ -8,7 +8,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUNDLE="${ROOT}/scripts/build_static_bundle.sh"
-PREP="${ROOT}/scripts/prepare_rpmbuild_dirs.sh"
 CROSS="${ROOT}/scripts/cross_compile_test.sh"
 
 fail() { echo "test_script_word_lists: $*" >&2; exit 1; }
@@ -44,25 +43,7 @@ check_release_flags() {
 }
 (check_release_flags)
 
-# 2. prepare_rpmbuild_dirs.sh: the LIKWID probe passes each flag as its own argv word.
-load_fn "${PREP}" verify_likwid_static_link_probe
-cat >"${WORK}/fakecc" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$@" >"${ARGV_LOG}"
-EOF
-chmod +x "${WORK}/fakecc"
-check_probe_argv() {
-  local got
-  export ARGV_LOG="${WORK}/argv" CC="${WORK}/fakecc --wrapper" CPPFLAGS="-I/a -I*"
-  export LDFLAGS="-L/b" LIBS=$'-lx\n-lpthread -ldl'
-  verify_likwid_static_link_probe || fail "probe returned non-zero with a passing compiler"
-  got="$(grep -v -e '\.c$' -e '\.out$' "${ARGV_LOG}" | paste -sd' ')"
-  [ "${got}" = "--wrapper -I/a -I* -L/b -lx -lpthread -ldl -o" ] || fail "probe argv=[${got}]"
-  [ "$(grep -c '\.c$' "${ARGV_LOG}")" = 1 ] || fail "probe must pass exactly one .c source"
-}
-(check_probe_argv)
-
-# 3. cross_compile_test.sh: the package-list fingerprint is unchanged for the default list
+# 2. cross_compile_test.sh: the package-list fingerprint is unchanged for the default list
 #    (cached toolchain layers stay valid) and keeps glob characters literal.
 load_fn "${CROSS}" rpm_toolchain_packages_fp
 eval "export $(grep -m1 '^ROCKY9_RPM_TOOLCHAIN_PACKAGES=' "${CROSS}")"

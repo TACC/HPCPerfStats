@@ -18,12 +18,22 @@ static void write_file(const char *path, const char *contents)
   fclose(fp);
 }
 
-static void test_uj_to_mj(void)
+/* <root>/<zone>/{name,energy_uj[,max_energy_range_uj]}. */
+static void make_zone(const char *root, const char *zone, const char *name, const char *uj,
+                      const char *max)
 {
-  assert(rapl_powercap_uj_to_mj(0) == 0);
-  assert(rapl_powercap_uj_to_mj(500) == 1);
-  assert(rapl_powercap_uj_to_mj(1000) == 1);
-  assert(rapl_powercap_uj_to_mj(1500) == 2);
+  char p[320];
+
+  snprintf(p, sizeof(p), "%s/%s", root, zone);
+  assert(mkdir(p, 0755) == 0);
+  snprintf(p, sizeof(p), "%s/%s/name", root, zone);
+  write_file(p, name);
+  snprintf(p, sizeof(p), "%s/%s/energy_uj", root, zone);
+  write_file(p, uj);
+  if (max != NULL) {
+    snprintf(p, sizeof(p), "%s/%s/max_energy_range_uj", root, zone);
+    write_file(p, max);
+  }
 }
 
 static void test_parse_package_id(void)
@@ -34,107 +44,116 @@ static void test_parse_package_id(void)
   assert(id == 0);
   assert(rapl_powercap_parse_package_id("package-1", &id) == 0);
   assert(id == 1);
+  assert(rapl_powercap_parse_package_id("package-0-die-1", &id) < 0);
   assert(rapl_powercap_parse_package_id("core", &id) < 0);
   assert(rapl_powercap_parse_package_id(NULL, &id) < 0);
+  printf("test_parse_package_id passed\n");
 }
 
-static void test_schema_key_map(void)
+static void test_wrap_delta(void)
 {
-  assert(strcmp(rapl_powercap_schema_key_from_name("core", 0), "pp0_energy") == 0);
-  assert(strcmp(rapl_powercap_schema_key_from_name("core", 1), "core_energy") == 0);
-  assert(strcmp(rapl_powercap_schema_key_from_name("dram", 0), "dram_energy") == 0);
-  assert(rapl_powercap_schema_key_from_name("uncore", 0) == NULL);
-  assert(rapl_powercap_schema_key_from_name(NULL, 0) == NULL);
+  uint64_t d = 0;
+
+  assert(rapl_powercap_wrap_delta(100, 250, 1000, &d) == 0 && d == 150);
+  assert(rapl_powercap_wrap_delta(100, 100, 0, &d) == 0 && d == 0);
+  /* Wrapped once at max_energy_range_uj. */
+  assert(rapl_powercap_wrap_delta(900, 50, 1000, &d) == 0 && d == 150);
+  /* A drop with no range, or a range below the previous reading, cannot be unwrapped. */
+  assert(rapl_powercap_wrap_delta(900, 50, 0, &d) == -ERANGE);
+  assert(rapl_powercap_wrap_delta(900, 50, 800, &d) == -ERANGE);
+  printf("test_wrap_delta passed\n");
 }
 
-static void test_collect_fixture(void)
+static void test_find_zone(const char *root)
 {
-  char root[] = "/tmp/hpcperfstats_powercap_XXXXXX";
-  char pkg0[256], pkg0_core[256], pkg0_dram[256], pkg1[256];
-  unsigned long long pkg_mj = 0, core_mj = 0, dram_mj = 0, pp1_mj = 0;
-  int has_pkg = 0, has_core = 0, has_dram = 0, has_pp1 = 0;
+  static const char *const core[] = {"core", "cores", NULL};
+  static const char *const dram[] = {"dram", "ram", NULL};
+  char out[512];
+  char want[512];
 
-  assert(mkdtemp(root) != NULL);
-  snprintf(pkg0, sizeof(pkg0), "%s/intel-rapl:0", root);
-  snprintf(pkg0_core, sizeof(pkg0_core), "%s/intel-rapl:0:0", root);
-  snprintf(pkg0_dram, sizeof(pkg0_dram), "%s/intel-rapl:0:1", root);
-  snprintf(pkg1, sizeof(pkg1), "%s/intel-rapl:1", root);
-  assert(mkdir(pkg0, 0755) == 0);
-  assert(mkdir(pkg0_core, 0755) == 0);
-  assert(mkdir(pkg0_dram, 0755) == 0);
-  assert(mkdir(pkg1, 0755) == 0);
+  assert(rapl_powercap_find_zone(root, 0, NULL, out, sizeof(out)) == 0);
+  snprintf(want, sizeof(want), "%s/intel-rapl:0", root);
+  assert(strcmp(out, want) == 0);
+  assert(rapl_powercap_find_zone(root, 0, core, out, sizeof(out)) == 0);
+  snprintf(want, sizeof(want), "%s/intel-rapl:0:0", root);
+  assert(strcmp(out, want) == 0);
+  assert(rapl_powercap_find_zone(root, 0, dram, out, sizeof(out)) == 0);
+  snprintf(want, sizeof(want), "%s/intel-rapl:0:1", root);
+  assert(strcmp(out, want) == 0);
+  /* Package 1 has no children; intel-rapl:10 must not be taken for a child of intel-rapl:1. */
+  assert(rapl_powercap_find_zone(root, 1, NULL, out, sizeof(out)) == 0);
+  assert(rapl_powercap_find_zone(root, 1, core, out, sizeof(out)) == -ENOENT);
+  assert(rapl_powercap_find_zone(root, 9, NULL, out, sizeof(out)) == -ENOENT);
+  assert(rapl_powercap_find_zone("/nonexistent/powercap", 0, NULL, out, sizeof(out)) == -ENOENT);
+  printf("test_find_zone passed\n");
+}
 
-  {
-    char p[320];
-    snprintf(p, sizeof(p), "%s/name", pkg0);
-    write_file(p, "package-0\n");
-    snprintf(p, sizeof(p), "%s/energy_uj", pkg0);
-    write_file(p, "1250000\n");
-    snprintf(p, sizeof(p), "%s/name", pkg0_core);
-    write_file(p, "core\n");
-    snprintf(p, sizeof(p), "%s/energy_uj", pkg0_core);
-    write_file(p, "500000\n");
-    snprintf(p, sizeof(p), "%s/name", pkg0_dram);
-    write_file(p, "dram\n");
-    snprintf(p, sizeof(p), "%s/energy_uj", pkg0_dram);
-    write_file(p, "250000\n");
-    snprintf(p, sizeof(p), "%s/name", pkg1);
-    write_file(p, "package-1\n");
-    snprintf(p, sizeof(p), "%s/energy_uj", pkg1);
-    write_file(p, "9000000\n");
-  }
+static void test_counter_wrap_and_errors(const char *root)
+{
+  struct rapl_powercap_counter c;
+  char zone[320];
+  char p[400];
+  uint64_t d = 0;
 
-  assert(rapl_powercap_available_under(root) == 1);
-  assert(rapl_powercap_collect_socket_mj_under(root, 0, &pkg_mj, &core_mj, &dram_mj, &has_pkg,
-                                               &has_core, &has_dram, &pp1_mj, &has_pp1, 0) == 0);
-  assert(has_pkg == 1 && pkg_mj == 1250);
-  assert(has_core == 1 && core_mj == 500);
-  assert(has_dram == 1 && dram_mj == 250);
-  assert(has_pp1 == 0);
+  snprintf(zone, sizeof(zone), "%s/intel-rapl:0", root);
+  snprintf(p, sizeof(p), "%s/energy_uj", zone);
+  assert(rapl_powercap_counter_open(&c, zone) == 0);
+  assert(c.fd >= 0 && c.max_uj == 2000000 && c.prev_uj == 1250000);
+  write_file(p, "1750000\n");
+  assert(rapl_powercap_counter_read(&c, &d) == 0 && d == 500000);
+  write_file(p, "250000\n"); /* wrapped: 2000000 - 1750000 + 250000 */
+  assert(rapl_powercap_counter_read(&c, &d) == 0 && d == 500000);
+  write_file(p, "junk\n"); /* failed read keeps the previous reading */
+  assert(rapl_powercap_counter_read(&c, &d) == -EIO && d == 0);
+  write_file(p, "300000\n");
+  assert(rapl_powercap_counter_read(&c, &d) == 0 && d == 50000);
+  rapl_powercap_counter_close(&c);
+  assert(c.fd == -1);
+  rapl_powercap_counter_close(&c);
 
-  assert(rapl_powercap_collect_socket_mj_under(root, 1, &pkg_mj, &core_mj, &dram_mj, &has_pkg,
-                                               &has_core, &has_dram, &pp1_mj, &has_pp1, 0) == 0);
-  assert(has_pkg == 1 && pkg_mj == 9000);
-  assert(has_core == 0 && has_dram == 0);
+  /* No max_energy_range_uj: a drop re-seeds with -ERANGE. */
+  snprintf(zone, sizeof(zone), "%s/intel-rapl:0:1", root);
+  snprintf(p, sizeof(p), "%s/energy_uj", zone);
+  assert(rapl_powercap_counter_open(&c, zone) == 0 && c.max_uj == 0);
+  write_file(p, "100\n");
+  assert(rapl_powercap_counter_read(&c, &d) == -ERANGE && d == 0);
+  write_file(p, "400\n");
+  assert(rapl_powercap_counter_read(&c, &d) == 0 && d == 300);
+  rapl_powercap_counter_close(&c);
 
-  assert(rapl_powercap_collect_socket_mj_under(root, 9, &pkg_mj, &core_mj, &dram_mj, &has_pkg,
-                                               &has_core, &has_dram, &pp1_mj, &has_pp1, 0) == -EIO);
+  /* Missing energy_uj -> -ENOENT, never a usable counter. */
+  snprintf(zone, sizeof(zone), "%s/intel-rapl:1", root);
+  snprintf(p, sizeof(p), "%s/energy_uj", zone);
+  assert(unlink(p) == 0);
+  assert(rapl_powercap_counter_open(&c, zone) == -ENOENT && c.fd == -1);
 
-  /* Generic failure: package 1 energy_uj gone -> -EIO (READ_FAILED), never -1 (== -EPERM). */
-  {
-    char p[320];
-    snprintf(p, sizeof(p), "%s/energy_uj", pkg1);
-    assert(unlink(p) == 0);
-    assert(rapl_powercap_collect_socket_mj_under(root, 1, &pkg_mj, &core_mj, &dram_mj, &has_pkg,
-                                                 &has_core, &has_dram, &pp1_mj, &has_pp1,
-                                                 0) == -EIO);
-  }
-
-  /* Root-only energy_uj (mode 0400 root since the PLATYPUS mitigation): every domain of package 0
-   * denied -> -EACCES. root bypasses the mode, so only a non-root run can see the denial. */
+  /* Root-only energy_uj (mode 0400 root since the PLATYPUS mitigation) -> -EACCES. root bypasses
+   * the mode, so only a non-root run can see the denial. */
   if (geteuid() != 0) {
-    const char *zones[] = {pkg0, pkg0_core, pkg0_dram};
-    char p[320];
-
-    for (size_t i = 0; i < sizeof(zones) / sizeof(zones[0]); i++) {
-      snprintf(p, sizeof(p), "%s/energy_uj", zones[i]);
-      assert(chmod(p, 0) == 0);
-    }
-    assert(rapl_powercap_collect_socket_mj_under(root, 0, &pkg_mj, &core_mj, &dram_mj, &has_pkg,
-                                                 &has_core, &has_dram, &pp1_mj, &has_pp1,
-                                                 0) == -EACCES);
-    assert(has_pkg == 0 && has_core == 0 && has_dram == 0);
+    snprintf(zone, sizeof(zone), "%s/intel-rapl:0:0", root);
+    snprintf(p, sizeof(p), "%s/energy_uj", zone);
+    assert(chmod(p, 0) == 0);
+    assert(rapl_powercap_counter_open(&c, zone) == -EACCES && c.fd == -1);
   }
-
-  (void)test_rm_tree(root);
+  printf("test_counter_wrap_and_errors passed\n");
 }
 
 int main(void)
 {
-  test_uj_to_mj();
+  char root[] = "/tmp/hpcperfstats_powercap_XXXXXX";
+
   test_parse_package_id();
-  test_schema_key_map();
-  test_collect_fixture();
+  test_wrap_delta();
+  assert(mkdtemp(root) != NULL);
+  make_zone(root, "intel-rapl:0", "package-0\n", "1250000\n", "2000000\n");
+  make_zone(root, "intel-rapl:0:0", "core\n", "500000\n", "2000000\n");
+  make_zone(root, "intel-rapl:0:1", "dram\n", "250000\n", NULL);
+  make_zone(root, "intel-rapl:1", "package-1\n", "9000000\n", "2000000\n");
+  make_zone(root, "intel-rapl:10", "package-10\n", "1\n", NULL);
+  make_zone(root, "intel-rapl:10:0", "core\n", "1\n", NULL);
+  test_find_zone(root);
+  test_counter_wrap_and_errors(root);
+  (void)test_rm_tree(root);
   printf("test_rapl_powercap passed\n");
   return 0;
 }

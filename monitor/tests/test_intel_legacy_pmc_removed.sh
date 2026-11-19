@@ -1,5 +1,5 @@
 #!/bin/sh
-# Regression: legacy Intel MSR PMC readers must be gone (LIKWID-only host_cpu_hw).
+# Regression: legacy Intel MSR PMC readers must be gone (direct perf host_cpu_hw).
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -34,18 +34,9 @@ if grep -nE 'fallback_fill|read_msr_u64|g_msr_fd_cache' "${ROOT}/src/cpu_counter
   echo "FAIL: cpu_counter_metrics must not contain MSR fallback_fill" >&2
   exit 1
 fi
-if grep -n 'msr_io.h' "${ROOT}/src/likwid_pmc_adapter.c"; then
-  echo "FAIL: likwid_pmc_adapter must not include msr_io.h" >&2
-  exit 1
-fi
-
-# PERF-only: no LIKWID ACCESSMODE_DIRECT or RAPL power_read MSR collect.
-if grep -nE 'ACCESSMODE_DIRECT|LIKWID_PMC_ACCESS_DIRECT' "${ROOT}/src/"*.c "${ROOT}/src/"*.h 2>/dev/null; then
-  echo "FAIL: src must not reference ACCESSMODE_DIRECT / LIKWID_PMC_ACCESS_DIRECT" >&2
-  exit 1
-fi
+# No MSR access anywhere: no RAPL power_read collect, no hard-coded energy MSRs.
 if grep -nE 'power_read\(' "${ROOT}/src/"*.c "${ROOT}/src/"*.h 2>/dev/null; then
-  echo "FAIL: src must not call LIKWID power_read (MSR RAPL path removed)" >&2
+  echo "FAIL: src must not call power_read (MSR RAPL path removed)" >&2
   exit 1
 fi
 if grep -nE '0x611u|0x639u|0x641u|0x619u|0xC001029Au|0xC001029Bu' "${ROOT}/src/"*.c "${ROOT}/src/"*.h 2>/dev/null; then

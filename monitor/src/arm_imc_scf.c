@@ -1,4 +1,4 @@
-/* arm_imc_scf - Grace SCF uncore DRAM traffic via direct perf (pure; no stats, no LIKWID). */
+/* arm_imc_scf - Grace SCF uncore DRAM traffic via direct perf (pure; no stats). */
 #include <dirent.h>
 #include <errno.h>
 #include <stdio.h>

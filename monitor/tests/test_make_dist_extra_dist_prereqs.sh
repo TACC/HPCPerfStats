@@ -97,7 +97,7 @@ grep -qE '(^|[[:space:]])test_arm_aarch64_imc_schema\.c([[:space:]]|$)' tests/Ma
 
 # Regression: a tests/ file pulled in by #include "..." must be distributed (EXTRA_DIST or
 # *_SOURCES), or make check from a release tarball cannot compile the driver
-# (tests/test_stats_stub.h was missing; test_likwid_uncore_adapter.c failed to build).
+# (tests/test_stats_stub.h was missing; a driver that included it failed to build).
 missing_inc=0
 # shellcheck disable=SC2013  # include names contain no whitespace
 for inc in $(sed -n 's/^[[:space:]]*#[[:space:]]*include[[:space:]]*"\([^"/]*\)".*/\1/p' tests/*.c tests/*.h | sort -u); do

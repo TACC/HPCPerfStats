@@ -107,7 +107,7 @@ got="$(bash -c '
   for v in ${MEASURE_OVERHEAD_PREPARE_ENV}; do unset "${v}"; done
   export PREFIX=/caller LIBS="-lcaller x"
   e="$(measure_overhead_caller_env)"
-  export LIBS="-Wl,--start-group -llikwid -Wl,--end-group -lm" CPPFLAGS=-Ileaked PREFIX=/leaked
+  export LIBS="-Wl,--start-group -lleaked -Wl,--end-group -lm" CPPFLAGS=-Ileaked PREFIX=/leaked
   eval "env ${e}sh -c '\''printf \"%s|%s|%s|%s\" \"\$LIBS\" \"\${CPPFLAGS-unset}\" \"\${PREFIX-unset}\" \"\${LDFLAGS-unset}\"'\''"')"
 test "${got}" = "-lcaller x|unset|/caller|unset" || fail "caller env not restored for rpmbuild: ${got}"
 # Every variable prepare exports must be in the restore list.

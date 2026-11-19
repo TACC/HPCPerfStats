@@ -1,22 +1,25 @@
 /*! \file intel_srf_imc.c
- *  Intel Sierra Forest DRAM IMC via LIKWID uncore PMON (CAS_COUNT_SCH0_*).
+ *  Intel Sierra Forest SCH0 IMC DRAM CAS via direct perf on the uncore PMUs (x86_uncore_perf.c).
  */
 
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_srf_imc.h"
-#include "likwid_uncore_adapter.h"
+#include "intel_processor.h"
+#include "x86_uncore_perf.h"
 
 #define KEYS INTEL_SRF_IMC_KEYS
 
+static struct x86_uncore_perf g_intel_srf_imc = X86_UNCORE_PERF_INIT(&x86_uncore_profile_imc_gnr);
+
 static int intel_srf_imc_begin(struct stats_type *type)
 {
-  return likwid_uncore_adapter_begin(type, LIKWID_UNCORE_PROFILE_IMC_SRF);
+  return x86_uncore_perf_begin(type, &g_intel_srf_imc, intel_processor_is_srf(processor));
 }
 
 static void intel_srf_imc_collect(struct stats_type *type)
 {
-  likwid_uncore_adapter_collect(type, LIKWID_UNCORE_PROFILE_IMC_SRF);
+  x86_uncore_perf_collect(type, &g_intel_srf_imc);
 }
 
 struct stats_type intel_srf_imc_stats_type = {

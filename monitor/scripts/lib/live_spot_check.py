@@ -13,8 +13,10 @@ from .host_live_probes import (
     probe_nvidia_smi_mem_total_mib,
     probe_power_socket_devices,
     probe_power_socket_watts,
+    probe_x86_cpu_vendor,
 )
 from .message_parse import schema_key_name
+from .papi_shm_validate import check_x86_host_cpu_hw_key_sets
 from .payload_parse import metric_value_at_key, rows_by_type, sample_header_timestamp
 
 
@@ -141,6 +143,13 @@ def run_live_spot_checks(
                 if emitted is not None and abs(emitted - live) > max(15.0, 0.25 * live):
                     warnings.append(f"WARN live_spot host_power_socket/{row.dev} {key}: "
                                     f"emitted={emitted} W live={live:.1f} W")
+
+    if "host_cpu_hw" in full_rows:
+        vendor = probe_x86_cpu_vendor()
+        names, rows = _rows_with_keys("host_cpu_hw")
+        for row in rows:
+            for msg in check_x86_host_cpu_hw_key_sets(vendor, row.values, names, dev=row.dev):
+                warn(msg)
 
     if "nvidia_gpu" in full_rows:
         smi = probe_nvidia_smi_mem_total_mib()

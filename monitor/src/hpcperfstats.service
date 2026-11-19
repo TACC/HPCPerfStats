@@ -11,7 +11,7 @@ ProtectControlGroups=true
 NoNewPrivileges=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 ReadWritePaths=/var/lib/hpcperfstats /run
-# Default per-process soft FD limit is often 1024; collectors + LIKWID + dumpfiles can exceed it (EMFILE).
+# Default per-process soft FD limit is often 1024; collectors (one perf fd per event per CPU) + dumpfiles can exceed it (EMFILE).
 LimitNOFILE=1048576
 EnvironmentFile=-/etc/sysconfig/hpcperfstatsd
 # Prefer stub lshw on PATH for bare `lshw` callers (harmless; not DCGM enforcement).

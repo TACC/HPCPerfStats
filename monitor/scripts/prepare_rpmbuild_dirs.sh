@@ -9,7 +9,7 @@
 # leaves outputs under rpmbuild/ only.
 #
 # The spec build uses SKIP_DEPS=1 and PREFIX=.../embedded-static-prefix inside the unpacked
-# sources so only hpcperfstatsd is compiled (no second libev/rabbitmq-c/LIKWID build).
+# sources so only hpcperfstatsd is compiled (no second libev/rabbitmq-c build).
 #
 # Usage (from anywhere; paths are anchored to HPCPerfStats/monitor):
 #   ./scripts/prepare_rpmbuild_dirs.sh
@@ -113,33 +113,6 @@ monitor_spec_field() {
 have_static_archive_basename() {
   local name="$1"
   test -f "${PREFIX}/lib/${name}" || test -f "${PREFIX}/lib64/${name}"
-}
-
-# LIKWID is built and linked on x86 hosts only (aarch64 uses direct perf; configure.ac).
-host_builds_likwid() {
-  case "$(uname -m)" in
-  x86_64 | i?86) return 0 ;;
-  *) return 1 ;;
-  esac
-}
-
-verify_likwid_static_link_probe() {
-  local tbase out rc cc cppflags ldflags libs
-  tbase="$(mktemp "${TMPDIR:-/tmp}/hps_likwid_probe.XXXXXX")"
-  out="${tbase}.out"
-  printf '%s\n' '#include <likwid.h>' 'int main(void){ return perfmon_init(0, (int*)0); }' > "${tbase}.c"
-  rc=0
-  # LIBS from the caller must already include -lpthread -ldl (same as configure env).
-  # CC and the flag variables are whitespace-separated word lists (split, never globbed).
-  read -r -d '' -a cc <<<"${CC:-gcc}" || :
-  read -r -d '' -a cppflags <<<"${CPPFLAGS:-}" || :
-  read -r -d '' -a ldflags <<<"${LDFLAGS:-}" || :
-  read -r -d '' -a libs <<<"${LIBS:-}" || :
-  if ! "${cc[@]}" "${cppflags[@]}" "${ldflags[@]}" "${tbase}.c" "${libs[@]}" -o "${out}" >/dev/null 2>&1; then
-    rc=1
-  fi
-  rm -f "${tbase}.c" "${out}"
-  return "${rc}"
 }
 
 cd "${MONITOR_DIR}"
@@ -256,35 +229,6 @@ Rebuild deps with SKIP_DEPS unset:
   PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
 EOF
   exit 1
-fi
-
-if host_builds_likwid && { ! have_static_archive_basename "liblikwid.a" \
-   || ! have_static_archive_basename "liblikwid-hwloc.a" \
-   || ! have_static_archive_basename "liblikwid-lua.a"; }; then
-  cat <<EOF >&2
-LIKWID static archives were not found under ${PREFIX}/lib or ${PREFIX}/lib64.
-Expected: liblikwid.a, liblikwid-hwloc.a, liblikwid-lua.a
-Rebuild deps with SKIP_DEPS unset:
-  PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
-EOF
-  exit 1
-fi
-
-# Include -lpthread -ldl in exported LIBS (not only on the probe cmdline). LS6 static
-# liblikwid needs them for configure AC_SEARCH_LIBS(perfmon_init); the probe used to
-# pass while configure still failed with "(cached) no".
-if host_builds_likwid; then
-  export LIBS="-Wl,--start-group -llikwid -llikwid-hwloc -llikwid-lua -Wl,--end-group -lm -lrt -lpthread -ldl ${LIBS:-}"
-  if ! verify_likwid_static_link_probe; then
-    cat <<EOF >&2
-Unable to link a trivial LIKWID program from PREFIX=${PREFIX}.
-Check that liblikwid*.a archives match this host/toolchain and that no stale build artifacts remain.
-Try:
-  rm -rf "${PREFIX}" "${SRCDIR}"
-  PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
-EOF
-    exit 1
-  fi
 fi
 
 rm -f "${MONITOR_DIR}/${tb}"

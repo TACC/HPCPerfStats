@@ -18,9 +18,10 @@ CI_COVERED_FILES = frozenset(
         "proc.c", "net.c", "tmpfs.c", "beegfs.c", "llite.c", "amd_gpu.c",
         # test_fault_inject_cpu (each backend compiles its own site)
         "cpu_counter_metrics.c",
+        # test_fault_inject_x86_uncore
+        "x86_uncore_perf.c",
         # coverage twins of the collector sentinel tests
-        "opa_sysfs.c", "intel_gpu.c", "intel_gpu_xpumcli.c", "likwid_pmc_adapter.c",
-        "rapl_likwid_stats.c", "cpu_counter_metrics_arm_publish.c", "likwid_uncore_adapter.c",
-        "host_mem_job.c",
+        "opa_sysfs.c", "intel_gpu.c", "intel_gpu_xpumcli.c", "cpu_counter_metrics_x86_publish.c",
+        "intel_rapl.c", "amd64_rapl.c", "cpu_counter_metrics_arm_publish.c", "host_mem_job.c",
     }
 )

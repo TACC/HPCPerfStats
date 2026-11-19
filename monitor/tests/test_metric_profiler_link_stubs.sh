@@ -2,7 +2,7 @@
 # Regression: with --enable-metric-profiler, src/stats_runtime.c calls the four cycle/collect
 # hooks and src/stats.c calls metric_profiler_record_metric for real. A test that links either
 # source must link src/metric_profiler.c or stub every hook it needs, or make check fails to
-# link (test_stats_runtime_likwid_begin_order lacked the cycle_* stubs; test_stats_set_tier_gate
+# link (test_stats_runtime_begin_order lacked the cycle_* stubs; test_stats_set_tier_gate
 # lacked record_metric).
 set -e
 
