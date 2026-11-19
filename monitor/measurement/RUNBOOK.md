@@ -273,6 +273,53 @@ line `GRACE_SCF_VERIFY_OK` or `GRACE_SCF_VERIFY_FAIL`. Parsing and verdicts:
 
 ---
 
+## 0c. GPU tensor-peak calibration (Blackwell HMMA / DMMA per SM per clock)
+
+`src/nvidia_gpu_estimate.c` has 0 for the HMMA and DMMA columns of CC 10.0 (GB200) and 12.0
+(RTX PRO 6000): NVIDIA publishes per-GPU tensor peaks but no per-SM rate or the clock behind
+them. This test-only tool measures them on one GPU against the DEBUG monitor's own `nvidia_gpu`
+row. It is not built by the RPM, the spec or `rpm_debug_shm_verify.sh` and is never linked into
+`hpcperfstatsd`: the daemon only dlopens vendor libraries, which are not on every node.
+
+On the GPU node, with the DEBUG monitor running and the GPU otherwise idle:
+
+```bash
+# 1. as the user, in HPCPerfStats/monitor (loads CUDA via Lmod)
+measurement/bin/gpu_tensor_calibrate.sh build
+# 2. as root: the exact line step 1 prints, of this form
+/<checkout>/monitor/measurement/bin/gpu_tensor_calibrate.sh run
+```
+
+`build` picks the newest `cuda` module >= 12.8 (Horizon needs `gcc/15.3.0 cuda/13.3`, read from
+`module -t spider`; `HPCPERFSTATS_CUDA_MODULES="gcc/15.3.0 cuda/13.3"` overrides), finds `nvcc`
+and cuBLAS (`<nvhpc>/math_libs/<TACC_CUDA_VER>/lib64` beside the CUDA tree, then the CUDA tree
+`lib64`) and builds `bin/gpu_tensor_calibrate.cu` into `measurement/results/gpu_tensor_calibrate/`
+(`--prefix` to change; `build-info.txt` records modules, paths, link mode, sha256). It links
+cudart and cuBLAS statically when `libcublas_static.a`, `libcublasLt_static.a`, `libculibos.a`
+and `libcudart_static.a` exist, so root needs no modules; otherwise it links the shared cuBLAS
+with an rpath and prints a `NOTE`. A missing module, `nvcc`, cuBLAS or `cublas_v2.h` is
+`NOT_RUN` (exit 3) with every path searched.
+
+`run` reads `/dev/shm/hpcperfstatsd-debug` (`--shm`), GPU `--device 0` (CUDA ordinals in PCI
+order, the `nvidia_gpu` row index). It keeps every `fast` payload, then runs cuBLAS GEMMs in
+turn: FP16 in / FP32 accumulate (`cublasGemmEx`, HMMA) at n = 8192 and 16384, DGEMM (DMMA) at
+4096 and 8192, each for 4 sample intervals (at least `--seconds`, default 20) with 3 idle
+intervals between (about 31 intervals in all). Each load prints its exact FLOPs (calls x 2n^3,
+warmup excluded) and its cudaEvent-timed seconds. `lib/gpu_calibrate_eval.py` averages
+`tensor_hmma_active` / `tensor_dmma_active` (%) and `gpu_sm_clock` (MHz) over the samples wholly
+inside each load except the first (DCGM fields can trail a sample), requires that activity
+steady (5 points) and the pipe idle before and after, and computes FLOP/s / (activity x SMs x
+clock). The two sizes must agree within 5%. A DGEMM that leaves `tensor_dmma_active` idle (no
+FP64 tensor pipe) gives `NOT_PRESENT` and a 0 column. Output:
+`measurement/results/gpu_tensor_<host>_<UTC>/` (`summary.txt`, `load_*.txt`, `samples/`), ending
+with `ROW {major, minor, lanes, {...}},` (the `g_peaks` row to paste) and
+`GPU_TENSOR_CALIBRATE_OK` / `_FAIL` / `_NOT_RUN`. The binary also targets sm_80 / sm_90: on an
+H100 / GH200 node the run should reproduce the CC 9.0 row's published 4096 / 256, a check of the
+method itself. Tests: `tests/test_gpu_toolchain.sh`, `tests/test_gpu_tensor_calibrate.sh`,
+`tests/test_gpu_calibrate_eval.py`.
+
+---
+
 ## 1. Monitor cadence (AUTHOR_NOTES §1)
 
 On the **measured** compute node (the one you will pidstat):
