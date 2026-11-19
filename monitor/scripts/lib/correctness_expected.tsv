@@ -1,0 +1,145 @@
+# Expected status of every campaign class x check for scripts/correctness_matrix.py (the
+# campaign's pass table). Tab-separated: class, check, expected, note.
+#
+#   class     a class of correctness_classes.tsv (host -> class map), or "*" for every class
+#             that has no row of its own for that check
+#   check     a name of correctness_summary.CHECKS
+#   expected  P = PASS, N = NOT_RUN, S = SKIP, P/N = PASS or NOT_RUN (PASS when the source
+#             exists, else NOT_RUN with the reason in the note)
+#   note      expected cause or what to watch (optional; printed with a deviation)
+#
+# Every class needs an expectation for every check; the loader rejects unknown classes,
+# checks or codes and duplicate rows. Seeded from the campaign plan, then frozen with the
+# first run of each class.
+*	preflight	P	
+*	message_structure	P	
+*	sentinels	P	
+*	plausibility	P	
+*	cross_sample	P	
+*	live_spot	P	
+*	independent_read	P	
+*	consumer_parse	P	
+*	golden	S	opt-in (GOLDEN_CHECK=1)
+*	instructions	P	
+*	pmu_sharing	P	
+*	fault_inject	P	
+skx	mem_read	P	IMC x64
+skx	mem_write	P	
+skx	mem_socket0	N	x86 uncore rows sum every socket
+skx	flops_dp	P	
+skx	flops_sp	P	
+skx	energy_pkg	P	
+skx	energy_dram	P/N	dram zone
+skx	perf_raw_flops	P	
+skx	scf_perf	N	not Grace
+skx	fp_slices	N	not Grace
+icx	mem_read	P	
+icx	mem_write	P	
+icx	mem_socket0	N	x86 uncore rows sum every socket
+icx	flops_dp	P	
+icx	flops_sp	P	
+icx	energy_pkg	P	
+icx	energy_dram	P/N	dram zone
+icx	perf_raw_flops	P	
+icx	scf_perf	N	not Grace
+icx	fp_slices	N	not Grace
+spr	mem_read	P	HBM x32
+spr	mem_write	P	HBM x32
+spr	mem_socket0	N	x86 uncore rows sum every socket
+spr	flops_dp	P	
+spr	flops_sp	P	
+spr	energy_pkg	P	
+spr	energy_dram	P/N	HBM-only, DRAM zone unverified
+spr	perf_raw_flops	P	
+spr	scf_perf	N	not Grace
+spr	fp_slices	N	not Grace
+pvc	mem_read	P	
+pvc	mem_write	P	
+pvc	mem_socket0	N	x86 uncore rows sum every socket
+pvc	flops_dp	P	
+pvc	flops_sp	P	
+pvc	energy_pkg	P	
+pvc	energy_dram	P/N	dram zone
+pvc	perf_raw_flops	P	
+pvc	scf_perf	N	not Grace
+pvc	fp_slices	N	not Grace
+h100	mem_read	P	
+h100	mem_write	P	
+h100	mem_socket0	N	x86 uncore rows sum every socket
+h100	flops_dp	P	
+h100	flops_sp	P	
+h100	energy_pkg	P	
+h100	energy_dram	P/N	dram zone
+h100	perf_raw_flops	P	
+h100	scf_perf	N	not Grace
+h100	fp_slices	N	not Grace
+amd-rtx	mem_read	P	DF x64
+amd-rtx	mem_write	N	DF beats combine read + write
+amd-rtx	mem_socket0	N	x86 uncore rows sum every socket
+amd-rtx	flops_dp	P	Zen5 dp split
+amd-rtx	flops_sp	P	
+amd-rtx	energy_pkg	P/N	powercap zone on AMD unverified
+amd-rtx	energy_dram	N	no AMD DRAM domain
+amd-rtx	perf_raw_flops	P	
+amd-rtx	scf_perf	N	not Grace
+amd-rtx	fp_slices	N	not Grace
+milan/a100	mem_read	P	watch: 50% multiplexed DF
+milan/a100	mem_write	N	DF beats combine read + write
+milan/a100	mem_socket0	N	x86 uncore rows sum every socket
+milan/a100	flops_dp	P	total
+milan/a100	flops_sp	P	total
+milan/a100	energy_pkg	P/N	powercap zone on AMD unverified
+milan/a100	energy_dram	N	no AMD DRAM domain
+milan/a100	perf_raw_flops	P	
+milan/a100	scf_perf	N	not Grace
+milan/a100	fp_slices	N	not Grace
+milan-cpu	mem_read	P	watch: 50% multiplexed DF
+milan-cpu	mem_write	N	DF beats combine read + write
+milan-cpu	mem_socket0	N	x86 uncore rows sum every socket
+milan-cpu	flops_dp	P	total
+milan-cpu	flops_sp	P	total
+milan-cpu	energy_pkg	P/N	powercap zone on AMD unverified
+milan-cpu	energy_dram	N	no AMD DRAM domain
+milan-cpu	perf_raw_flops	P	
+milan-cpu	scf_perf	N	not Grace
+milan-cpu	fp_slices	N	not Grace
+genoa	mem_read	P	
+genoa	mem_write	N	DF beats combine read + write
+genoa	mem_socket0	N	x86 uncore rows sum every socket
+genoa	flops_dp	P	total
+genoa	flops_sp	P	total
+genoa	energy_pkg	P/N	powercap zone on AMD unverified
+genoa	energy_dram	N	no AMD DRAM domain
+genoa	perf_raw_flops	P	
+genoa	scf_perf	N	not Grace
+genoa	fp_slices	N	not Grace
+gh	mem_read	P/N	SCF unbound
+gh	mem_write	P/N	SCF unbound
+gh	mem_socket0	P/N	1 socket
+gh	flops_dp	P	ceiling
+gh	flops_sp	P	ceiling
+gh	energy_pkg	N	no RAPL
+gh	energy_dram	N	no RAPL
+gh	perf_raw_flops	N	x86 only
+gh	scf_perf	P/N	SCF unbound
+gh	fp_slices	P	
+gg	mem_read	P	SCF x64
+gg	mem_write	P	
+gg	mem_socket0	P	>= 0.75
+gg	flops_dp	P	
+gg	flops_sp	P	
+gg	energy_pkg	N	no RAPL
+gg	energy_dram	N	no RAPL
+gg	perf_raw_flops	N	x86 only
+gg	scf_perf	P	
+gg	fp_slices	P	
+gb	mem_read	P	
+gb	mem_write	P	
+gb	mem_socket0	P	
+gb	flops_dp	P	
+gb	flops_sp	P	
+gb	energy_pkg	N	no RAPL
+gb	energy_dram	N	no RAPL
+gb	perf_raw_flops	N	x86 only
+gb	scf_perf	P	
+gb	fp_slices	P	

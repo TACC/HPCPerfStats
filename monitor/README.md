@@ -1000,6 +1000,22 @@ FAILed. Schema version 1:
 `NOT_RUN` means the check could not measure (missing source, or not reached after an earlier
 failure); `SKIP` means it was switched off or does not apply to the build.
 
+### Campaign matrix (`scripts/correctness_matrix.py`)
+
+On the dev host, `scripts/correctness_matrix.py test_runs/monitor/campaign` aggregates every
+node's JSON (directories are searched recursively for `correctness_*.json`; add
+`--class-map HOST=milan-cpu` for the operator-picked Milan node) into one matrix: rows are the
+campaign classes, columns the checks above, cells `P 1.00` / `F 0.62` / `N` / `S`. Only files
+with `schema_version` 1 and `debug_build` true count, and the newest file per host wins.
+`scripts/lib/correctness_classes.tsv` maps hosts to classes (unmapped hosts print as `?<host>`);
+the hosts of one class merge with the worst status winning (FAIL > NOT_RUN > SKIP > PASS).
+`scripts/lib/correctness_expected.tsv` holds the expected status per class and check (`P`, `N`,
+`S`, or `P/N` for either; override with `--expected FILE`), and every PASS ratio of a
+counter-accuracy check is re-checked against the `counter_accuracy.py` tolerances. The run
+exits 1 on any FAIL, unexpected `NOT_RUN` / `SKIP`, ratio outside the tolerance, arch mismatch
+or class without a file, and 2 on unreadable or invalid input; `--json` prints the same result
+for machines. Tests: `tests/test_correctness_matrix.py`.
+
 ## Profiling `hpcperfstatsd`
 
 Use these steps on a **representative host** (same kernel, privilege level, and enabled collectors as production). Run as the same user as the daemon when attaching with `strace`/`perf`, unless you use `sudo` and account for `ptrace` scope (`/proc/sys/kernel/yama/ptrace_scope` on many Linux distros).

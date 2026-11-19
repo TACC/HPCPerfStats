@@ -1,0 +1,26 @@
+# Campaign class of each node for scripts/correctness_matrix.py (the class table of the
+# cross-architecture correctness campaign). Tab-separated, one row per host:
+#
+#   host     short host name (hostname -s; a JSON "host" FQDN is cut at the first dot),
+#            or "-" for a class with no fixed node
+#   class    campaign class; the matrix rows follow the order of first appearance here
+#   cluster  site of the node
+#   arch     arch.class the node's JSON must report (intel, amd, grace); a mismatch is a
+#            blocking deviation, so a host mapped to the wrong class cannot pass silently
+#
+# A class may list several hosts; their results merge (worst status wins). milan and a100 run
+# on the same node, so they are one class. milan-cpu has no fixed node (the operator picks an
+# idle GPU-less Milan node): assign it on the command line with --class-map HOST=milan-cpu,
+# which also adds or overrides any other host. Expectations: correctness_expected.tsv.
+c492-081	skx	stampede3	intel
+c460-220	icx	stampede3	intel
+c512-122	spr	stampede3	intel
+c551-001	pvc	stampede3	intel
+c561-009	h100	stampede3	intel
+c571-002	amd-rtx	stampede3	amd
+c317-016	milan/a100	ls6	amd
+-	milan-cpu	ls6	amd
+c318-005	genoa	ls6	amd
+c642-041	gh	vista	grace
+i618-141	gg	vista	grace
+c122-018	gb	horizon	grace
