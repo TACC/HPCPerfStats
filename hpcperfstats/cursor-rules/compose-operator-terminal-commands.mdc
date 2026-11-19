@@ -1204,6 +1204,15 @@ snap() {
 wait_new; snap instr_retired
 ```
 
+**Anti-pattern — multi-line `python3 -c '…'` in a pasted block (monitor correctness campaign c122-018 / c561-009 / c571-002, 2026-11-19):** the operator's terminal pasted every line of the block with 2 leading spaces. Inside the single-quoted program, line 2 (`d = json.load(…)`) then started with spaces and Python stopped with **`IndentationError: unexpected indent`**, so the JSON summary never printed on all three nodes. The shell lines were unaffected, and the stub test had missed it because it ran the block from a file with no indent. **Corrected:** open the program with `if 1:` and indent every following line by 4 spaces. Any uniform paste indent then keeps the block valid. Test a block by also running it with `sed 's/^/  /'` applied:
+
+```bash
+test -n "$J" && python3 -c 'if 1:
+    import json, sys
+    d = json.load(open(sys.argv[1]))
+    print(d["overall"], d["counts"])' "$J"
+```
+
 ## Overlap
 
 - **`podman-runtime.mdc`** — rootless runtime, `/data` storage, project
