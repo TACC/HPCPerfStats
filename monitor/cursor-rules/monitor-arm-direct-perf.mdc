@@ -1,5 +1,5 @@
 ---
-description: Grace / aarch64 direct perf_event readers (perf_util, arm_core_perf, arm_imc SCF) — scaled reads, never pinned, sysfs names first, D1 keys and widths
+description: Grace / aarch64 direct perf_event readers (perf_util, arm_core_perf, arm_imc SCF) — scaled reads, never pinned, sysfs names first, D1 keys and widths; perf_util is shared with the x86 readers
 globs:
   - HPCPerfStats/monitor/src/perf_util.*
   - HPCPerfStats/monitor/src/arm_core_perf.*
@@ -13,7 +13,9 @@ alwaysApply: false
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CPU backend
+Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID** (and since Phases 2+3 no
+architecture does; x86 readers: **`monitor-x86-direct-perf.mdc`**, which applies laws 1–4 and 9–11
+below to Intel / AMD). The `arm` CPU backend
 (`MONITOR_CPU_BACKEND_ARM`, aarch64 `auto`) keeps `/proc/stat` util and the cpufreq clock
 (`monitor-dcgm-integration.mdc`) and reads every Grace hardware counter by direct
 `perf_event_open`. The retired LIKWID overlay (`MONITOR_CPU_LIKWID_OVERLAY`,
@@ -24,7 +26,7 @@ Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CP
 
 | Module | Role |
 |--------|------|
-| `perf_util.{c,h}` | Portable helpers: open (`pid -1`, `CLOEXEC`), raw/sysfs attrs, per-boot PMU `type`, `cpumask` first CPU, scaled read. Builds and unit-tests on every host. |
+| `perf_util.{c,h}` | Portable helpers shared with `x86_core_perf` / `x86_uncore_perf` / `x86_rapl`: open (`pid -1`, `CLOEXEC`), raw/sysfs attrs, per-boot PMU `type`, `cpumask` first CPU, scaled read, `perf_open_sentinel`. Builds and unit-tests on every host; a change here is multi-arch. |
 | `arm_core_perf.{c,h}` | `host_cpu_hw` core events: nine per CPU, one fd each (no groups) on the `armv8_pmuv3*` PMU type from sysfs. Opened at begin / SIGHUP only. |
 | `arm_imc.c`, `arm_imc_scf.{c,h}` | `arm_aarch64_imc`: one `scf<N>` device per `nvidia_scf_pmu_<N>`, `cmem_rd_data` + `cmem_wr_total_bytes` on that PMU's `cpumask` CPU; perf `dmc`/`imc` scan as fallback. |
 | `cpu_counter_metrics_arm_publish.{c,h}` | `publish_arm_measured_stats`: maps core lifetimes to schema keys. |
@@ -41,7 +43,7 @@ Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CP
    the GEMM FLOP-per-op ceiling within ~1–2% at 17% counter time (Phase 1 canary,
    `scripts/canary_counter_check.sh`). Never document a fleet-wide factor.
 2. **Never `pinned` or `exclusive`.** The PMU is shared with `nvidia-powerd`; let the kernel
-   multiplex. No explicit rotation on Grace (rotation is the x86 plan, Phase 2).
+   multiplex. No explicit rotation on any platform (D5 dropped the rotation design).
 3. **Names from sysfs first.** Core events resolve as: sysfs `events/<name>` → MIDR-keyed raw
    table in `arm_core_perf.c` (one row: Neoverse V2 `0x410fd4f0`: `fp_dp_spec 0x801C`,
    `fp_sp_spec 0x8018`, `fp_hp_spec 0x8014`, `fp_fixed_ops_spec 0x80C1`,
@@ -54,7 +56,7 @@ Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CP
 5. **Late SCF binding re-scans (O17).** No SCF and no dmc/imc PMU at begin → `ARM_IMC_MODE_RESCAN`:
    the type stays enabled with 0 devices and re-scans (one `opendir`) every
    `ARM_IMC_SCF_RESCAN_TICKS` ticks; attach logs once. No begin-order dependency on
-   `host_cpu_hw` (`STATS_RUNTIME_BEGIN_CPU_HW_FIRST` is LIKWID-backend only).
+   `host_cpu_hw` (every direct-perf reader owns its fds).
 6. **Keys and widths (D1, O11).**
    - New keys are `E,W=64` lifetimes: `arm_fp_dp_spec`, `arm_fp_sp_spec`, `arm_fp_hp_spec`
      (FP **instructions** by precision, all vector widths) and `cpu_clock_est_cycles`.
@@ -107,7 +109,7 @@ Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CP
 ## Overlap
 
 - **`monitor-dcgm-integration.mdc`** — Grace util / cpufreq clock, `host_power_socket`, GPU path.
-- **`monitor-amd-epyc-likwid.mdc`** — x86 LIKWID (Intel / AMD); not used on aarch64.
+- **`monitor-x86-direct-perf.mdc`** — Intel / AMD direct perf readers on the same `perf_util`; not built on aarch64.
 - **`monitor-overhead-measurement.mdc`** — `arm_aarch64_imc` is its own `perf_event` group on 3.1 builds.
 - **`monitor-shm-message-correctness.mdc`** — Grace key checks in `papi_shm_validate.py`.
 - **`monitor-emitted-variable-naming.mdc`**, **`monitor-schema-keys-headers.mdc`** — key names and `E,W=` tokens.

@@ -1,5 +1,5 @@
 ---
-description: Build monitor with local deps in .build; static bundle and LIKWID (no Variorum)
+description: Build monitor with local deps in .build; static bundle (libev + rabbitmq-c, libbpf for eBPF; no PMU library, no Variorum)
 globs:
   - HPCPerfStats/monitor/**
 alwaysApply: false
@@ -17,17 +17,17 @@ alwaysApply: false
 
 ## Third-party stack (monitor)
 
-- **RAPL energy** (Intel/AMD `intel_rapl` / `amd64_rapl`): **LIKWID only** via `src/likwid_rapl.c` + `likwid_rapl_pwr.c` (PWR* perfmon / power PMU) with **`rapl_powercap.c`** `energy_uj` fallback. Do **not** use `power_read` / DIRECT MSR. Do **not** reintroduce **libvariorum** or `variorum_get_energy_json` without an explicit product decision.
-- **PMU / CPU counters (x86)**: LIKWID through `cpu_counter_metrics.c` and `likwid_pmc_adapter.c`. Bundle/cross scripts build LIKWID with **`ACCESSMODE=perf_event`** (`-DLIKWID_USE_PERFEVENT`). Runtime **always** `ACCESSMODE_PERF` (avoids userspace **MSR 0x38f** / `IA32_PERF_GLOBAL_CTRL` dmesg on el9 kernels with `msr.allow_writes=default`). `HPCPERFSTATS_LIKWID_ACCESS=direct` is rejected (warn only). Building LIKWID with `ACCESSMODE=direct` then running PERF leaves `access_init` NULL → `perfmon_init` ENODEV.
-- **RabbitMQ / libev**: unchanged for APIs. Static **rabbitmq-c** must install as **`$PREFIX/lib/librabbitmq.a`** (`CMAKE_INSTALL_LIBDIR=lib` in `build_static_bundle.sh` / cross). Autoconf probes `amqp_new_connection` with **`-lrt -pthread`** first (pkg-config `Libs.private`) and **`AS_UNSET`** of the search cache before a plain retry. Embedded static **libev / rabbitmq-c / LIKWID** must be built with **`-fPIC`** so RPM `%build` PIE / hardened-cc1 probes and final links succeed (Horizon aarch64: non-PIC `.a` → `R_AARCH64_*` / “Unable to find librabbitmq”). `prepare_rpmbuild_dirs.sh` and `build_static_bundle.sh` (`SKIP_DEPS=1`) must verify **`libev.a`** and **`librabbitmq.a`** before configure / `make dist`. **LIKWID prepare:** export **`LIBS`** with **`-lpthread -ldl`** (same as the static probe) before in-tree `./configure` for `make dist`; `configure.ac` probes `perfmon_init` with **`-llikwid-hwloc -llikwid-lua -lm -lrt -pthread -ldl`** and **`AS_UNSET([ac_cv_search_perfmon_init])`** before the plain retry (Lonestar6: probe-only `-lpthread -ldl` used to pass while configure failed with `(cached) no`).
-- **DCGM / NVML / GPUPerfAPI / Grace counters**: DCGM and NVML are `dlopen`ed at runtime (vendored headers; nothing to link). Non-x86 CPU is the **`arm` backend (`/proc/stat` util, cpufreq clock) + direct perf core and SCF counters** (no library; see **`monitor-arm-direct-perf.mdc`**). aarch64 links **no LIKWID** since 3.1. Do not reintroduce PAPI.
+- **RAPL energy** (Intel/AMD `intel_rapl` / `amd64_rapl`): `src/x86_rapl.c` reads the perf `power` PMU with **`rapl_powercap.c`** `energy_uj` as per-domain fallback; no library. Do **not** use `power_read` / MSR. Do **not** reintroduce **libvariorum** or `variorum_get_energy_json` without an explicit product decision.
+- **PMU / CPU counters (x86)**: direct perf through `x86_core_perf.c` (core) and `x86_uncore_perf.c` (IMC / HBM / DF) on `perf_util.c`; no library to build or link (**`monitor-x86-direct-perf.mdc`**). Since 3.1 Phases 2+3 the monitor links **no PMU library** on any arch: do not reintroduce a PMU library prefix build, configure probe or link. The backend is `--with-cpu-counter-backend={auto|x86|arm}` (`auto`: `x86` on x86, `arm` elsewhere); the CPU vendor (Intel or AMD) is read at runtime, with no compile-time vendor flag.
+- **RabbitMQ / libev**: unchanged for APIs. Static **rabbitmq-c** must install as **`$PREFIX/lib/librabbitmq.a`** (`CMAKE_INSTALL_LIBDIR=lib` in `build_static_bundle.sh` / cross). Autoconf probes `amqp_new_connection` with **`-lrt -pthread`** first (pkg-config `Libs.private`) and **`AS_UNSET`** of the search cache before a plain retry. Embedded static **libev / rabbitmq-c** must be built with **`-fPIC`** so RPM `%build` PIE / hardened-cc1 probes and final links succeed (Horizon aarch64: non-PIC `.a` → `R_AARCH64_*` / “Unable to find librabbitmq”). `prepare_rpmbuild_dirs.sh` and `build_static_bundle.sh` (`SKIP_DEPS=1`) must verify **`libev.a`** and **`librabbitmq.a`** before configure / `make dist`.
+- **DCGM / NVML / GPUPerfAPI / Grace counters**: DCGM and NVML are `dlopen`ed at runtime (vendored headers; nothing to link). Non-x86 CPU is the **`arm` backend (`/proc/stat` util, cpufreq clock) + direct perf core and SCF counters** (no library; see **`monitor-arm-direct-perf.mdc`**). Do not reintroduce PAPI or another PMU library.
 
-Pinned versions for scripted builds: see `HPCPerfStats/monitor/scripts/build_static_bundle.sh` (`STATIC_PIN_*`). The bundle installs **libev**, **rabbitmq-c**, and (**x86 only**) **LIKWID** static archives into `PREFIX` (no separate hwloc/jansson build for Variorum). **rabbitmq-c** tarballs are fetched from **`alanxz/rabbitmq-c`** (default `STATIC_PIN_RABBITMQ_C_URL_FMT`); override with **`RABBITMQ_C_URL_FMT`** for mirrors. **LIKWID** `build_likwid` forces **`SHARED_LFLAGS`/`LIBS` with `-pthread -ldl`** so shared **`liblikwidpin.so`** and the lua helper link on Lonestar6 (`pthread_setaffinity_np` / `dlopen`); command-line **`LIBS=`** replaces makefile `LIBS` (pinlib `LIBS += -ldl` does not append).
+Pinned versions for scripted builds: see `HPCPerfStats/monitor/scripts/build_static_bundle.sh` (`STATIC_PIN_*`). The bundle pins only **libev** 4.33 and **rabbitmq-c** 0.17.0 static archives into `PREFIX`, plus **libbpf** for the eBPF metric profiler (no PMU library since 3.1 Phases 2+3; no hwloc/jansson build for Variorum). **rabbitmq-c** tarballs are fetched from **`alanxz/rabbitmq-c`** (default `STATIC_PIN_RABBITMQ_C_URL_FMT`); override with **`RABBITMQ_C_URL_FMT`** for mirrors.
 
 ## Static compile (`--enable-all-static`)
 
 - Default in `configure.ac` is **`--enable-all-static`** (see `configure --help`).
-- With LIKWID + static linking, **`configure.ac`** uses **`AC_SEARCH_LIBS`** with extra **`[-llikwid-hwloc -llikwid-lua -lm]`** on the probe link only (static **`liblikwid.a`** is not self-contained), then appends **`-llikwid-hwloc -llikwid-lua`** to **`LIBS`**. Do not append **`-lm`** into the static link group; **`Makefile.am`** keeps **`-lm`** with the usual dynamic libc stack.
+- Do not append **`-lm`** into the static link group; **`Makefile.am`** keeps **`-lm`** with the usual dynamic libc stack.
 - Workspace helper: `HPCPerfStats/monitor/scripts/ensure_dotbuild_prefix_static.sh` (runs `build_static_bundle.sh --deps-only` with `PREFIX=<repo>/.build/prefix`).
 - Full deps + monitor build: `HPCPerfStats/monitor/scripts/build_static_bundle.sh` (or `SKIP_DEPS=1` when `PREFIX` already has the `.a` files).
 
@@ -45,7 +45,8 @@ Typical minimal configure for bring-up:
 
 CPU backend:
 
-- x86: `--with-cpu-counter-backend=likwid` (default on x86_64).
+- x86: `--with-cpu-counter-backend=x86` (`auto` on x86_64; direct perf core, uncore and RAPL).
+- aarch64: `--with-cpu-counter-backend=arm` (`auto` on aarch64).
 
 ## TACC hosts
 
@@ -54,9 +55,9 @@ On Stampede3 / other TACC systems (`*.tacc.utexas.edu`), load build tools via **
 ## Verification
 
 - **Canonical**: run **`scripts/build_static_bundle.sh`**, then **`make check`** in **`monitor/.build-static`**. Full policy: **monitor-static-build-verification** (always applied in this workspace).
-- For **static** links, `ldd` on `hpcperfstatsd` should **not** show `liblikwid.so`, `libev.so`, or `librabbitmq.so` from the prefix; third-party deps should be linked from `.a` inside the static group. System **libc** / **libm** / **libpthread** typically remain dynamic unless doing a full static link.
+- For **static** links, `ldd` on `hpcperfstatsd` should **not** show `libev.so` or `librabbitmq.so` from the prefix; third-party deps should be linked from `.a` inside the static group. System **libc** / **libm** / **libpthread** typically remain dynamic unless doing a full static link.
 
 ## Docs
 
-- `HPCPerfStats/monitor/LIKWID_MIGRATION.md` — PMU + RAPL, PERF-only HPM (no DIRECT MSR), Makefile ordering (`cpu_counter_metrics` before RAPL).
+- `HPCPerfStats/monitor/LIKWID_MIGRATION.md`: historical note only (removed in 3.1 Phases 2+3; current design in `README.md` and **`monitor-x86-direct-perf.mdc`**).
 - `HPCPerfStats/monitor/VARIORUM_MIGRATION.md` — historical note only (Variorum removed).

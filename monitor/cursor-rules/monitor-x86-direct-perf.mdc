@@ -1,0 +1,140 @@
+---
+description: Intel / AMD x86 direct perf_event readers (x86_core_perf, x86_uncore_perf, x86_rapl) — no LIKWID, no MSR, scaled reads, never pinned, verified event rows only, sentinels, D6 sharing keys
+globs:
+  - HPCPerfStats/monitor/src/x86_core_perf.*
+  - HPCPerfStats/monitor/src/x86_uncore_perf.*
+  - HPCPerfStats/monitor/src/x86_rapl.*
+  - HPCPerfStats/monitor/src/rapl_powercap.*
+  - HPCPerfStats/monitor/src/intel_rapl.c
+  - HPCPerfStats/monitor/src/amd64_rapl.c
+  - HPCPerfStats/monitor/src/intel_*_imc.*
+  - HPCPerfStats/monitor/src/amd_cpuid_match.*
+  - HPCPerfStats/monitor/src/amd_processor.*
+  - HPCPerfStats/monitor/src/amd_x86_uncore_df.*
+  - HPCPerfStats/monitor/src/cpu_counter_metrics.c
+  - HPCPerfStats/monitor/src/cpu_counter_metrics.h
+  - HPCPerfStats/monitor/src/cpu_counter_metrics_x86_publish.*
+  - HPCPerfStats/monitor/src/cpuid.*
+  - HPCPerfStats/monitor/src/intel_cpuid_match.*
+  - HPCPerfStats/monitor/src/stats_registry.c
+  - HPCPerfStats/monitor/configure.ac
+alwaysApply: false
+---
+
+# Monitor: x86 direct perf (Intel + AMD EPYC)
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Since **3.1 Phases 2+3** (cpu-precision plan, D5 / D19 / D20) the monitor links **no LIKWID on any
+architecture**. x86 core, uncore and RAPL counters are read by direct `perf_event_open` on the
+shared `perf_util` helper, the same model as Grace (**`monitor-arm-direct-perf.mdc`**, whose laws
+1–4 and 9–11 this rule applies to x86). LIKWID (`likwid_*`, `cpu_counter_metrics_likwid_begin*`,
+`HPMinit` / `setupCounters` re-arm, `LIKWID_FORCE`, `HPCPERFSTATS_LIKWID_ACCESS`, PWR* eventsets,
+`--with-cpu-counter-backend=likwid`) must not come back. `LIKWID_MIGRATION.md` is history only.
+
+## Modules
+
+| Module | Role |
+|--------|------|
+| `x86_core_perf.{c,h}` | `host_cpu_hw` core events: one fd per event per CPU on the sysfs `cpu` PMU (no groups). Class from `processor_t`; generic `instructions` / `cpu-cycles` / `ref-cycles` from sysfs (else `PERF_TYPE_HARDWARE`), every other event from a per-class raw row (`config = umask << 8 \| event`). Software lifetimes that only grow; D6 time sums. |
+| `cpu_counter_metrics_x86_publish.{c,h}` | `publish_x86_measured_stats`: lifetime → key table (one event may feed two keys), Zen5 `amd_fp_dp_ops` = packed + scalar double, D6 `pmu_*` keys. |
+| `cpu_counter_metrics.c` (x86 branch) | begin = `x86_core_perf_begin` (startup / SIGHUP), collect = `x86_core_perf_collect_cpu` + publish, then `stats_set_missing_all(NOT_PRESENT)`. |
+| `x86_uncore_perf.{c,h}` | Intel IMC (`uncore_imc_<N>` → `mbox<N>`, ICX `mdev<N>`), SPR / EMR HBM (`uncore_hbm_<N>` → `hbm<N>`), AMD DF (`amd_df` → `df`). Per-generation profiles; sysfs `events/` names first, else verified raw `event` / `umask` placed through the PMU's `format/` files (multi-range fields included). One fd per (event, cpumask CPU); the row sums every cpumask CPU. |
+| `intel_{skx,icx,spr,emr,gnr,srf}_imc.c`, `amd_x86_uncore_df.c` | Thin collectors: `x86_uncore_perf_begin` with the CPUID match, `x86_uncore_perf_collect`. |
+| `x86_rapl.{c,h}`, `rapl_powercap.{c,h}` | Per-socket RAPL: perf `power` PMU `energy-*` (scaled by `.scale`) on the PMU cpumask CPU of that socket, else powercap `energy_uj` for that domain (chosen at begin). |
+| `intel_rapl.c`, `amd64_rapl.c` | `intel_x86_rapl` (`pkg/pp0/pp1/dram_energy`) and `amd_x86_rapl` (`core/pkg_energy`) on `x86_rapl`. |
+
+## Laws
+
+1. **No LIKWID, no MSR, no fallback collectors.** Never `msr_io`, `/dev/cpu/*/msr`, `power_read`,
+   Intel `0x611…` / AMD `0xC001029A/B`, `intel_x86_pmc_gpr4` / `gpr8`, `intel_4pmc3` /
+   `intel_8pmc3`, AMD `amd64_pmc`, native-MSR `amd64_df`, or emitted `amd_x86_pmc` / bare
+   `amd_x86_uncore_df`. A missing PMU or failed open fails **soft** (law 7), never closed.
+2. **Scaled reads only, never `pinned` / `exclusive`.** Every fd uses
+   `PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING` and goes through
+   `perf_read_scaled` (arm law 1). The kernel multiplexes against any other holder (`perf`,
+   VTune, a user's LIKWID job, `nvidia-powerd`); exact while an event keeps a counter, a scaled
+   estimate otherwise. No per-tick re-arm, no rotation, no reprogramming in collect.
+3. **Opens at begin / SIGHUP only.** Collect is one bounded `read` per open fd
+   (`monitor-jitter-and-fidelity-priority.mdc`). PMU `type` and `cpumask` are read every begin,
+   never hard-coded; no assumption on IMC / HBM instance count (`X86_UNCORE_MAX_DEVS`).
+4. **Verified event rows only.** A raw code enters a class row only after it was checked with
+   `perf` against the kernel's named event (FLOP codes also against an exact GEMM FLOP total,
+   `scripts/perf_raw_flops_check.sh`) on that class. Never guess codes; SRF and Rome have no core
+   row and fall under "unknown class" (generic events only, one log line, other keys
+   `NOT_PRESENT`). Current rows:
+   - Intel SKX / CLX / ICX / SPR / EMR / GNR: `0x51/0x01` `l1d_replacement`; **D18** `0xd1/0x01`,
+     `0x02`, `0x04` → `mem_load_uops_retired_l1_hit` / `_l2_hit` / `_llc_hit` on every class
+     (the LIKWID alias that put all loads into `_l1_hit` on ICX+ is gone); the eight
+     `0xc7` `fp_arith_inst_retired_*` umasks `0x01`–`0x80`.
+   - AMD Milan / Genoa (Zen3 / Zen4): `0xc0`, `0xc2`, `0xc3`, `0x29/0x07` (`ls_dispatch`),
+     `0x03/0xff` → `fp_ops_retired` (D10). Turin (Zen5): same plus `0x03/0x0f` →
+     `fp_ops_retired`, `0x03/0xaf` + `0x03/0x8f` → `amd_fp_dp_ops` (D12). Event `0x03` is a
+     merged counter pair (`pair_event`, counts two general slots).
+   - Uncore: Intel CAS per generation (SKX `0x04/0x03,0x0c`; ICX `0x04/0x0f,0x30`; SPR / EMR / GNR /
+     SRF `0x05/0xcf,0xf0`, GNR / SRF scheduler 0 only); SPR HBM CAS (32-byte accesses, D21);
+     AMD DF Zen2 / Zen3 `dram_channel_data_controller_N` (Zen2 channels 0–1 only), Zen4 / Zen5
+     read **plus** write beats per channel.
+5. **Keys, widths and vendor gating.** Existing key names stay (no renames). Shared counter keys
+   are `W=48` and carry the software lifetime **modulo 2^48** (O11); `fp_ops_retired`,
+   `amd_fp_dp_ops` and the `pmu_*` times are `W=64`. Generic `instructions` → `instr_retired_any` +
+   `instr_retired`, `cycles` → `cycles_unhalted_core` + `aperf`, `ref-cycles` →
+   `cycles_unhalted_ref` + `mperf`. On AMD (`is_amd`) the Intel fixed names
+   (`instr_retired_any`, `cycles_unhalted_core`, `cycles_unhalted_ref`) and `mperf` are left
+   unset (`NOT_PRESENT`; Genoa has no `ref-cycles`), while `instr_retired` / `aperf` are filled.
+   Uncore counted keys are CAS / data-beat counts modulo 2^48; RAPL keys are `W=32` running totals
+   in mJ since begin, published modulo 2^32 (never a per-read window).
+6. **Bridge-safe accumulators.** Same shape as `arm_core_perf`: `life += (delta + 0.5)` only when
+   the scaled delta is > 0; a failed read keeps `prev` so the next delta spans the gap; a re-seed
+   adds 0. Never publish a raw kernel count. `test_x86_core_perf_bridge` locks this; the
+   `x86perf` capability token tells consumers the x86 `host_cpu_hw` chain is bridgeable.
+7. **Fail soft: the key emits its sentinel** (`monitor-value-sentinel-contract.mdc`). Open errno
+   maps through `perf_open_sentinel` (`EACCES`/`EPERM` → `PERMISSION_DENIED`,
+   `ENOENT`/`EINVAL`/`EOPNOTSUPP` or no row → `NOT_PRESENT`, `EBUSY` → `PMU_BUSY`); a failed read
+   is `READ_FAILED`, `Δrunning == 0` with `Δenabled > 0` is `NOT_SCHEDULED`, a re-seed is
+   `COUNTER_RESET`. An uncore key summed over several fds emits its sentinel rather than a
+   partial sum. A key no event of the row's class feeds is `NOT_PRESENT`, or `NOT_BUILT` when the
+   profile lists it in `not_built` (SKX `dram_act_count` / `dram_pre_count_miss`, Zen2 DF
+   channels 2–3). One log line per event (not per CPU). Every failure site goes through
+   `stats_set_missing`, so the fault-injection matrix reaches it.
+8. **D6 sharing keys on x86.** `host_cpu_hw` publishes `pmu_enabled_time`, `pmu_running_time`
+   and (with a class row) `pmu_solo_running_time`; every IMC / HBM / DF row publishes
+   `pmu_enabled_time` / `pmu_running_time` (`E,W=64,U=ns`, summed over the row's fds; no solo for
+   uncore). Solo: fixed-counter events (Intel generic events) run all the time; general events get
+   min(1, `gp_counters` ÷ open general slots). Intel `gp_counters` = 8 assumes **HT off** (true on
+   every measured node; with HT on there are 4 and solo is overstated). The kernel NMI watchdog
+   holds Intel's fixed cycles counter, so `cycles` multiplexes and shows as outside sharing on
+   nodes with `nmi_watchdog=1`; do not "fix" that by pinning.
+9. **Uncore socket coverage.** A row sums every CPU of its PMU's `cpumask` (one per socket or
+   die), so Intel IMC rows count **all sockets** (about 2× the per-socket LIKWID history on
+   2-socket nodes). When a cpumask names fewer CPUs than the node has sockets (el8 `amd_df`
+   counts socket 0 only, D13) begin logs it once; do not add an MSR workaround.
+10. **RAPL.** Probe the perf `power` PMU `events/energy-{pkg,cores,gpu,ram}` (with `.scale`,
+    Joules) per socket, then powercap zones (`package-N` / `core` / `uncore` / `dram`); program
+    only present domains. A domain neither source can read emits its sentinel every collect; a
+    type with no readable domain on any socket is disabled with one error line. Do not gate RAPL
+    on `MONITOR_ARCH_*`. Flat RAPL rows under load are a failure, not idle.
+11. **Family-named types, server CPUID ranges.** DF `st_name`s are
+    `amd_x86_uncore_df_{rome,milan,genoa,turin}`, IMC `intel_x86_uncore_imc_{skx,icx,spr,emr,gnr,srf}`
+    (ICX rows keep `mdev<N>` names). EPYC allowlists are server model ranges only
+    (`amd_cpuid_match.c`).
+12. **Tests use the fake perf layer** (`tests/test_fake_perf.{c,h}`: TMPDIR sysfs + pipe fds) and
+    run on every host: `test_x86_core_perf`, `test_x86_core_perf_bridge`,
+    `test_cpu_counter_x86_publish`, `test_x86_uncore_perf`, `test_x86_rapl`, `test_rapl_powercap`,
+    the IMC / DF schema tests and the `test_fault_inject_*` matrix. New event rows need a test row
+    and the hardware evidence cited in the plan.
+
+## Live healthy bar (x86 canary)
+
+Unit `active`, shm age &lt; 300 s; `@full` has `host_cpu_hw`, the node's IMC or DF type and a
+non-flat RAPL type. Judge `host_cpu_hw` under load on `instr_retired` / `aperf` (both vendors),
+`retired_instructions` / `ls_dispatch` (AMD) or `cycles_unhalted_core` (Intel); idle CPUs may stay
+flat. `pmu_running_time` ÷ `pmu_enabled_time` well below the solo share means another PMU user.
+
+## Overlap
+
+- **`monitor-arm-direct-perf.mdc`** — Grace readers and the shared `perf_util` helper.
+- **`monitor-value-sentinel-contract.mdc`** — sentinel codes, bridgeable vs chain-breaking, fault matrix.
+- **`monitor-emitted-variable-naming.mdc`**, **`monitor-schema-keys-headers.mdc`** — key names and `E,W=` tokens.
+- **`monitor-consumer-schema-migration.mdc`** — 3.1 x86 meaning changes (README migration table).
+- **`monitor-shm-message-correctness.mdc`** — x86 key checks in `scripts/lib/papi_shm_validate.py`, `x86perf` slug token.

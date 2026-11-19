@@ -45,31 +45,36 @@ Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
    versions, harness and schema versions. Every reported number must be recomputable from
    `raw/` (`bin/summarize_profile.py`).
 7. **A cadence sweep measures; it does not change defaults** (`monitor-jitter-and-fidelity-priority.mdc`).
-8. **Driver groups, not types** (`arm_cpu`, `dcgm_gpu` and `hwmon_power` are separate groups).
+8. **Driver groups, not types** (`x86_perf`, `arm_cpu`, `dcgm_gpu` and `hwmon_power` are separate groups;
+   `x86_perf` is the x86 core, IMC / HBM / DF uncore and RAPL types, all direct perf_event).
    A type in an `Enabled types:` line with no group in
    `lib/driver_map.py` fails preflight; `test_driver_map_covers_all_st_names` fails when a new
    `.st_name` lands unmapped. Add the type to the map in the same change as the collector.
-   A type that only works with another group's backend goes **in that group**: on pre-3.1 Grace
-   overlay builds (`configure.likwid_overlay`) `arm_aarch64_imc` is in `arm_cpu`, because alone
-   it only waits for the LIKWID overlay (c122-018 2026-11-05: its SOLO leg logged `waiting for
-   the LIKWID overlay group` and measured ~0, not the SCF cost). A type with its own fds gets
-   its own group (`host_power_socket` → `hwmon_power`; on 3.1+ builds `arm_aarch64_imc` reads
-   SCF on its own perf fds and is the `perf_event` group). Build-info `cpu_backend` `dcgm` (RPMs
-   before the `arm` rename) resolves like `arm`, so a baseline RPM and a candidate get the same
+   A type with its own fds gets its own group (`host_power_socket` -> `hwmon_power`;
+   `arm_aarch64_imc` reads SCF on its own perf fds and is the `perf_event` group). A type that only
+   works with another group's backend goes **in that group**; the one such case is the 3.0-x
+   baseline alias: when a baseline RPM's build-info carries one of `driver_map.GRACE_OVERLAY_FLAGS`
+   (a LIKWID (3.0) Grace overlay build, see `LIKWID_MIGRATION.md`), `arm_aarch64_imc` maps to
+   `arm_cpu`, because there it only waited for the overlay (c122-018 2026-11-05: its SOLO leg
+   measured ~0, not the SCF cost). 3.1 builds never carry those flags. Build-info `cpu_backend` `dcgm` (RPMs
+   before the `arm` rename) resolves like `arm`, and the 3.0-x x86 value `likwid` is only an
+   alias that resolves like `x86` (`x86_perf`), so a baseline RPM and a candidate get the same
    groups.
 9. **Restore on every exit path**: drop-in removed, measure queue deleted, site conf and
    service active/enabled state restored; `restore.sh` is written before the first change.
    The measured package stays installed (reserved node).
 10. **Cost a feature inside a group with a VARIANT leg, never a SOLO subtraction across groups.**
    `driver_map.VARIANTS` runs the base group with one measurement-only daemon knob in the same
-   runtime drop-in (`arm_cpu_noscf`: `host_cpu_hw` with `HPCPERFSTATS_LIKWID_GRACE_SCF=0`), is
+   runtime drop-in (the only entry, `arm_cpu_noscf`: `host_cpu_hw` with `driver_map.NOSCF_ENV=0`), is
    shuffled with the SOLO legs, and is paired with **SOLO(base) in the same block**
    (`collector_matrix.variants`; excluded from the interaction residual). The pair counts only
    when the leg journal contains the variant's `marker` (the daemon's log that the knob took
    effect) — otherwise `NOT_MEASURED`, so a daemon without the knob cannot report a false 0.
-   `arm_cpu_noscf` exists only for pre-3.1 overlay baselines; 3.1 builds have no knob and get
-   no variant (SCF cost is the `perf_event` SOLO leg). The marker is pinned in
-   `test_grace_scf_variant_and_schema.py`.
+   `arm_cpu_noscf` is 3.0-x alias handling: `variants_for` schedules it only for a LIKWID (3.0)
+   Grace overlay baseline (`GRACE_OVERLAY_FLAGS`); 3.1 builds have no such knob and get no variant
+   (SCF cost is the `perf_event` SOLO leg). The literal marker string is pinned in
+   `test_schedule_drivers.py`; `test_grace_scf_variant_and_schema.py` pins its derived form
+   (`SCF uncore events off ({NOSCF_ENV}=0)`) and the matrix's use of it.
 11. **Emitted keys are captured, not assumed.** After every leg on `<queue>_measure` the harness
    drains that queue (management API, guarded to `_measure` only, after the sampler stops) and
    keeps the last `$` schema message as `raw/legs/<id>/schema.txt`; `profile.json`

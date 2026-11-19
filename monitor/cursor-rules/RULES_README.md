@@ -21,7 +21,7 @@ Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` f
 Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 
 - **`shared-node-affinity-monitor-contract.mdc`** — compile-time multi-jid `%jobs`/`%affinity`; full-resource unmarked fast path; no `scontrol`/`nvidia-smi`/`sched_setaffinity`
-- **`monitor-static-build-verification.mdc`** / **`monitor-dual-verify-cross-and-static.mdc`** — canonical static bundle; foreign cross only for portable / multi-arch diffs (skip ARM for LIKWID-only; skip x86 for DCGM CPU-only)
+- **`monitor-static-build-verification.mdc`** / **`monitor-dual-verify-cross-and-static.mdc`** — canonical static bundle; foreign cross only for portable / multi-arch diffs (skip ARM for x86-only direct perf; skip x86 for `arm` CPU-backend-only)
 - **`monitor-valgrind-cpp-linter-gate.mdc`** — plan-close Valgrind Memcheck + full-tree clang-format/clang-tidy (scripts only; no git hooks)
 - **`tacc-lmod-build-environment.mdc`** — on TACC SSH hosts: Lmod `module avail`/`module load`, fix agent MODULEPATH, Stampede3 build practices
 - **`monitor-build-clean-workspace.mdc`** — pre-compile clean workspace in `prepare_rpmbuild_dirs.sh`, `build_static_bundle.sh`, `cross_compile_test.sh`
@@ -34,9 +34,8 @@ Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 - **`monitor-runtime-path-coherence.mdc`** — default path synchronization across CLI, startup permissions, systemd, RPM, docs, and tests
 - **`monitor-roofline-peak-detect.mdc`** — `host_roofline_peak` NVML/smi/DRM/EDAC gaps + allowlisted GB200/Grace identity
 - **`monitor-xpum-integration.mdc`** — Intel PVC / XPU Manager (`intel_gpu`, vendored headers, libxpum dlopen)
-- **`monitor-arm-direct-perf.mdc`** — Grace / aarch64 `host_cpu_hw` and `arm_aarch64_imc` by direct perf (3.1+, no LIKWID): enabled/running scaling, never pinned, sysfs names then MIDR table, D1 keys, W=48 modulo emit (replaces the retired `monitor-likwid-overlay.mdc`)
-- **`monitor-amd-epyc-likwid.mdc`** — Intel + EPYC LIKWID-only core/DF/RAPL; PERF-only HPM (no DIRECT MSR / `power_read`); no gpr4/8 fallback; family DF `st_name`s
-- **`monitor-likwid-rapl-refactor.mdc`** — RAPL via LIKWID PWR* + powercap; init order before RAPL collect; no Variorum
+- **`monitor-arm-direct-perf.mdc`** — Grace / aarch64 `host_cpu_hw` and `arm_aarch64_imc` by direct perf (3.1+, no PMU library) and the shared `perf_util` helper: enabled/running scaling, never pinned, sysfs names then MIDR table, D1 keys, W=48 modulo emit
+- **`monitor-x86-direct-perf.mdc`** — Intel / AMD `host_cpu_hw`, IMC / HBM / DF uncore and RAPL by direct perf (3.1 Phases 2+3, no PMU library, no MSR): verified event rows, D18 load hits, sentinels, D6 sharing keys on x86, all-socket uncore sums, RAPL running totals
 - **`monitor-debug-vs-symbols.mdc`** — `--enable-debug` vs `-g`; release quiet logging (startup + hourly + first-fail RMQ)
 - **`plan-creation-contract.mdc`** / **`plan-template-enforcement.mdc`** — plan authoring; template at **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`** (bug plans: RCA + Target File + Fix compression sequence + Minimally Invasive Fix + Compression metric block)
 - **`grok-surgical-bug-fix-mandate.mdc`** — bug-fix / ticket / error-refactor patches are zero-expansion repairs of the root-cause block (compress that block; do not append nested conditionals; no unrelated adjacent cleanup; no new helpers unless 3+ copies or the user asks); RCA + compression metrics in chat (or PLAN_TEMPLATE metric block) before the first product-code edit; **not** always-on (description + globs + router)

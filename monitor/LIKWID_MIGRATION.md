@@ -1,4 +1,46 @@
-# LIKWID PMU migration (Intel + AMD EPYC)
+# LIKWID PMU migration (Intel + AMD EPYC) — history
+
+> **Historical document. LIKWID was removed from the monitor in 3.1 Phases 2+3** (cpu-precision
+> plan, decisions D5 / D19 / D20). No architecture builds, probes or links LIKWID any more:
+> x86 core, IMC / HBM / DF uncore and RAPL counters are read by direct `perf_event_open`
+> (`x86_core_perf.c`, `x86_uncore_perf.c`, `x86_rapl.c` on `perf_util.c`), and aarch64 dropped
+> LIKWID in 3.1 Phase 1. The `likwid_*` sources, `--with-cpu-counter-backend=likwid`,
+> `LIKWID_FORCE`, `HPCPERFSTATS_LIKWID_ACCESS` and the PWR* RAPL path described below no longer
+> exist. Current design and consumer migration notes:
+>
+> - `README.md` → *x86 counters (direct perf, 3.1 Phases 2+3)* and the migration table
+>   *x86 `host_cpu_hw`, uncore and RAPL (3.1 Phases 2+3: direct perf, PMU library removed)*
+> - `cursor-rules/monitor-x86-direct-perf.mdc` (laws) and `cursor-rules/monitor-arm-direct-perf.mdc`
+> - `HPCPerfStats/docs/MONITOR_VARIABLES.md` (key meanings)
+>
+> The text below describes the LIKWID era (3.0 – 3.1 Phase 1) and is kept only to explain
+> archived data, for example why ICX+ `mem_load_uops_retired_l1_hit` counted all loads, why
+> Intel `fp_arith_inst_retired_*` were empty and why x86 RAPL rows were per-read windows.
+
+## What replaced LIKWID (3.1 Phases 2+3)
+
+- **Configure:** `--with-cpu-counter-backend={auto|x86|arm}`. `auto` (default) is `x86` on x86
+  and `arm` elsewhere; `x86` is rejected on non-x86 hosts; `likwid` is now a bad value. The x86
+  backend defines `MONITOR_CPU_BACKEND_X86` (Automake conditional `CPU_BACKEND_X86`).
+- **Vendor:** `--with-monitor-arch` and `MONITOR_ARCH_INTEL` / `MONITOR_ARCH_AMD` are removed;
+  the vendor (Intel or AMD) is read at runtime from `processor_t`.
+- **Static bundle:** `build_static_bundle.sh` pins only libev 4.33 and rabbitmq-c 0.17.0, plus
+  libbpf for the eBPF metric profiler. No LIKWID, hwloc or Lua archives.
+- **Capabilities:** `configure.cpu_backend: "x86"` and slug token `x86perf` (for example
+  `x86_64-ver3.1-hw-ib-nvgpu-intelgpu-lustre-beegfs-x86perf-sent1-slowtier1`) replace the
+  `likwid` token; `likwid_overlay` and `papi_hybrid` are no longer emitted.
+- **Begin order:** the "begin `host_cpu_hw` first" two-phase begin (see *Init order* below) is
+  gone; every type begins in plain registry order (`test_stats_runtime_begin_order`).
+- **Validators:** an `x86perf` build does not allow `NOT_BUILT` on `host_cpu_hw`; the
+  "LIKWID bridge unproven" downgrade is removed from the cross-sample validators; the DEBUG
+  fault plan adds `perf_open:instructions!16` (EBUSY) for x86.
+- **Device probes:** the live probes list the sysfs `uncore_imc_<N>` / `uncore_hbm_<N>` /
+  `amd_df` PMUs (rows `mbox<N>`, `hbm<N>`, `mdev<N>` on ICX, `df`); the EDAC Python probe for
+  IMC rows is deleted.
+- **Environment:** `HPCPERFSTATS_LIKWID_*`, `HPCPERFSTATS_MONITOR_ARCH` and `LIKWID_FORCE` are
+  gone.
+- **Overhead harness:** the measurement driver group is `x86_perf`; `likwid` survives only as
+  the 3.0-era build-info `cpu_backend` alias that maps to it (`measurement/lib/driver_map.py`).
 
 Intel core and uncore performance counters are collected through **LIKWID PMON**
 (`likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`). Native MSR, PCI, and MMIO
@@ -96,7 +138,7 @@ RAPL notes:
 - **`HPCPERFSTATS_LIKWID_ACCESS`:** unset / empty / `perf` → `ACCESSMODE_PERF` (only supported mode). `direct` is **removed** (journal error; still PERF). Invalid values also fall back to `perf`. Journal line: `LIKWID HPM access mode: perf`.
 - `host_cpu_hw` begin failures log init vs eventset step and the event string (`likwid_backend_begin` / `likwid_pmc_adapter_setup_events`); `perfmon_init` failures include errno.
 
-Counter-name → device/key mapping is exercised by `test_likwid_uncore_adapter.c`
+Counter-name -> device/key mapping was exercised by `test_likwid_uncore_adapter.c` (deleted with the adapter)
 via `likwid_uncore_adapter_emit_counter()`.
 
 ## Init order
@@ -112,11 +154,12 @@ Intel IMC types already sort after `host_cpu_hw` and are unchanged.
 
 **3.1:** aarch64 builds and links no LIKWID. `auto` on non-x86 is
 `--with-cpu-counter-backend=arm` (`/proc/stat` util, cpufreq clock), and
-`--with-cpu-counter-backend=likwid` is rejected on non-x86 by `configure.ac`.
+`--with-cpu-counter-backend=likwid` was rejected on non-x86 (since Phases 2+3 it is a bad value
+everywhere).
 Core counters (`arm_core_perf.c`) and Grace SCF DRAM traffic (`arm_imc_scf.c`)
 are read by direct `perf_event_open` through `perf_util.c`, scaled by
 time_enabled / time_running and never pinned (`nvidia-powerd` shares the PMU).
-The bundle, RPM prepare and cross scripts build LIKWID for x86 targets only.
+Until Phases 2+3 the bundle, RPM prepare and cross scripts built LIKWID for x86 targets only.
 Contract: `cursor-rules/monitor-arm-direct-perf.mdc`; key migration (the Grace instr/cycle
 step on GPU nodes, new `arm_fp_*_spec` keys): `README.md`.
 

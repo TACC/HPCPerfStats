@@ -12,7 +12,7 @@ alwaysApply: false
 
 # Monitor systemd service contract
 
-`hpcperfstatsd` remains root-by-design for perf/LIKWID, IB/OPA MAD, and GPU access. Limit its blast radius in the shipped unit without hiding required devices.
+`hpcperfstatsd` remains root-by-design for perf_event (core, uncore, power PMUs), IB/OPA MAD, and GPU access. Limit its blast radius in the shipped unit without hiding required devices.
 
 ## Required unit invariants
 

@@ -15,7 +15,7 @@ other properties to be specified.
     $hostname i101-101.ranger.tacc.utexas.edu
     $uname Linux x86_64 2.6.18-194.32.1.el5_TACC #18 SMP Mon Mar 14 22:24:19 CDT 2011
     $uptime 4753669
-    $build x86_64-ver3.0-debug-hw-ib-likwid-slowtier1
+    $build x86_64-ver3.1-debug-hw-ib-x86perf-sent1-slowtier1
 
 `$build {capability_slug}` is optional on older archives; when present it matches
 `make capabilities` / `monitor-build-capabilities.json` for that binary.
@@ -169,29 +169,32 @@ begin from end.
 architecture, we do not assign the same set of events to each core,
 see `amd64_pmc.c` in the hpcperfstats source for details.
 
-### LIKWID Integration (PMU and RAPL)
+### x86 counters and RAPL (direct perf_event)
 
-The monitor uses **LIKWID** for both CPU performance counters and **RAPL energy**
-on the LIKWID x86 backend. PMU collection goes through `cpu_counter_metrics` and
-`likwid_pmc_adapter`. Static/cross builds compile LIKWID with **`ACCESSMODE=perf_event`**.
-By default the adapter uses runtime **`ACCESSMODE_PERF`** (`HPCPERFSTATS_LIKWID_ACCESS`
-unset or `perf`) so core PMU programming does not write **MSR 0x38f**
-(`IA32_PERF_GLOBAL_CTRL`) on kernels with `msr.allow_writes=default`. Under PERF,
-RAPL uses LIKWID **PWR*** perfmon (`likwid_rapl_pwr.c` / power PMU) with powercap
-fallback — **no** `power_read` / DIRECT MSR. `HPCPERFSTATS_LIKWID_ACCESS=direct`
-is rejected (warn) and still uses PERF.
+On x86 the monitor reads CPU performance counters, memory-controller uncore counters and
+**RAPL energy** with its own direct `perf_event` readers; no third-party PMU library is
+built or linked on any architecture (LIKWID was removed in 3.1 Phases 2+3). `x86_core_perf` opens the core events per CPU for
+`host_cpu_hw` (published by `cpu_counter_metrics`), `x86_uncore_perf` reads the sysfs
+`uncore_imc_<N>`, `uncore_hbm_<N>` and `amd_df` PMUs (each row sums the CPUs in the
+PMU `cpumask`, so all sockets), and `x86_rapl` reads the perf `power` PMU with a per-domain
+powercap (`energy_uj`) fallback. Events are never pinned (reads are scaled by enabled /
+running time) and the monitor never reads or writes MSRs.
 
-Compile-time architecture selection: `--with-monitor-arch=auto` (default),
-`intel`, or `amd`. Scope, RAPL behavior, PMU fallback matrix, and build notes are
-in `LIKWID_MIGRATION.md`.
+Configure selects the CPU counter backend with `--with-cpu-counter-backend={auto|x86|arm}`:
+`auto` (default) is `x86` on x86 hosts and `arm` elsewhere, and `x86` is rejected on
+non-x86 hosts. The CPU vendor (Intel or AMD) is read at runtime; there is no compile-time
+vendor switch. The capability slug carries `x86perf` for the x86 backend (for example
+`x86_64-ver3.1-hw-ib-nvgpu-intelgpu-lustre-beegfs-x86perf-sent1-slowtier1`). README.md
+("x86 counters") has the design and the upgrade notes for 3.1 Phases 2+3; LIKWID (3.0) history
+is in `LIKWID_MIGRATION.md`.
 
 **Static linking:** default configure uses `--enable-all-static` (see
-`configure --help`). Third-party static archives (for example `libev`, `librabbitmq`,
-`liblikwid`, plus LIKWID’s `liblikwid-hwloc` and `liblikwid-lua` as needed) must be
-on the linker path. A workspace-oriented flow is `monitor/scripts/ensure_dotbuild_prefix_static.sh`
+`configure --help`). The static bundle builds only `libev` and `librabbitmq` (rabbitmq-c),
+plus `libbpf` for the eBPF metric profiler; they must be on the linker path. A
+workspace-oriented flow is `monitor/scripts/ensure_dotbuild_prefix_static.sh`
 (followed by configuring with `CPPFLAGS`/`LDFLAGS` pointing at that prefix); see
-`monitor/scripts/build_static_bundle.sh` for pinned versions and options.
+`monitor/scripts/build_static_bundle.sh` (`STATIC_PIN_*`) for pinned versions and options.
 
 Historical Variorum-only notes are kept for reference in `VARIORUM_MIGRATION.md`
-(superseded by LIKWID RAPL).
+(superseded by the direct RAPL readers).
 

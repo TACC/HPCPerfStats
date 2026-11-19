@@ -57,7 +57,7 @@ These steps are a **fresh install** on a new host. For an existing Compose stack
 
 ### Monitor subpackage
 
-The monitor now uses a **static-bundle** build flow for packaging. The canonical path builds pinned static archives for `libev`, `rabbitmq-c`, and (on x86) `LIKWID`, then compiles `hpcperfstatsd` with `--enable-all-static`.
+The monitor now uses a **static-bundle** build flow for packaging. The canonical path builds pinned static archives for `libev` and `rabbitmq-c` (plus `libbpf` when the eBPF profiler is enabled) on every arch, then compiles `hpcperfstatsd` with `--enable-all-static`. x86 core counters come from `perf_event` directly, so no counter library is bundled.
 
 1. **Install RPM build prerequisites** (Rocky/EL-like systems):
 
