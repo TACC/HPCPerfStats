@@ -29,8 +29,13 @@ void intel_gpu_merge_tile_rows(const xpum_device_realtime_metrics_t *rows, uint3
  */
 double intel_gpu_package_power_watts(const xpum_device_realtime_metrics_t *rows, uint32_t count);
 
-/* Overwrite or append XPUM_STATS_POWER on row (value=watts, scale=1). */
-int intel_gpu_row_set_power_watts(xpum_device_realtime_metrics_t *row, double watts);
+/* Largest scaled value of `type` over device and tile rows; < 0 when no row has it. */
+double intel_gpu_max_metric(const xpum_device_realtime_metrics_t *rows, uint32_t count,
+                            xpum_stats_type_t type);
+
+/* Overwrite or append gauge `type` on row (value rounded, scale=1). */
+int intel_gpu_row_set_metric(xpum_device_realtime_metrics_t *row, xpum_stats_type_t type,
+                             double value);
 
 #ifdef __cplusplus
 }

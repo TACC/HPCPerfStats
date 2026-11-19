@@ -33,6 +33,9 @@
 #ifndef DCGM_FI_PROF_PIPE_TENSOR_DFMA_ACTIVE
 #define DCGM_FI_PROF_PIPE_TENSOR_DFMA_ACTIVE 1015
 #endif
+#ifndef DCGM_FI_PROF_PIPE_INT_ACTIVE
+#define DCGM_FI_PROF_PIPE_INT_ACTIVE 1016
+#endif
 
 #define DBL_TO_LLU(x) ((unsigned long long)((x) + 0.5))
 #define DBL_TO_LLU_PERCENT(x) ((unsigned long long)((100.0 * (x)) + 0.5))

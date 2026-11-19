@@ -72,6 +72,9 @@ static void test_parse_dump_power(void)
   assert(samples[0].mem_used_mb == 1024.0);
   assert(!samples[0].has_gpu_util);
 
+  /* No compute engine group column: NOT_PRESENT, not 0. */
+  assert(!samples[0].has_compute_util);
+
   assert(samples[1].device_id == 1);
   assert(samples[1].has_gpu_util);
   assert(samples[1].gpu_util == 12.5);
@@ -90,11 +93,95 @@ static void test_parse_dump_power(void)
   assert(test_stats_missing_code(TEST_STATS_MISSING_ALL_KEY) == STATS_SENTINEL_NOT_PRESENT);
 }
 
+/* Header of a real PVC c551-004 dump (xpumcli dump -m 0,9,10,11,31, XPUM 1.2.33). */
+#define PVC_DUMP_HEADER                                                                            \
+  "Timestamp, DeviceId, GPU Utilization (%), GPU EU Array Active (%), GPU EU Array Stall (%), "    \
+  "GPU EU Array Idle (%), Compute engine group utilization (%)\n"
+
+/* PVC c551-004 under xpumcli diag --stress (GFX firmware below the XPUM minimum): EU N/A. */
+static void test_parse_dump_pvc_stress(void)
+{
+  static const char csv[] = PVC_DUMP_HEADER "16:33:59.867,    0, 99.24,  N/A,  N/A,  N/A, 99.24\n";
+  struct intel_gpu_xpumcli_sample samples[4];
+  unsigned long long val;
+
+  assert(intel_gpu_xpumcli_parse_dump_csv(csv, samples, 4) == 1);
+  assert(samples[0].device_id == 0);
+  assert(samples[0].has_gpu_util && samples[0].gpu_util == 99.24);
+  assert(samples[0].has_compute_util && samples[0].compute_util == 99.24);
+  assert(!samples[0].has_eu_active);
+
+  test_stats_stub_reset(&g_stub);
+  test_stats_missing_reset();
+  intel_gpu_xpumcli_publish_sample(&g_dummy, &samples[0], 4);
+  assert(test_stats_stub_find(&g_stub, "compute_engine_util", &val) && val == 99ULL);
+  assert(test_stats_stub_find(&g_stub, "gpu_util", &val) && val == 99ULL);
+  /* EU Array Active N/A: value sentinel, never a published 0. */
+  assert(!test_stats_stub_find(&g_stub, "sm_active", &val));
+  assert(test_stats_missing_code(TEST_STATS_MISSING_ALL_KEY) == STATS_SENTINEL_NOT_PRESENT);
+}
+
+/* Idle PVC: XPUM sometimes prints N/A for every column, GPU Utilization included. */
+static void test_parse_dump_pvc_all_na(void)
+{
+  static const char csv[] = PVC_DUMP_HEADER "16:34:10.012,    0,  N/A,  N/A,  N/A,  N/A,  N/A\n";
+  struct intel_gpu_xpumcli_sample samples[4];
+  unsigned long long val;
+
+  assert(intel_gpu_xpumcli_parse_dump_csv(csv, samples, 4) == 1);
+  assert(samples[0].device_id == 0);
+  assert(!samples[0].has_gpu_util);
+  assert(!samples[0].has_compute_util);
+  assert(!samples[0].has_eu_active);
+
+  test_stats_stub_reset(&g_stub);
+  test_stats_missing_reset();
+  intel_gpu_xpumcli_publish_sample(&g_dummy, &samples[0], 4);
+  assert(!test_stats_stub_find(&g_stub, "compute_engine_util", &val));
+  assert(!test_stats_stub_find(&g_stub, "gpu_util", &val));
+  assert(!test_stats_stub_find(&g_stub, "sm_active", &val));
+  assert(test_stats_missing_code(TEST_STATS_MISSING_ALL_KEY) == STATS_SENTINEL_NOT_PRESENT);
+  assert(test_stats_stub_find(&g_stub, "gpu_count", &val) && val == 4ULL);
+}
+
+/* Repeated DeviceId rows (tiles): compute engine group is the max over rows, one sample. */
+static void test_parse_dump_tile_rows_max_compute(void)
+{
+  static const char csv[] = PVC_DUMP_HEADER "16:33:59.867,    0, 40.00,  N/A,  N/A,  N/A, 40.00\n"
+                                            "16:33:59.867,    0, 99.24,  N/A,  N/A,  N/A, 99.24\n"
+                                            "16:33:59.867,    0,  N/A,  N/A,  N/A,  N/A,  N/A\n"
+                                            "16:33:59.867,    1,  N/A,  N/A,  N/A,  N/A, 12.00\n";
+  struct intel_gpu_xpumcli_sample samples[4];
+
+  assert(intel_gpu_xpumcli_parse_dump_csv(csv, samples, 4) == 2);
+  assert(samples[0].device_id == 0);
+  assert(samples[0].has_compute_util && samples[0].compute_util == 99.24);
+  assert(samples[0].has_gpu_util && samples[0].gpu_util == 40.0); /* first row keeps the rest */
+  assert(samples[1].device_id == 1);
+  assert(samples[1].has_compute_util && samples[1].compute_util == 12.0);
+  /* Full sample table: a repeated DeviceId still merges, a new one is dropped. */
+  assert(intel_gpu_xpumcli_parse_dump_csv(csv, samples, 1) == 1);
+  assert(samples[0].compute_util == 99.24);
+}
+
+/* The default dump argv requests metric 31 (Compute engine group utilization). */
+static void test_dump_metrics_include_compute_engine_group(void)
+{
+  static const char metrics[] = "," INTEL_GPU_XPUMCLI_DUMP_METRICS ",";
+
+  assert(strstr(metrics, ",31,") != NULL);
+  assert(strstr(metrics, ",9,") != NULL);
+}
+
 int main(void)
 {
   test_stats_stub_bind(&g_stub);
   test_parse_discovery();
   test_parse_dump_power();
+  test_parse_dump_pvc_stress();
+  test_parse_dump_pvc_all_na();
+  test_parse_dump_tile_rows_max_compute();
+  test_dump_metrics_include_compute_engine_group();
   test_stats_stub_unbind();
   printf("test_intel_gpu_xpumcli_parse passed\n");
   return 0;

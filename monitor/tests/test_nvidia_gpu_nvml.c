@@ -23,6 +23,9 @@ static struct {
   int fail_metric_id; /* metric whose nvmlReturn is set to an error */
   int nan_metric_id;  /* metric whose value is NaN */
   int allocs, frees, inits, shutdowns, sample_gets, metrics_gets;
+  int cc_rc;    /* nvmlDeviceGetCudaComputeCapability */
+  int attr_rc;  /* nvmlDeviceGetAttributes_v2 (MIG handles only on real drivers) */
+  int cores_rc; /* nvmlDeviceGetNumGpuCores */
 } S;
 
 static int g_sample_slots[64];
@@ -154,6 +157,15 @@ static nvidia_gpu_nvml_ret_t st_metrics_get(void *p)
     case NVML_GPM_METRIC_FP64_UTIL:
       x->value = 94.05;
       break;
+    case NVML_GPM_METRIC_INTEGER_UTIL:
+      x->value = 51.0;
+      break;
+    case NVML_GPM_METRIC_DMMA_TENSOR_UTIL:
+      x->value = 12.5;
+      break;
+    case NVML_GPM_METRIC_DFMA_TENSOR_UTIL:
+      x->value = 94.05;
+      break;
     case NVML_GPM_METRIC_PCIE_TX_PER_SEC:
       x->value = 1.0;
       break;
@@ -168,6 +180,28 @@ static nvidia_gpu_nvml_ret_t st_metrics_get(void *p)
       x->value = NAN;
   }
   return S.metrics_get_rc;
+}
+
+static nvidia_gpu_nvml_ret_t st_cc(nvidia_gpu_nvml_dev_t d, int *major, int *minor)
+{
+  (void)d;
+  *major = 9;
+  *minor = 0;
+  return S.cc_rc;
+}
+static nvidia_gpu_nvml_ret_t st_attr(nvidia_gpu_nvml_dev_t d, void *a)
+{
+  nvmlDeviceAttributes_t *attr = a;
+
+  (void)d;
+  attr->multiprocessorCount = 132;
+  return S.attr_rc;
+}
+static nvidia_gpu_nvml_ret_t st_cores(nvidia_gpu_nvml_dev_t d, unsigned int *n)
+{
+  (void)d;
+  *n = 16896;
+  return S.cores_rc;
 }
 
 static const struct nvidia_gpu_nvml_api g_stub = {
@@ -188,6 +222,9 @@ static const struct nvidia_gpu_nvml_api g_stub = {
     .gpm_sample_free = st_free,
     .gpm_sample_get = st_sample_get,
     .gpm_metrics_get = st_metrics_get,
+    .cuda_compute_capability = st_cc,
+    .attributes = st_attr,
+    .num_gpu_cores = st_cores,
 };
 
 static long long mono_us(void)
@@ -206,6 +243,7 @@ static void reset_stub(unsigned int ngpu)
   S.ngpu = ngpu;
   S.fail_metric_id = -1;
   S.nan_metric_id = -1;
+  S.attr_rc = NVML_ERROR_NOT_SUPPORTED;
   for (i = 0; i < STUB_MAX_GPU; i++)
     S.gpm_supported[i] = 1;
   nvidia_gpu_nvml_test_set_api(&g_stub);
@@ -238,6 +276,11 @@ static void test_all_gpm_takes_nvml_path_and_fills_row(void)
   assert(row.prof_pcie_tx_bytes == 1048576ULL);
   assert(row.prof_nvlink_tx_bytes == 265289728000ULL);
   assert(row.tensor_imma_active == 0.0);
+  /* integer_active <- GPM INTEGER_UTIL (4), tensor_dmma_active <- DMMA_TENSOR_UTIL (8); DFMA (6)
+   * stays on tensor_dfma_active. */
+  assert(fabs(row.integer_active - 0.51) < 1e-9);
+  assert(fabs(row.tensor_dmma_active - 0.125) < 1e-9);
+  assert(fabs(row.tensor_dfma_active - 0.9405) < 1e-9);
   assert(S.metrics_gets == 1);
 
   nvidia_gpu_nvml_cleanup();
@@ -254,7 +297,7 @@ static void test_short_gap_skips_gpm_but_keeps_row(void)
   assert(nvidia_gpu_nvml_prepare() == 0);
   t0 = mono_us();
   memset(&row, 0, sizeof(row));
-  /* Right after prepare (< 150 ms): no second sample, PROF stays 0, basic fields filled. */
+  /* Right after prepare (< 150 ms): no second sample, basic fields filled. */
   assert(nvidia_gpu_nvml_fill(0, t0, &row) == 0);
   assert(S.sample_gets == 1 && S.metrics_gets == 0);
   assert(row.sm_active == 0.0 && row.power_usage > 0.0);
@@ -290,6 +333,73 @@ static void test_failed_and_nonfinite_metrics_are_marked(void)
   assert(miss_code(&row, "tensor_active") == 0 && fabs(row.tensor_active - 0.8747) < 1e-9);
   assert(miss_code(&row, "fp16_active") == 0 && row.fp16_active == 0.0);
   assert(miss_code(&row, "gpu_pcie_rx_bytes") == 0 && row.prof_pcie_rx_bytes == 0ULL);
+  nvidia_gpu_nvml_cleanup();
+}
+
+/* gpm_short_gap: a collect closer than NVIDIA_GPU_NVML_GPM_MIN_GAP_US to the first GPM sample
+ * (right after prepare: no window computed yet) must mark every GPM key NOT_UPDATED (it went out as
+ * a real 0); NVML getter keys keep their values. The next full-gap collect reads the window. */
+static void test_gpm_short_gap_marks_prof_not_updated(void)
+{
+  static const char *const gpm_keys[] = {
+      "sm_active",          "sm_occupancy",       "tensor_active",       "tensor_imma_active",
+      "tensor_hmma_active", "tensor_dfma_active", "tensor_dmma_active",  "integer_active",
+      "gpu_dram_active",    "fp64_active",        "fp32_active",         "fp16_active",
+      "gpu_pcie_tx_bytes",  "gpu_pcie_rx_bytes",  "gpu_nvlink_tx_bytes", "gpu_nvlink_rx_bytes"};
+  dcgm_data_t row;
+  long long t0;
+  size_t i;
+
+  reset_stub(1);
+  assert(nvidia_gpu_nvml_prepare() == 0);
+  t0 = mono_us();
+  memset(&row, 0, sizeof(row));
+  assert(nvidia_gpu_nvml_fill(0, t0, &row) == 0);
+  assert(S.metrics_gets == 0);
+  for (i = 0; i < sizeof(gpm_keys) / sizeof(gpm_keys[0]); i++)
+    assert(miss_code(&row, gpm_keys[i]) == STATS_SENTINEL_NOT_UPDATED);
+  assert(miss_code(&row, "power_usage") == 0 && miss_code(&row, "gpu_util") == 0);
+  assert(row.nmiss == (int)(sizeof(gpm_keys) / sizeof(gpm_keys[0])) + 1); /* + replay counter */
+
+  memset(&row, 0, sizeof(row));
+  assert(nvidia_gpu_nvml_fill(0, t0 + 60000000LL, &row) == 0);
+  assert(S.metrics_gets == 1);
+  assert(row.nmiss == 1 && miss_code(&row, "gpu_pcie_replay_counter") != 0);
+  nvidia_gpu_nvml_cleanup();
+}
+
+/* gpm_back_to_back: after one full window, a second collect inside the min gap (the sample timer
+ * re-firing around one boundary) must republish the window that just closed, failed-metric codes
+ * included, with no NOT_UPDATED and no new GPM sample. 3.1-1 returned every PROF key 0 here
+ * (GH200 c642-041: every other fast sample under load). */
+static void test_gpm_back_to_back_republishes_last_window(void)
+{
+  dcgm_data_t first;
+  dcgm_data_t row;
+  long long t1;
+
+  reset_stub(1);
+  S.fail_metric_id = NVML_GPM_METRIC_SM_OCCUPANCY;
+  assert(nvidia_gpu_nvml_prepare() == 0);
+  t1 = mono_us() + 30000000LL;
+  memset(&first, 0, sizeof(first));
+  assert(nvidia_gpu_nvml_fill(0, t1, &first) == 0);
+  assert(S.metrics_gets == 1);
+
+  memset(&row, 0, sizeof(row));
+  assert(nvidia_gpu_nvml_fill(0, t1 + 40000LL, &row) == 0);
+  assert(S.sample_gets == 2 && S.metrics_gets == 1);
+  assert(fabs(row.sm_active - 0.9544) < 1e-9);
+  assert(fabs(row.tensor_active - 0.8747) < 1e-9);
+  assert(fabs(row.fp64_active - 0.9405) < 1e-9);
+  assert(row.prof_pcie_tx_bytes == 1048576ULL && row.prof_nvlink_tx_bytes == 265289728000ULL);
+  assert(miss_code(&row, "sm_active") == 0 && miss_code(&row, "fp16_active") == 0);
+  assert(miss_code(&row, "sm_occupancy") == STATS_SENTINEL_READ_FAILED);
+  assert(row.nmiss == first.nmiss);
+
+  /* The kept sample still anchors the next window at its own time. */
+  assert(nvidia_gpu_nvml_fill(0, t1 + 30000000LL, &row) == 0);
+  assert(S.sample_gets == 3 && S.metrics_gets == 2);
   nvidia_gpu_nvml_cleanup();
 }
 
@@ -337,6 +447,69 @@ static void test_gpm_failure_mid_run_reports_fallback(void)
   assert(S.frees == S.allocs);
 }
 
+/* A failed INTEGER_UTIL / DMMA metric is READ_FAILED on exactly its key (integer_active / dmma). */
+static void test_integer_active_and_dmma_metric_failures_marked(void)
+{
+  dcgm_data_t row;
+
+  reset_stub(1);
+  S.fail_metric_id = NVML_GPM_METRIC_DMMA_TENSOR_UTIL;
+  S.nan_metric_id = NVML_GPM_METRIC_INTEGER_UTIL;
+  assert(nvidia_gpu_nvml_prepare() == 0);
+  memset(&row, 0, sizeof(row));
+  assert(nvidia_gpu_nvml_fill(0, mono_us() + 1000000LL, &row) == 0);
+  assert(miss_code(&row, "tensor_dmma_active") == STATS_SENTINEL_READ_FAILED);
+  assert(miss_code(&row, "integer_active") == STATS_SENTINEL_INVALID_VALUE);
+  assert(miss_code(&row, "tensor_dfma_active") == 0);
+  nvidia_gpu_nvml_cleanup();
+}
+
+/* Device shape for gpu_flops: CC and SM count from NVML on both paths. The probe runs without
+ * GPM (the A100 DCGM path), keeps the shape after its own shutdown, and nvmlDeviceGetAttributes
+ * (MIG handles only) failing leaves the core count for the estimate to divide. */
+static void test_shape_probe_both_paths(void)
+{
+  dcgm_data_t row;
+
+  reset_stub(2);
+  S.gpm_supported[1] = 0;
+  assert(nvidia_gpu_nvml_probe_shapes() == 2);
+  assert(S.inits == 1 && S.shutdowns == 1);
+  assert(nvidia_gpu_nvml_prepare() == -1); /* DCGM path */
+  memset(&row, 0, sizeof(row));
+  nvidia_gpu_nvml_row_shape(1, &row);
+  assert(row.cc_major == 9 && row.cc_minor == 0);
+  assert(row.sm_count == 0 && row.gpu_cores == 16896);
+
+  reset_stub(1);
+  S.attr_rc = 0;
+  assert(nvidia_gpu_nvml_probe_shapes() == 1);
+  memset(&row, 0, sizeof(row));
+  nvidia_gpu_nvml_row_shape(0, &row);
+  assert(row.sm_count == 132);
+
+  /* Failed queries and out-of-range indices leave the shape unknown (0). */
+  reset_stub(1);
+  S.cc_rc = NVML_ERROR_NOT_SUPPORTED;
+  S.cores_rc = NVML_ERROR_NOT_SUPPORTED;
+  assert(nvidia_gpu_nvml_probe_shapes() == 1);
+  memset(&row, 0, sizeof(row));
+  nvidia_gpu_nvml_row_shape(0, &row);
+  assert(row.cc_major == 0 && row.cc_minor == 0 && row.sm_count == 0 && row.gpu_cores == 0);
+  row.cc_major = 5;
+  nvidia_gpu_nvml_row_shape(7, &row);
+  nvidia_gpu_nvml_row_shape(-1, &row);
+  assert(row.cc_major == 0);
+  nvidia_gpu_nvml_row_shape(0, NULL);
+
+  reset_stub(1);
+  S.init_rc = NVML_ERROR_DRIVER_NOT_LOADED;
+  assert(nvidia_gpu_nvml_probe_shapes() == -1);
+  memset(&row, 0, sizeof(row));
+  nvidia_gpu_nvml_row_shape(0, &row);
+  assert(row.cc_major == 0);
+}
+
 static void test_disallowed_lib_override_fails_closed(void)
 {
   nvidia_gpu_nvml_test_set_api(NULL);
@@ -354,9 +527,13 @@ int main(void)
   test_all_gpm_takes_nvml_path_and_fills_row();
   test_short_gap_skips_gpm_but_keeps_row();
   test_failed_and_nonfinite_metrics_are_marked();
+  test_gpm_short_gap_marks_prof_not_updated();
+  test_gpm_back_to_back_republishes_last_window();
   test_any_gpu_without_gpm_uses_dcgm();
   test_init_failure_and_no_gpus();
   test_gpm_failure_mid_run_reports_fallback();
+  test_integer_active_and_dmma_metric_failures_marked();
+  test_shape_probe_both_paths();
   test_disallowed_lib_override_fails_closed();
   printf("test_nvidia_gpu_nvml passed\n");
   return 0;

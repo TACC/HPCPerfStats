@@ -3,7 +3,19 @@
 
 double monitor_timing_normalize_period(double period);
 double monitor_timing_next_boundary(double now, double period);
-double monitor_timing_seconds_until_next_boundary(double now, double period);
+
+/* Fraction of a period after a collect start within which a boundary counts as
+ * already served by that collect. */
+#define MONITOR_TIMING_SERVED_FRACTION 0.25
+
+/* Delay to arm a one-shot timer that measures it from `loop_now` (libev's
+ * cached ev_now(), taken before the collect) so it fires on the next `period`
+ * boundary after `wall_now` (fresh CLOCK_REALTIME). `served_at` is when the
+ * previous collect started (non-finite or negative: none); a boundary less than
+ * MONITOR_TIMING_SERVED_FRACTION of a period after it is skipped. A non-finite
+ * `loop_now` falls back to `wall_now`. */
+double monitor_timing_reanchor_wait(double loop_now, double wall_now, double served_at,
+                                    double period);
 
 /* Slow-tier boundary detection driven off the fast sample timer.
  *

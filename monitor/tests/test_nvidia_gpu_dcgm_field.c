@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "nvidia_gpu_dcgm_compat.h"
 #include "nvidia_gpu_dcgm_field.h"
 
 #define DCGM_TEST_FP64_BLANK 140737488355328.0
@@ -158,8 +159,141 @@ static void test_apply_marks_blank_invalid(void)
   nvidia_gpu_dcgm_field_apply(&row, NULL);
 }
 
+/* The 15 PROF fields; core-prof drops the first four (1013-1016), basic-nonprof drops all. */
+static const unsigned short g_prof_ids[] = {DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE,
+                                            DCGM_FI_PROF_PIPE_TENSOR_HMMA_ACTIVE,
+                                            DCGM_FI_PROF_PIPE_TENSOR_DFMA_ACTIVE,
+                                            DCGM_FI_PROF_PIPE_INT_ACTIVE,
+                                            DCGM_FI_PROF_PIPE_TENSOR_ACTIVE,
+                                            DCGM_FI_PROF_PIPE_FP64_ACTIVE,
+                                            DCGM_FI_PROF_PIPE_FP32_ACTIVE,
+                                            DCGM_FI_PROF_PIPE_FP16_ACTIVE,
+                                            DCGM_FI_PROF_SM_ACTIVE,
+                                            DCGM_FI_PROF_SM_OCCUPANCY,
+                                            DCGM_FI_PROF_DRAM_ACTIVE,
+                                            DCGM_FI_PROF_PCIE_TX_BYTES,
+                                            DCGM_FI_PROF_PCIE_RX_BYTES,
+                                            DCGM_FI_PROF_NVLINK_TX_BYTES,
+                                            DCGM_FI_PROF_NVLINK_RX_BYTES};
+#define N_PROF (sizeof(g_prof_ids) / sizeof(g_prof_ids[0]))
+static const unsigned short g_basic_ids[] = {DCGM_FI_DEV_POWER_USAGE,
+                                             DCGM_FI_DEV_GPU_TEMP,
+                                             DCGM_FI_DEV_MEM_COPY_UTIL,
+                                             DCGM_FI_DEV_GPU_UTIL,
+                                             DCGM_FI_DEV_FB_TOTAL,
+                                             DCGM_FI_DEV_FB_USED,
+                                             DCGM_FI_DEV_FB_FREE,
+                                             DCGM_FI_DEV_SM_CLOCK,
+                                             DCGM_FI_DEV_PCIE_REPLAY_COUNTER,
+                                             DCGM_FI_DEV_CLOCK_THROTTLE_REASONS};
+#define N_BASIC (sizeof(g_basic_ids) / sizeof(g_basic_ids[0]))
+
+/* Deliver one real value for field_id, as dcgmGetLatestValues does for a watched field. */
+static void deliver(dcgm_data_t *row, unsigned short field_id)
+{
+  dcgmFieldValue_v1 v;
+
+  if (field_id >= DCGM_FI_PROF_PCIE_TX_BYTES && field_id <= DCGM_FI_PROF_NVLINK_RX_BYTES)
+    fill_i64(&v, 4096);
+  else if (field_id >= DCGM_FI_PROF_GR_ENGINE_ACTIVE)
+    fill_dbl(&v, 0.5);
+  else if (field_id == DCGM_FI_DEV_POWER_USAGE)
+    fill_dbl(&v, 300.0);
+  else
+    fill_i64(&v, 7);
+  v.fieldId = field_id;
+  nvidia_gpu_dcgm_field_apply(row, &v);
+}
+
+/* profile_absent: a field outside the active fallback watch profile never reaches the DCGM
+ * callback, so its calloc 0 went out as a real 0. After the fetch every undelivered key is
+ * NOT_PRESENT; delivered keys (OK or with their own status) are untouched. tensor_dmma_active has
+ * no DCGM field at all, so it is NOT_PRESENT on every DCGM profile. */
+static void test_profile_absent_fields_marked_not_present(void)
+{
+  dcgm_data_t row;
+  dcgmFieldValue_v1 v;
+  size_t i;
+
+  /* core-prof: everything but tensor IMMA/HMMA/DFMA and the integer pipe. */
+  memset(&row, 0, sizeof(row));
+  for (i = 0; i < N_BASIC; i++)
+    deliver(&row, g_basic_ids[i]);
+  for (i = 4; i < N_PROF; i++)
+    deliver(&row, g_prof_ids[i]);
+  assert(row.nmiss == 0);
+  nvidia_gpu_dcgm_row_mark_unseen(&row);
+  assert(row.nmiss == 5);
+  assert(miss_code(&row, "tensor_imma_active") == STATS_SENTINEL_NOT_PRESENT);
+  assert(miss_code(&row, "tensor_hmma_active") == STATS_SENTINEL_NOT_PRESENT);
+  assert(miss_code(&row, "tensor_dfma_active") == STATS_SENTINEL_NOT_PRESENT);
+  assert(miss_code(&row, "integer_active") == STATS_SENTINEL_NOT_PRESENT);
+  assert(miss_code(&row, "tensor_dmma_active") == STATS_SENTINEL_NOT_PRESENT);
+  assert(miss_code(&row, "tensor_active") == 0 && row.tensor_active == 0.5);
+
+  /* basic-nonprof: every PROF key NOT_PRESENT; a basic field delivered with a failed status
+   * keeps its own code and is not marked twice. */
+  memset(&row, 0, sizeof(row));
+  for (i = 1; i < N_BASIC; i++)
+    deliver(&row, g_basic_ids[i]);
+  fill_dbl(&v, 0.0);
+  v.fieldId = DCGM_FI_DEV_POWER_USAGE;
+  v.status = DCGM_ST_GENERIC_ERROR;
+  nvidia_gpu_dcgm_field_apply(&row, &v);
+  assert(row.nmiss == 1);
+  nvidia_gpu_dcgm_row_mark_unseen(&row);
+  assert(row.nmiss == 1 + (int)N_PROF + 1);
+  assert(miss_code(&row, "power_usage") == STATS_SENTINEL_READ_FAILED);
+  for (i = 0; i < N_PROF; i++)
+    assert(miss_code(&row, nvidia_gpu_dcgm_field_key(g_prof_ids[i])) == STATS_SENTINEL_NOT_PRESENT);
+  for (i = 1; i < N_BASIC; i++)
+    assert(miss_code(&row, nvidia_gpu_dcgm_field_key(g_basic_ids[i])) == 0);
+
+  /* full-prof: only the DMMA pipe (no DCGM field) is marked; NULL is ignored. */
+  memset(&row, 0, sizeof(row));
+  for (i = 0; i < N_BASIC; i++)
+    deliver(&row, g_basic_ids[i]);
+  for (i = 0; i < N_PROF; i++)
+    deliver(&row, g_prof_ids[i]);
+  nvidia_gpu_dcgm_row_mark_unseen(&row);
+  assert(row.nmiss == 1 && miss_code(&row, "tensor_dmma_active") == STATS_SENTINEL_NOT_PRESENT);
+  nvidia_gpu_dcgm_row_mark_unseen(NULL);
+}
+
+/* integer_active: DCGM 1016 (integer pipe) fills its own key; 0.44-0.57 under FP loads on
+ * Hopper, 0 on Blackwell. A blank is INVALID_VALUE, NOT_SUPPORTED (A100 DCGM 3.1.8) NOT_PRESENT. */
+static void test_dcgm_integer_active_field(void)
+{
+  dcgm_data_t row;
+  dcgmFieldValue_v1 v;
+
+  assert(strcmp(nvidia_gpu_dcgm_field_key(DCGM_FI_PROF_PIPE_INT_ACTIVE), "integer_active") == 0);
+  assert(DCGM_FI_PROF_PIPE_INT_ACTIVE == 1016);
+  memset(&row, 0, sizeof(row));
+  fill_dbl(&v, 0.44);
+  v.fieldId = DCGM_FI_PROF_PIPE_INT_ACTIVE;
+  nvidia_gpu_dcgm_field_apply(&row, &v);
+  assert(row.nmiss == 0 && row.integer_active == 0.44);
+  assert(row.tensor_dfma_active == 0.0 && row.fp64_active == 0.0);
+
+  fill_dbl(&v, DCGM_TEST_FP64_BLANK);
+  v.fieldId = DCGM_FI_PROF_PIPE_INT_ACTIVE;
+  nvidia_gpu_dcgm_field_apply(&row, &v);
+  assert(miss_code(&row, "integer_active") == STATS_SENTINEL_INVALID_VALUE);
+
+  memset(&row, 0, sizeof(row));
+  fill_dbl(&v, 0.5);
+  v.fieldId = DCGM_FI_PROF_PIPE_INT_ACTIVE;
+  v.status = DCGM_ST_NOT_SUPPORTED;
+  nvidia_gpu_dcgm_field_apply(&row, &v);
+  assert(row.integer_active == 0.0);
+  assert(miss_code(&row, "integer_active") == STATS_SENTINEL_NOT_PRESENT);
+}
+
 int main(void)
 {
+  test_dcgm_integer_active_field();
+  test_profile_absent_fields_marked_not_present();
   test_blank_sentinels();
   test_watts_blank_and_real();
   test_u64_blank_and_real();

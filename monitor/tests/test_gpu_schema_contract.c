@@ -34,6 +34,10 @@ int main(void)
   assert(strstr(nvidia_schema_def, "tensor_imma_active") != NULL);
   assert(strstr(nvidia_schema_def, "tensor_hmma_active") != NULL);
   assert(strstr(nvidia_schema_def, "tensor_dfma_active") != NULL);
+  /* Pipe split keys shared with the consumer: same ratio-percent spec as fp64_active. */
+  assert(strstr(nvidia_schema_def, " integer_active, ") != NULL);
+  assert(strstr(nvidia_schema_def, " tensor_dmma_active, ") != NULL);
+  assert(strstr(nvidia_schema_def, " fp64_active, ") != NULL);
   assert(strstr(nvidia_schema_def, " gpu_mem_free_mb,U=MB") != NULL);
   assert(strstr(nvidia_schema_def, " gpu_sm_clock") != NULL);
   assert(strstr(nvidia_schema_def, " gpu_dram_active") != NULL);

@@ -126,26 +126,39 @@ double intel_gpu_package_power_watts(const xpum_device_realtime_metrics_t *rows,
   return -1.0;
 }
 
-int intel_gpu_row_set_power_watts(xpum_device_realtime_metrics_t *row, double watts)
+double intel_gpu_max_metric(const xpum_device_realtime_metrics_t *rows, uint32_t count,
+                            xpum_stats_type_t type)
 {
-  int i;
+  double best = -1.0;
+  uint32_t i;
 
-  if (row == NULL || watts < 0.0)
-    return -1;
-  for (i = 0; i < row->count && i < XPUM_STATS_MAX; i++) {
-    if (row->dataList[i].metricsType == XPUM_STATS_POWER) {
-      row->dataList[i].isCounter = 0;
-      row->dataList[i].value = (uint64_t)(watts + 0.5);
-      row->dataList[i].scale = 1;
-      return 0;
-    }
+  if (rows == NULL)
+    return -1.0;
+  for (i = 0; i < count; i++) {
+    const xpum_device_realtime_metric_t *m = intel_gpu_find_rt(&rows[i], type);
+
+    if (m != NULL && intel_gpu_scaled_u64(m->value, m->scale) > best)
+      best = intel_gpu_scaled_u64(m->value, m->scale);
   }
-  if (row->count >= XPUM_STATS_MAX)
+  return best;
+}
+
+int intel_gpu_row_set_metric(xpum_device_realtime_metrics_t *row, xpum_stats_type_t type,
+                             double value)
+{
+  xpum_device_realtime_metric_t *m;
+
+  if (row == NULL || value < 0.0)
     return -1;
-  row->dataList[row->count].metricsType = XPUM_STATS_POWER;
-  row->dataList[row->count].isCounter = 0;
-  row->dataList[row->count].value = (uint64_t)(watts + 0.5);
-  row->dataList[row->count].scale = 1;
-  row->count++;
+  m = (xpum_device_realtime_metric_t *)intel_gpu_find_rt(row, type);
+  if (m == NULL) {
+    if (row->count >= XPUM_STATS_MAX)
+      return -1;
+    m = &row->dataList[row->count++];
+    m->metricsType = type;
+  }
+  m->isCounter = 0;
+  m->value = (uint64_t)(value + 0.5);
+  m->scale = 1;
   return 0;
 }

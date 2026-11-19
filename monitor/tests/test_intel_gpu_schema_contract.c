@@ -37,6 +37,7 @@ int main(void)
   assert_present(intel_gpu_schema_def, " gpu_xe_link_tx_bytes,E,W=64,U=B");
   assert_present(intel_gpu_schema_def, " clocks_event_reasons,");
   assert_present(intel_gpu_schema_def, " gpu_count,");
+  assert_present(intel_gpu_schema_def, " compute_engine_util,");
   assert_absent(intel_gpu_schema_def, "gpu_nvlink");
   assert_absent(intel_gpu_schema_def, "fp64_active");
   printf("test_intel_gpu_schema_contract passed\n");

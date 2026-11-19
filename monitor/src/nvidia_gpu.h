@@ -3,8 +3,9 @@
 
 #include <stdint.h>
 
-#define NVIDIA_GPU_NFIELDS 24
-/* DCGM field-group size without optional tensor IMMA/HMMA/DFMA split (older host engines). */
+#define NVIDIA_GPU_NFIELDS 25
+/* DCGM field-group size without the optional tensor IMMA/HMMA/DFMA split and integer pipe
+ * (1013-1016; older host engines). */
 #define NVIDIA_GPU_DCGM_NCORE 21
 /* Minimal non-PROF list for stacks where DCGM profiling watches are not permissioned/supported. */
 #define NVIDIA_GPU_DCGM_NBASIC 10
@@ -23,14 +24,19 @@
       X(fp16_active, "", "Ratio of cycles fp16 pipes are active (in %)"),                          \
       X(tensor_active, "", "Ratio of cycles any tensor pipe is active (in %)"),                    \
       X(tensor_imma_active, "",                                                                    \
-        "DCGM tensor IMMA pipe duty cycle (in %); int/low-precision tensor path — use as "         \
+        "DCGM tensor IMMA pipe duty cycle (in %); int/low-precision tensor path - use as "         \
         "FP8-adjacent signal only, not dedicated FP8 FLOPs"),                                      \
       X(tensor_hmma_active, "",                                                                    \
-        "DCGM tensor HMMA pipe duty cycle (in %); overlaps tensor_active (1004) on some stacks — " \
-        "excluded from gpu_flops fp_mix with tensor_imma_active"),                                 \
+        "Tensor HMMA pipe duty cycle (in %); FP16/BF16/TF32/FP8 MMA, counted in gpu_flops at the " \
+        "dense FP16 tensor peak"),                                                                 \
       X(tensor_dfma_active, "",                                                                    \
-        "DCGM tensor DFMA pipe duty cycle (in %); FP64 tensor path — excluded from gpu_flops "     \
-        "fp_mix"),                                                                                 \
+        "DFMA pipe duty cycle (in %); the FP64 FMA pipe (equals fp64_active on Hopper and "        \
+        "Blackwell), not FP64 tensor; excluded from gpu_flops"),                                   \
+      X(tensor_dmma_active, "",                                                                    \
+        "Tensor DMMA pipe duty cycle (in %); FP64 tensor MMA, counted in gpu_flops (GPM only; "    \
+        "not present on the DCGM path)"),                                                          \
+      X(integer_active, "",                                                                        \
+        "Ratio of cycles the integer pipe is active (in %); excluded from gpu_flops"),             \
       X(gpu_dram_active, "", "Ratio of cycles device memory interface is active (in %)"),          \
       X(gpu_pcie_tx_bytes, "E,W=64,U=B", "PCIe transmit bytes (integrated rate, monotonic)"),      \
       X(gpu_pcie_rx_bytes, "E,W=64,U=B", "PCIe receive bytes (integrated rate, monotonic)"),       \
@@ -38,7 +44,9 @@
       X(gpu_nvlink_rx_bytes, "E,W=64,U=B", "NvLink receive bytes (integrated rate, monotonic)"),   \
       X(gpu_pcie_replay_counter, "E,W=64", "DCGM PCIe replay counter (monotonic)"),                \
       X(clocks_event_reasons, "", "Bitmask of GPU clock slowdown reasons"),                        \
-      X(gpu_flops_rate, "U=FLOP/s", "Estimated GPU floating-point rate (FLOP/s)"),                 \
+      X(gpu_flops_rate, "U=FLOP/s",                                                                \
+        "Estimated GPU floating-point rate: pipe duty cycles x per-SM peaks for the compute "      \
+        "capability x SM count x SM clock (FLOP/s)"),                                              \
       X(gpu_mem_bw_bytes_rate, "U=B/s", "Estimated GPU memory bandwidth (bytes/s)"),               \
       X(gpu_flops, "E,W=64,U=FLOP", "Estimated cumulative floating-point operations"),             \
       X(gpu_mem_read_bytes, "E,W=64,U=B", "Estimated cumulative GPU memory read bytes"),           \
@@ -71,6 +79,8 @@ typedef struct dcgm_data {
   double tensor_imma_active;
   double tensor_hmma_active;
   double tensor_dfma_active;
+  double tensor_dmma_active;
+  double integer_active;
   double dram_active;
   double fp64_active;
   double fp32_active;
@@ -81,8 +91,14 @@ typedef struct dcgm_data {
   uint64_t prof_pcie_rx_bytes;
   uint64_t prof_nvlink_tx_bytes;
   uint64_t prof_nvlink_rx_bytes;
+  /* Device shape for gpu_flops (nvidia_gpu_nvml_row_shape); 0 = unknown. */
+  int cc_major;
+  int cc_minor;
+  unsigned int sm_count;  /* NVML multiprocessor count */
+  unsigned int gpu_cores; /* NVML CUDA core count, used when sm_count is unknown */
   struct nvidia_gpu_row_miss miss[NVIDIA_GPU_ROW_MISS_MAX];
   int nmiss;
+  uint32_t seen; /* DCGM path: one bit per field the fetch delivered (nvidia_gpu_dcgm_field.c) */
 } dcgm_data_t;
 
 #endif

@@ -4,8 +4,8 @@
 #include "nvidia_gpu_dcgm_profiles.h"
 
 /*
- * Core DCGM watch list (works on stacks without PROF tensor IMMA/HMMA/DFMA field IDs).
- * Must stay aligned with the full list minus the three optional tensor split fields.
+ * Core DCGM watch list (works on stacks without PROF tensor IMMA/HMMA/DFMA / integer field IDs).
+ * Must stay aligned with the full list minus the four optional fields 1013-1016.
  */
 static const unsigned short g_dcgm_field_ids_core[NVIDIA_GPU_DCGM_NCORE] = {
     DCGM_FI_DEV_POWER_USAGE,
@@ -60,6 +60,34 @@ static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
     DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE,
     DCGM_FI_PROF_PIPE_TENSOR_HMMA_ACTIVE,
     DCGM_FI_PROF_PIPE_TENSOR_DFMA_ACTIVE,
+    DCGM_FI_PROF_PIPE_INT_ACTIVE,
+    DCGM_FI_PROF_PIPE_FP64_ACTIVE,
+    DCGM_FI_PROF_PIPE_FP32_ACTIVE,
+    DCGM_FI_PROF_PIPE_FP16_ACTIVE,
+    DCGM_FI_PROF_SM_ACTIVE,
+    DCGM_FI_PROF_SM_OCCUPANCY,
+    DCGM_FI_PROF_DRAM_ACTIVE,
+    DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+    DCGM_FI_PROF_PCIE_TX_BYTES,
+    DCGM_FI_PROF_PCIE_RX_BYTES,
+    DCGM_FI_PROF_NVLINK_TX_BYTES,
+    DCGM_FI_PROF_NVLINK_RX_BYTES};
+
+/* Full list minus DFMA (1015) and the integer pipe (1016): A100 / DCGM 3.1.8 lists 1013/1014
+ * but neither 1015 nor 1016 under `dcgmi profile -l`. */
+static const unsigned short g_dcgm_field_ids_split_no_dfma[NVIDIA_GPU_DCGM_NSPLIT_NO_DFMA] = {
+    DCGM_FI_DEV_POWER_USAGE,
+    DCGM_FI_DEV_GPU_TEMP,
+    DCGM_FI_DEV_MEM_COPY_UTIL,
+    DCGM_FI_DEV_GPU_UTIL,
+    DCGM_FI_DEV_FB_TOTAL,
+    DCGM_FI_DEV_FB_USED,
+    DCGM_FI_DEV_FB_FREE,
+    DCGM_FI_DEV_SM_CLOCK,
+    DCGM_FI_DEV_PCIE_REPLAY_COUNTER,
+    DCGM_FI_PROF_PIPE_TENSOR_ACTIVE,
+    DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE,
+    DCGM_FI_PROF_PIPE_TENSOR_HMMA_ACTIVE,
     DCGM_FI_PROF_PIPE_FP64_ACTIVE,
     DCGM_FI_PROF_PIPE_FP32_ACTIVE,
     DCGM_FI_PROF_PIPE_FP16_ACTIVE,
@@ -74,9 +102,14 @@ static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
 
 _Static_assert(sizeof(g_dcgm_field_ids) / sizeof(g_dcgm_field_ids[0]) == NVIDIA_GPU_NFIELDS,
                "g_dcgm_field_ids length must match NVIDIA_GPU_NFIELDS");
+_Static_assert(sizeof(g_dcgm_field_ids_split_no_dfma) / sizeof(g_dcgm_field_ids_split_no_dfma[0]) ==
+                   NVIDIA_GPU_DCGM_NSPLIT_NO_DFMA,
+               "g_dcgm_field_ids_split_no_dfma length must match NVIDIA_GPU_DCGM_NSPLIT_NO_DFMA");
 _Static_assert(sizeof(g_dcgm_field_ids_core) / sizeof(g_dcgm_field_ids_core[0]) ==
                    NVIDIA_GPU_DCGM_NCORE,
                "g_dcgm_field_ids_core length must match NVIDIA_GPU_DCGM_NCORE");
+_Static_assert(NVIDIA_GPU_DCGM_NCORE == NVIDIA_GPU_NFIELDS - 4,
+               "core-prof is full-prof minus the four optional fields 1013-1016");
 _Static_assert(sizeof(g_dcgm_field_ids_basic) / sizeof(g_dcgm_field_ids_basic[0]) ==
                    NVIDIA_GPU_DCGM_NBASIC,
                "g_dcgm_field_ids_basic length must match NVIDIA_GPU_DCGM_NBASIC");
@@ -117,12 +150,18 @@ int nvidia_gpu_watch_profile_select(int attempt, const unsigned short **fid_out,
     return 0;
   }
   if (attempt == 1) {
+    *nf_out = (unsigned int)NVIDIA_GPU_DCGM_NSPLIT_NO_DFMA;
+    *fid_out = g_dcgm_field_ids_split_no_dfma;
+    *name_out = "split-prof-no-dfma";
+    return 0;
+  }
+  if (attempt == 2) {
     *nf_out = (unsigned int)NVIDIA_GPU_DCGM_NCORE;
     *fid_out = g_dcgm_field_ids_core;
     *name_out = "core-prof";
     return 0;
   }
-  if (attempt == 2) {
+  if (attempt == 3) {
     *nf_out = (unsigned int)NVIDIA_GPU_DCGM_NBASIC;
     *fid_out = g_dcgm_field_ids_basic;
     *name_out = "basic-nonprof";

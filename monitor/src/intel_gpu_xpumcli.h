@@ -8,7 +8,7 @@ struct stats;
 struct stats_type;
 
 /* Dump metric set for KEYS parity (xpumcli dump -m IDs, not XPUM_STATS_*). */
-#define INTEL_GPU_XPUMCLI_DUMP_METRICS "0,1,2,3,4,5,9,17,18,35"
+#define INTEL_GPU_XPUMCLI_DUMP_METRICS "0,1,2,3,4,5,9,17,18,31,35"
 
 #define INTEL_GPU_XPUMCLI_MAX_DEVICES 32
 #define INTEL_GPU_XPUMCLI_CAPTURE_TIMEOUT_MS 8000
@@ -24,6 +24,7 @@ struct intel_gpu_xpumcli_sample {
   int has_eu_active;
   int has_mem_bw;
   int has_throttle;
+  int has_compute_util;
   double gpu_util;
   double power_w;
   double temp_c;
@@ -33,13 +34,16 @@ struct intel_gpu_xpumcli_sample {
   double eu_active;
   double mem_bw;
   unsigned long long throttle_flags;
+  double compute_util;
 };
 
 /*! Parse `xpumcli discovery` text; fill device_ids[0..*out_count). Returns 0 on success. */
 int intel_gpu_xpumcli_parse_discovery(const char *text, int *device_ids, int max_devices,
                                       int *out_count);
 
-/*! Parse `xpumcli dump` CSV; fill samples for known DeviceId rows. Returns sample count. */
+/*! Parse `xpumcli dump` CSV; fill samples for known DeviceId rows. Returns sample count.
+ *  A repeated DeviceId row (tile) folds into the first one: compute engine group utilization
+ *  takes the max over rows, every other column keeps the first row's value. */
 int intel_gpu_xpumcli_parse_dump_csv(const char *text, struct intel_gpu_xpumcli_sample *samples,
                                      int max_samples);
 

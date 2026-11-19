@@ -116,18 +116,40 @@ static const struct {
     {DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE, "tensor_imma_active"},
     {DCGM_FI_PROF_PIPE_TENSOR_HMMA_ACTIVE, "tensor_hmma_active"},
     {DCGM_FI_PROF_PIPE_TENSOR_DFMA_ACTIVE, "tensor_dfma_active"},
+    {DCGM_FI_PROF_PIPE_INT_ACTIVE, "integer_active"},
     {DCGM_FI_PROF_PCIE_TX_BYTES, "gpu_pcie_tx_bytes"},
     {DCGM_FI_PROF_PCIE_RX_BYTES, "gpu_pcie_rx_bytes"},
     {DCGM_FI_PROF_NVLINK_TX_BYTES, "gpu_nvlink_tx_bytes"},
     {DCGM_FI_PROF_NVLINK_RX_BYTES, "gpu_nvlink_rx_bytes"},
 };
 
+#define NVIDIA_GPU_DCGM_NKEYS (sizeof(g_dcgm_field_keys) / sizeof(g_dcgm_field_keys[0]))
+_Static_assert(NVIDIA_GPU_DCGM_NKEYS <= 32, "dcgm_data_t.seen holds one bit per field key");
+
+static int nvidia_gpu_dcgm_field_index(unsigned short field_id)
+{
+  for (size_t i = 0; i < NVIDIA_GPU_DCGM_NKEYS; i++)
+    if (g_dcgm_field_keys[i].id == field_id)
+      return (int)i;
+  return -1;
+}
+
 const char *nvidia_gpu_dcgm_field_key(unsigned short field_id)
 {
-  for (size_t i = 0; i < sizeof(g_dcgm_field_keys) / sizeof(g_dcgm_field_keys[0]); i++)
-    if (g_dcgm_field_keys[i].id == field_id)
-      return g_dcgm_field_keys[i].key;
-  return NULL;
+  int i = nvidia_gpu_dcgm_field_index(field_id);
+
+  return i < 0 ? NULL : g_dcgm_field_keys[i].key;
+}
+
+void nvidia_gpu_dcgm_row_mark_unseen(dcgm_data_t *row)
+{
+  if (row == NULL)
+    return;
+  for (size_t i = 0; i < NVIDIA_GPU_DCGM_NKEYS; i++)
+    if (!(row->seen & (1U << i)))
+      nvidia_gpu_row_mark(row, g_dcgm_field_keys[i].key, STATS_SENTINEL_NOT_PRESENT);
+  /* DCGM has no DMMA (FP64 tensor MMA) field; only GPM reports it. */
+  nvidia_gpu_row_mark(row, "tensor_dmma_active", STATS_SENTINEL_NOT_PRESENT);
 }
 
 enum stats_sentinel nvidia_gpu_dcgm_status_sentinel(int status)
@@ -147,9 +169,13 @@ void nvidia_gpu_row_mark(dcgm_data_t *row, const char *key, enum stats_sentinel 
 void nvidia_gpu_dcgm_field_apply(dcgm_data_t *row, const dcgmFieldValue_v1 *v)
 {
   int rc = 0;
+  int idx;
 
   if (row == NULL || v == NULL)
     return;
+  idx = nvidia_gpu_dcgm_field_index(v->fieldId);
+  if (idx >= 0)
+    row->seen |= 1U << idx;
   if (v->status != DCGM_ST_OK) {
     nvidia_gpu_row_mark(row, nvidia_gpu_dcgm_field_key(v->fieldId),
                         nvidia_gpu_dcgm_status_sentinel(v->status));
@@ -212,6 +238,9 @@ void nvidia_gpu_dcgm_field_apply(dcgm_data_t *row, const dcgmFieldValue_v1 *v)
     break;
   case DCGM_FI_PROF_PIPE_TENSOR_DFMA_ACTIVE:
     rc = nvidia_gpu_dcgm_field_ratio(v->value.dbl, &row->tensor_dfma_active);
+    break;
+  case DCGM_FI_PROF_PIPE_INT_ACTIVE:
+    rc = nvidia_gpu_dcgm_field_ratio(v->value.dbl, &row->integer_active);
     break;
   case DCGM_FI_DEV_CLOCK_THROTTLE_REASONS:
     rc = nvidia_gpu_dcgm_field_apply_i64(v->value.i64, &row->clocks_event_reasons);

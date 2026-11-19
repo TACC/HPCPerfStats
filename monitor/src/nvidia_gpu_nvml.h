@@ -14,7 +14,8 @@
 #include "nvidia_gpu.h"
 
 #define NVIDIA_GPU_NVML_MAX_DEV 32
-/* GPM needs > 100 ms between the two samples of a pair (nvml.h); shorter gaps skip PROF. */
+/* GPM needs > 100 ms between the two samples of a pair (nvml.h); a shorter gap republishes the
+ * last window (GPM keys NOT_UPDATED before the first one). */
 #define NVIDIA_GPU_NVML_GPM_MIN_GAP_US 150000LL
 
 typedef int nvidia_gpu_nvml_ret_t; /* nvmlReturn_t; 0 = NVML_SUCCESS */
@@ -41,6 +42,11 @@ struct nvidia_gpu_nvml_api {
   nvidia_gpu_nvml_ret_t (*gpm_sample_free)(nvidia_gpu_nvml_sample_t s);
   nvidia_gpu_nvml_ret_t (*gpm_sample_get)(nvidia_gpu_nvml_dev_t d, nvidia_gpu_nvml_sample_t s);
   nvidia_gpu_nvml_ret_t (*gpm_metrics_get)(void *mg); /* nvmlGpmMetricsGet_t */
+  /* Optional (NULL when the driver lacks them): device shape for gpu_flops. */
+  nvidia_gpu_nvml_ret_t (*cuda_compute_capability)(nvidia_gpu_nvml_dev_t d, int *major, int *minor);
+  nvidia_gpu_nvml_ret_t (*attributes)(nvidia_gpu_nvml_dev_t d,
+                                      void *attr); /* nvmlDeviceAttributes_t */
+  nvidia_gpu_nvml_ret_t (*num_gpu_cores)(nvidia_gpu_nvml_dev_t d, unsigned int *n);
 };
 
 /* Load NVML (or the injected test API), init, and require GPM on every GPU; takes the first GPM
@@ -49,9 +55,17 @@ int nvidia_gpu_nvml_prepare(void);
 /* GPUs on the NVML path (NVML index order = DCGM GPU id order on GB200 and GH200). */
 int nvidia_gpu_nvml_ndev(void);
 /* Fill row for NVML index idx at monotonic time now_us. Returns 0, or -1 when the GPM sample
- * failed (caller drops NVML and falls back to DCGM). Absent getters leave their fields 0. */
+ * failed (caller drops NVML and falls back to DCGM). A key that was not read stays 0 in the row
+ * and is listed in row->miss with its sentinel. */
 int nvidia_gpu_nvml_fill(int idx, long long now_us, dcgm_data_t *row);
 void nvidia_gpu_nvml_cleanup(void);
+/* Read every GPU's compute capability, multiprocessor count and CUDA core count with a short
+ * NVML init / shutdown that needs no GPM, so the DCGM path gets them too. Called from st_begin
+ * only; replaces the previous probe. Returns the GPUs probed, or -1 when NVML is unusable. */
+int nvidia_gpu_nvml_probe_shapes(void);
+/* Copy the probed shape of NVML index idx (on the DCGM path: the DCGM GPU id) into row; 0 fields
+ * when not probed or idx out of range. */
+void nvidia_gpu_nvml_row_shape(int idx, dcgm_data_t *row);
 const char *nvidia_gpu_nvml_last_error(void);
 /* Tests: inject an API table (NULL restores the dlopen path). */
 void nvidia_gpu_nvml_test_set_api(const struct nvidia_gpu_nvml_api *api);

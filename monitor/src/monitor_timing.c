@@ -27,12 +27,18 @@ double monitor_timing_next_boundary(double now, double period)
   return next;
 }
 
-double monitor_timing_seconds_until_next_boundary(double now, double period)
+double monitor_timing_reanchor_wait(double loop_now, double wall_now, double served_at,
+                                    double period)
 {
-  double wait = monitor_timing_next_boundary(now, period) - now;
-  if (wait < 0.000001)
-    wait = 0.000001;
-  return wait;
+  double normalized_period = monitor_timing_normalize_period(period);
+  double target = monitor_timing_next_boundary(wall_now, normalized_period);
+  double wait;
+
+  if (isfinite(served_at) &&
+      target - served_at < MONITOR_TIMING_SERVED_FRACTION * normalized_period)
+    target += normalized_period;
+  wait = target - (isfinite(loop_now) ? loop_now : wall_now);
+  return wait < 0.000001 ? 0.000001 : wait;
 }
 
 long long monitor_collect_slow_slot(double now_sec, double period)

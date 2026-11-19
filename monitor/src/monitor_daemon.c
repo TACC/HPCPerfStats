@@ -76,6 +76,8 @@ static unsigned long g_payload_build_drop_count;
 static unsigned long g_ring_insert_fail_count;
 static unsigned long g_dumpfile_save_fail_count;
 static long long monitor_daemon_last_slow_slot = -1;
+/* CLOCK_REALTIME start of the last sample-timer collect (NAN: none yet). */
+static double monitor_daemon_sample_served_at = NAN;
 
 char jobid[80] = "-";
 int nr_cpus;
@@ -270,11 +272,12 @@ static double monitor_daemon_get_realtime_now(void)
 
 void monitor_daemon_reanchor_sample_timer(struct ev_loop *loop, double period)
 {
-  double now = monitor_daemon_get_realtime_now();
   double wait;
 
   sample_timer_period = monitor_timing_normalize_period(period);
-  wait = monitor_timing_seconds_until_next_boundary(now, sample_timer_period);
+  /* libev counts the delay from the cached ev_now(), which predates the collect. */
+  wait = monitor_timing_reanchor_wait(ev_now(loop), monitor_daemon_get_realtime_now(),
+                                      monitor_daemon_sample_served_at, sample_timer_period);
 
   ev_timer_stop(loop, &sample_timer);
   ev_timer_set(&sample_timer, wait, 0.0);
@@ -788,6 +791,7 @@ void monitor_daemon_sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int reve
 #else
   monitor_daemon_collect_to_ring(w, 0, NULL);
 #endif
+  monitor_daemon_sample_served_at = now_s;
   monitor_daemon_reanchor_sample_timer(loop, sample_timer_period);
   print_buffer_status(w);
 }

@@ -222,6 +222,26 @@ static int intel_gpu_xpumcli_header_col(char **fields, int nfields, const char *
   return -1;
 }
 
+/* Fold a repeated DeviceId (tile) row into the device's first sample; returns 1 when merged. */
+static int intel_gpu_xpumcli_merge_row(struct intel_gpu_xpumcli_sample *samples, int nsamples,
+                                       const struct intel_gpu_xpumcli_sample *row)
+{
+  int i;
+
+  for (i = 0; i < nsamples; i++) {
+    struct intel_gpu_xpumcli_sample *s = &samples[i];
+
+    if (s->device_id != row->device_id)
+      continue;
+    if (row->has_compute_util && (!s->has_compute_util || row->compute_util > s->compute_util)) {
+      s->has_compute_util = 1;
+      s->compute_util = row->compute_util;
+    }
+    return 1;
+  }
+  return 0;
+}
+
 int intel_gpu_xpumcli_parse_dump_csv(const char *text, struct intel_gpu_xpumcli_sample *samples,
                                      int max_samples)
 {
@@ -242,6 +262,7 @@ int intel_gpu_xpumcli_parse_dump_csv(const char *text, struct intel_gpu_xpumcli_
   int col_eu = -1;
   int col_bw = -1;
   int col_throttle = -1;
+  int col_compute = -1;
   int nsamples = 0;
 
   if (text == NULL || samples == NULL || max_samples <= 0)
@@ -287,6 +308,7 @@ int intel_gpu_xpumcli_parse_dump_csv(const char *text, struct intel_gpu_xpumcli_
         col_eu = intel_gpu_xpumcli_header_col(hfields, nh, "EU Array Active");
         col_bw = intel_gpu_xpumcli_header_col(hfields, nh, "Memory Bandwidth");
         col_throttle = intel_gpu_xpumcli_header_col(hfields, nh, "Throttle");
+        col_compute = intel_gpu_xpumcli_header_col(hfields, nh, "Compute engine group utilization");
         free(hcopy);
       }
       if (col_dev < 0)
@@ -299,7 +321,8 @@ int intel_gpu_xpumcli_parse_dump_csv(const char *text, struct intel_gpu_xpumcli_
       int nf = 0;
       char *tok;
       char *rsave = NULL;
-      struct intel_gpu_xpumcli_sample *s;
+      struct intel_gpu_xpumcli_sample row_sample;
+      struct intel_gpu_xpumcli_sample *s = &row_sample;
       double v;
 
       if (row == NULL)
@@ -314,11 +337,6 @@ int intel_gpu_xpumcli_parse_dump_csv(const char *text, struct intel_gpu_xpumcli_
         free(row);
         continue;
       }
-      if (nsamples >= max_samples) {
-        free(row);
-        break;
-      }
-      s = &samples[nsamples];
       memset(s, 0, sizeof(*s));
       s->device_id = atoi(fields[col_dev]);
       if (col_util >= 0 && col_util < nf &&
@@ -368,8 +386,17 @@ int intel_gpu_xpumcli_parse_dump_csv(const char *text, struct intel_gpu_xpumcli_
         s->has_throttle = 1;
         s->throttle_flags = strcasestr(fields[col_throttle], "Not Throttled") == NULL ? 1 : 0;
       }
-      nsamples++;
+      if (col_compute >= 0 && col_compute < nf &&
+          intel_gpu_xpumcli_parse_double(fields[col_compute], &v) == 0) {
+        s->has_compute_util = 1;
+        s->compute_util = v;
+      }
       free(row);
+      if (intel_gpu_xpumcli_merge_row(samples, nsamples, s))
+        continue;
+      if (nsamples >= max_samples)
+        break;
+      samples[nsamples++] = *s;
     }
   }
   free(copy);
@@ -402,6 +429,8 @@ void intel_gpu_xpumcli_publish_sample(struct stats *stats, const struct intel_gp
     stats_set(stats, "sm_active", (unsigned long long)(s->eu_active + 0.5));
   if (s->has_mem_bw)
     stats_set(stats, "gpu_dram_active", (unsigned long long)(s->mem_bw + 0.5));
+  if (s->has_compute_util)
+    stats_set(stats, "compute_engine_util", (unsigned long long)(s->compute_util + 0.5));
   /* xpumcli dump has throughput only, not the cumulative counters of the libxpum backend. */
   stats_set_missing(stats, "gpu_pcie_rx_bytes", STATS_SENTINEL_NOT_BUILT);
   stats_set_missing(stats, "gpu_pcie_tx_bytes", STATS_SENTINEL_NOT_BUILT);
@@ -410,7 +439,8 @@ void intel_gpu_xpumcli_publish_sample(struct stats *stats, const struct intel_gp
   if (s->has_throttle)
     stats_set(stats, "clocks_event_reasons", s->throttle_flags);
   stats_set(stats, "gpu_count", (unsigned long long)gpu_count);
-  /* A metric this dump did not report. */
+  /* A metric this dump did not report or printed as N/A (EU Array Active below the XPUM GFX
+   * firmware minimum): NOT_PRESENT this cycle only, so values return without a restart. */
   stats_set_missing_all(stats, STATS_SENTINEL_NOT_PRESENT);
 }
 

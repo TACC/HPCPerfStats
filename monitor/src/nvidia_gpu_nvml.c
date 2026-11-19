@@ -45,6 +45,10 @@ static const struct nvml_gpm_map g_gpm_map[] = {
      "tensor_hmma_active"},
     {NVML_GPM_METRIC_DFMA_TENSOR_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, tensor_dfma_active),
      "tensor_dfma_active"},
+    {NVML_GPM_METRIC_DMMA_TENSOR_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, tensor_dmma_active),
+     "tensor_dmma_active"},
+    {NVML_GPM_METRIC_INTEGER_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, integer_active),
+     "integer_active"},
     {NVML_GPM_METRIC_DRAM_BW_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, dram_active),
      "gpu_dram_active"},
     {NVML_GPM_METRIC_FP64_UTIL, GPM_DST_RATIO, offsetof(dcgm_data_t, fp64_active), "fp64_active"},
@@ -66,9 +70,28 @@ struct nvml_gpu {
   nvidia_gpu_nvml_sample_t sample[2];
   int prev;          /* index of the older sample */
   long long prev_us; /* monotonic time of sample[prev] */
+  /* Last computed GPM window (one value per g_gpm_map entry, its sentinel 0 when read),
+   * republished by a collect inside NVIDIA_GPU_NVML_GPM_MIN_GAP_US. */
+  int have_window;
+  union {
+    double ratio;
+    uint64_t bytes;
+  } win[NVML_GPM_NMAP];
+  unsigned char win_code[NVML_GPM_NMAP];
+};
+
+/* Static device shape per NVML index (nvidia_gpu_nvml_probe_shapes); kept across cleanup so the
+ * DCGM path can use it after NVML+GPM was given up. */
+struct nvml_shape {
+  int cc_major;
+  int cc_minor;
+  unsigned int sm_count;
+  unsigned int gpu_cores;
 };
 
 static struct nvidia_gpu_nvml_api g_api;
+static struct nvml_shape g_shape[NVIDIA_GPU_NVML_MAX_DEV];
+static int g_nshape;
 static const struct nvidia_gpu_nvml_api *g_test_api;
 static void *g_lib;
 static int g_ready;
@@ -124,6 +147,9 @@ static int nvml_bind(void *lib)
       {"nvmlGpmSampleFree", (void **)&g_api.gpm_sample_free, 0},
       {"nvmlGpmSampleGet", (void **)&g_api.gpm_sample_get, 0},
       {"nvmlGpmMetricsGet", (void **)&g_api.gpm_metrics_get, 0},
+      {"nvmlDeviceGetCudaComputeCapability", (void **)&g_api.cuda_compute_capability, 1},
+      {"nvmlDeviceGetAttributes_v2", (void **)&g_api.attributes, 1},
+      {"nvmlDeviceGetNumGpuCores", (void **)&g_api.num_gpu_cores, 1},
   };
   size_t i;
 
@@ -187,6 +213,68 @@ void nvidia_gpu_nvml_cleanup(void)
   g_inited = 0;
   g_ndev = 0;
   g_ready = 0;
+}
+
+static void nvml_query_shape(nvidia_gpu_nvml_dev_t d, struct nvml_shape *s)
+{
+  nvmlDeviceAttributes_t attr;
+  int major = 0, minor = 0;
+  unsigned int cores = 0;
+
+  if (g_api.cuda_compute_capability != NULL &&
+      g_api.cuda_compute_capability(d, &major, &minor) == 0) {
+    s->cc_major = major;
+    s->cc_minor = minor;
+  }
+  /* nvml.h: nvmlDeviceGetAttributes supports MIG device handles only, so a full GPU usually has
+   * no multiprocessorCount; the estimate then divides the CUDA core count by FP32 lanes per SM. */
+  memset(&attr, 0, sizeof(attr));
+  if (g_api.attributes != NULL && g_api.attributes(d, &attr) == 0)
+    s->sm_count = attr.multiprocessorCount;
+  if (g_api.num_gpu_cores != NULL && g_api.num_gpu_cores(d, &cores) == 0)
+    s->gpu_cores = cores;
+}
+
+int nvidia_gpu_nvml_probe_shapes(void)
+{
+  unsigned int n = 0, i;
+  nvidia_gpu_nvml_ret_t r;
+
+  memset(g_shape, 0, sizeof(g_shape));
+  g_nshape = 0;
+  if (nvml_load() != 0)
+    return -1;
+  r = g_api.init();
+  if (r != 0) {
+    nvml_set_err("nvmlInit_v2", r);
+    return -1;
+  }
+  if (g_api.device_count(&n) == 0) {
+    if (n > NVIDIA_GPU_NVML_MAX_DEV)
+      n = NVIDIA_GPU_NVML_MAX_DEV;
+    for (i = 0; i < n; i++) {
+      nvidia_gpu_nvml_dev_t d;
+
+      if (g_api.device_by_index(i, &d) == 0)
+        nvml_query_shape(d, &g_shape[i]);
+    }
+    g_nshape = (int)n;
+  }
+  (void)g_api.shutdown();
+  return g_nshape;
+}
+
+void nvidia_gpu_nvml_row_shape(int idx, dcgm_data_t *row)
+{
+  static const struct nvml_shape unknown;
+  const struct nvml_shape *s = (idx >= 0 && idx < g_nshape) ? &g_shape[idx] : &unknown;
+
+  if (row == NULL)
+    return;
+  row->cc_major = s->cc_major;
+  row->cc_minor = s->cc_minor;
+  row->sm_count = s->sm_count;
+  row->gpu_cores = s->gpu_cores;
 }
 
 /* One GPU: handle, GPM support, two sample buffers, first sample. */
@@ -322,41 +410,56 @@ static void nvml_fill_basic(nvidia_gpu_nvml_dev_t d, dcgm_data_t *row)
     nvidia_gpu_row_mark(row, "gpu_pcie_replay_counter", STATS_SENTINEL_READ_FAILED);
 }
 
-/* Metrics of one sample pair into row; a failed metric marks its key READ_FAILED, a non-finite
- * or out-of-range value INVALID_VALUE. */
-static void nvml_apply_metrics(dcgm_data_t *row)
+/* Metrics of the sample pair just taken become g's window: a failed metric is READ_FAILED, a
+ * non-finite or out-of-range value INVALID_VALUE. */
+static void nvml_window_from_metrics(struct nvml_gpu *g)
 {
   unsigned int m;
 
-  for (m = 0; m < g_mg.numMetrics && m < NVML_GPM_NMAP; m++) {
+  for (m = 0; m < NVML_GPM_NMAP; m++) {
+    double v = g_mg.metrics[m].value;
+    int rc;
+
+    if (m >= g_mg.numMetrics || g_mg.metrics[m].nvmlReturn != NVML_SUCCESS) {
+      g->win_code[m] = STATS_SENTINEL_READ_FAILED;
+      continue;
+    }
+    rc = g_gpm_map[m].kind == GPM_DST_RATIO
+             ? nvidia_gpu_nvml_pct_to_ratio(v, &g->win[m].ratio)
+             : nvidia_gpu_nvml_mib_per_s_to_bytes(v, &g->win[m].bytes);
+    g->win_code[m] = rc < 0 ? STATS_SENTINEL_INVALID_VALUE : STATS_SENTINEL_OK;
+  }
+  g->have_window = 1;
+}
+
+/* g's last window into row; before the first window every GPM key is NOT_UPDATED. */
+static void nvml_window_to_row(const struct nvml_gpu *g, dcgm_data_t *row)
+{
+  unsigned int m;
+
+  for (m = 0; m < NVML_GPM_NMAP; m++) {
     const struct nvml_gpm_map *map = &g_gpm_map[m];
     char *dst = (char *)row + map->offset;
-    double v = g_mg.metrics[m].value;
 
-    if (g_mg.metrics[m].nvmlReturn != NVML_SUCCESS)
-      nvidia_gpu_row_mark(row, map->key, STATS_SENTINEL_READ_FAILED);
-    else if ((map->kind == GPM_DST_RATIO
-                  ? nvidia_gpu_nvml_pct_to_ratio(v, (double *)(void *)dst)
-                  : nvidia_gpu_nvml_mib_per_s_to_bytes(v, (uint64_t *)(void *)dst)) < 0)
-      nvidia_gpu_row_mark(row, map->key, STATS_SENTINEL_INVALID_VALUE);
+    if (!g->have_window)
+      nvidia_gpu_row_mark(row, map->key, STATS_SENTINEL_NOT_UPDATED);
+    else if (g->win_code[m] != STATS_SENTINEL_OK)
+      nvidia_gpu_row_mark(row, map->key, (enum stats_sentinel)g->win_code[m]);
+    else if (map->kind == GPM_DST_RATIO)
+      memcpy(dst, &g->win[m].ratio, sizeof(double));
+    else
+      memcpy(dst, &g->win[m].bytes, sizeof(uint64_t));
   }
 }
 
-int nvidia_gpu_nvml_fill(int idx, long long now_us, dcgm_data_t *row)
+/* Take the next GPM sample and compute the window since the kept one. Returns 0, or -1 when
+ * NVML failed. */
+static int nvml_take_window(struct nvml_gpu *g, long long now_us)
 {
-  struct nvml_gpu *g;
   nvidia_gpu_nvml_ret_t r;
-  int cur;
+  int cur = 1 - g->prev;
   unsigned int m;
 
-  if (!g_ready || idx < 0 || idx >= g_ndev || row == NULL)
-    return -1;
-  g = &g_gpu[idx];
-  nvml_fill_basic(g->dev, row);
-  /* The GPM window is the collect interval; a too-short gap keeps the old sample, PROF = 0. */
-  if (now_us - g->prev_us < NVIDIA_GPU_NVML_GPM_MIN_GAP_US)
-    return 0;
-  cur = 1 - g->prev;
   r = g_api.gpm_sample_get(g->dev, g->sample[cur]);
   if (r != 0) {
     nvml_set_err("nvmlGpmSampleGet", r);
@@ -377,6 +480,23 @@ int nvidia_gpu_nvml_fill(int idx, long long now_us, dcgm_data_t *row)
     nvml_set_err("nvmlGpmMetricsGet", r);
     return -1;
   }
-  nvml_apply_metrics(row);
+  nvml_window_from_metrics(g);
+  return 0;
+}
+
+int nvidia_gpu_nvml_fill(int idx, long long now_us, dcgm_data_t *row)
+{
+  struct nvml_gpu *g;
+
+  if (!g_ready || idx < 0 || idx >= g_ndev || row == NULL)
+    return -1;
+  g = &g_gpu[idx];
+  nvml_fill_basic(g->dev, row);
+  /* The GPM window is the collect interval. A collect inside the min gap (the sample timer can
+   * fire twice around one boundary) keeps the old sample and republishes the window that just
+   * closed: same instant, same reading. */
+  if (now_us - g->prev_us >= NVIDIA_GPU_NVML_GPM_MIN_GAP_US && nvml_take_window(g, now_us) != 0)
+    return -1;
+  nvml_window_to_row(g, row);
   return 0;
 }

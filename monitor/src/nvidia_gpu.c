@@ -52,8 +52,9 @@ static unsigned long long ull_add_sat(unsigned long long a, unsigned long long b
   return (ULLONG_MAX - a < b) ? ULLONG_MAX : (a + b);
 }
 
+/* Integrate each link rate; the link total only grows on a tick where every rate was read. */
 static void nvidia_gpu_io_link_accumulate(unsigned int gid, const dcgm_data_t *row,
-                                          long long delta_us)
+                                          long long delta_us, int total_ok)
 {
   const uint64_t rates[NVIDIA_GPU_LINK_COUNT] = {row->prof_pcie_tx_bytes, row->prof_pcie_rx_bytes,
                                                  row->prof_nvlink_tx_bytes,
@@ -62,10 +63,13 @@ static void nvidia_gpu_io_link_accumulate(unsigned int gid, const dcgm_data_t *r
 
   if (gid >= DCGM_MAX_NUM_DEVICES)
     return;
-  for (k = 0; k < NVIDIA_GPU_LINK_COUNT; k++)
-    g_gpu_io_link_total_bytes[gid] =
-        ull_add_sat(g_gpu_io_link_total_bytes[gid],
-                    nvidia_gpu_link_rate_integrate(rates[k], delta_us, &g_gpu_link_bytes[gid][k]));
+  for (k = 0; k < NVIDIA_GPU_LINK_COUNT; k++) {
+    unsigned long long add =
+        nvidia_gpu_link_rate_integrate(rates[k], delta_us, &g_gpu_link_bytes[gid][k]);
+
+    if (total_ok)
+      g_gpu_io_link_total_bytes[gid] = ull_add_sat(g_gpu_io_link_total_bytes[gid], add);
+  }
 }
 
 static int list_field_values(unsigned int gpu_id, dcgmFieldValue_v1 *values, int num_values,
@@ -83,40 +87,33 @@ static int list_field_values(unsigned int gpu_id, dcgmFieldValue_v1 *values, int
 static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row, unsigned int gid,
                                   int gpu_count, long long delta_us)
 {
-  struct nvidia_gpu_estimate_input est_in;
+  struct nvidia_gpu_estimate_codes est_codes;
+  struct nvidia_gpu_row_miss miss[NVIDIA_GPU_ESTIMATE_MISS_MAX];
   double flops_rate;
   double mem_bw_rate;
-  unsigned long long delta_flops = 0ULL;
-  unsigned long long delta_mem_bytes = 0ULL;
-  unsigned long long delta_mem_read_bytes = 0ULL;
-  unsigned long long delta_mem_write_bytes = 0ULL;
+  int nmiss;
 
-  /*
-   * gpu_flops_rate uses fp_mix from scalar/tensor pipes only. tensor_imma_active,
-   * tensor_hmma_active, and tensor_dfma_active are reported for multiprecision visibility
-   * but omitted here: they overlap tensor_active (1004) on many stacks and would double-count.
-   */
-  est_in.fp64_active = row->fp64_active;
-  est_in.fp32_active = row->fp32_active;
-  est_in.fp16_active = row->fp16_active;
-  est_in.tensor_active = row->tensor_active;
-  est_in.mem_util = row->mem_util;
-  nvidia_gpu_estimate_rates(&est_in, &flops_rate, &mem_bw_rate);
+  nvidia_gpu_estimate_rates(row, &flops_rate, &mem_bw_rate);
+  /* An estimate whose inputs were not read is neither accumulated nor published as a value. */
+  nvidia_gpu_estimate_row_codes(row, &est_codes);
 
-  nvidia_gpu_io_link_accumulate(gid, row, delta_us);
+  nvidia_gpu_io_link_accumulate(gid, row, delta_us, est_codes.link == STATS_SENTINEL_OK);
 
   if (delta_us > 0) {
     double dt_sec = (double)delta_us / 1000000.0;
-    delta_flops = clamp_double_to_ull(flops_rate * dt_sec);
-    delta_mem_bytes = clamp_double_to_ull(mem_bw_rate * dt_sec);
-    delta_mem_read_bytes = delta_mem_bytes / 2ULL;
-    delta_mem_write_bytes = delta_mem_bytes - delta_mem_read_bytes;
-    g_gpu_est_flops[gid] = ull_add_sat(g_gpu_est_flops[gid], delta_flops);
-    g_gpu_est_mem_total_bytes[gid] = ull_add_sat(g_gpu_est_mem_total_bytes[gid], delta_mem_bytes);
-    g_gpu_est_mem_read_bytes[gid] =
-        ull_add_sat(g_gpu_est_mem_read_bytes[gid], delta_mem_read_bytes);
-    g_gpu_est_mem_write_bytes[gid] =
-        ull_add_sat(g_gpu_est_mem_write_bytes[gid], delta_mem_write_bytes);
+    unsigned long long delta_mem_bytes = clamp_double_to_ull(mem_bw_rate * dt_sec);
+    unsigned long long delta_mem_read_bytes = delta_mem_bytes / 2ULL;
+
+    if (est_codes.flops == STATS_SENTINEL_OK)
+      g_gpu_est_flops[gid] =
+          ull_add_sat(g_gpu_est_flops[gid], clamp_double_to_ull(flops_rate * dt_sec));
+    if (est_codes.mem == STATS_SENTINEL_OK) {
+      g_gpu_est_mem_total_bytes[gid] = ull_add_sat(g_gpu_est_mem_total_bytes[gid], delta_mem_bytes);
+      g_gpu_est_mem_read_bytes[gid] =
+          ull_add_sat(g_gpu_est_mem_read_bytes[gid], delta_mem_read_bytes);
+      g_gpu_est_mem_write_bytes[gid] =
+          ull_add_sat(g_gpu_est_mem_write_bytes[gid], delta_mem_bytes - delta_mem_read_bytes);
+    }
   }
 
   stats_set(stats, "temperature", I64_TO_LLU(row->temperature));
@@ -136,6 +133,8 @@ static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row, u
   stats_set(stats, "tensor_imma_active", DBL_TO_LLU_PERCENT(row->tensor_imma_active));
   stats_set(stats, "tensor_hmma_active", DBL_TO_LLU_PERCENT(row->tensor_hmma_active));
   stats_set(stats, "tensor_dfma_active", DBL_TO_LLU_PERCENT(row->tensor_dfma_active));
+  stats_set(stats, "tensor_dmma_active", DBL_TO_LLU_PERCENT(row->tensor_dmma_active));
+  stats_set(stats, "integer_active", DBL_TO_LLU_PERCENT(row->integer_active));
   stats_set(stats, "gpu_dram_active", DBL_TO_LLU_PERCENT(row->dram_active));
   stats_set(stats, "gpu_pcie_tx_bytes", g_gpu_link_bytes[gid][NVIDIA_GPU_LINK_PCIE_TX]);
   stats_set(stats, "gpu_pcie_rx_bytes", g_gpu_link_bytes[gid][NVIDIA_GPU_LINK_PCIE_RX]);
@@ -151,8 +150,9 @@ static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row, u
   stats_set(stats, "gpu_mem_total_bytes", g_gpu_est_mem_total_bytes[gid]);
   stats_set(stats, "gpu_io_link_total_bytes", g_gpu_io_link_total_bytes[gid]);
   stats_set(stats, "gpu_count", (unsigned long long)(gpu_count < 0 ? 0 : gpu_count));
-  for (int k = 0; k < row->nmiss; k++)
-    stats_set_missing(stats, row->miss[k].key, (enum stats_sentinel)row->miss[k].code);
+  nmiss = nvidia_gpu_estimate_miss_list(row, &est_codes, miss);
+  for (int k = 0; k < nmiss; k++)
+    stats_set_missing(stats, miss[k].key, (enum stats_sentinel)miss[k].code);
   return 0;
 }
 
@@ -173,6 +173,7 @@ static int nvidia_gpu_collect_nvml(struct stats_type *type, long long now_us, lo
     memset(&row, 0, sizeof(row));
     if (nvidia_gpu_nvml_fill(i, now_us, &row) != 0)
       return -1;
+    nvidia_gpu_nvml_row_shape(i, &row);
     snprintf(dev, sizeof(dev), "%d", i);
     stats = get_current_stats(type, dev);
     if (stats == NULL) {
@@ -190,6 +191,8 @@ static int nvidia_gpu_begin(struct stats_type *type)
   (void)type;
   if (g_gpu_nvml_active || g_gpu_nvml_given_up)
     return 0;
+  /* Device shape (CC, SM count) for gpu_flops on either path; needs no GPM. */
+  (void)nvidia_gpu_nvml_probe_shapes();
   if (nvidia_gpu_nvml_prepare() == 0) {
     g_gpu_nvml_active = 1;
     monitor_log_info("nvidia_gpu: source NVML+GPM (%d GPUs)\n", nvidia_gpu_nvml_ndev());
@@ -275,6 +278,9 @@ static void nvidia_gpu_collect(struct stats_type *type)
       g_nvidia_gpu_stats_alloc_skips++;
       continue;
     }
+    nvidia_gpu_dcgm_row_mark_unseen(&dcgm_data[gid]);
+    /* Assumes DCGM GPU id = NVML index, as on GB200 and GH200. */
+    nvidia_gpu_nvml_row_shape((int)gid, &dcgm_data[gid]);
     if (nvidia_gpu_collect_dev(stats, &dcgm_data[gid], gid, g_nvidia_gpu_runtime_ndev, delta_us) ==
         0)
       nr++;

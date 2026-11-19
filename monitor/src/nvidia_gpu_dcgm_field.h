@@ -33,5 +33,10 @@ void nvidia_gpu_row_mark(dcgm_data_t *row, const char *key, enum stats_sentinel 
 /* Apply one DCGM field value to its row: a field status other than OK marks the key with
  * nvidia_gpu_dcgm_status_sentinel, a blank or out-of-range value marks it INVALID_VALUE. */
 void nvidia_gpu_dcgm_field_apply(dcgm_data_t *row, const dcgmFieldValue_v1 *v);
+/* DCGM path, after the fetch: mark NOT_PRESENT every field key the fetch delivered nothing for.
+ * DCGM reports only watched fields, so this covers the fields a fallback watch profile dropped
+ * (split-prof-no-dfma: DFMA and integer pipe; core-prof: tensor IMMA/HMMA/DFMA and integer pipe;
+ * basic-nonprof: every PROF field), plus tensor_dmma_active, which has no DCGM field. */
+void nvidia_gpu_dcgm_row_mark_unseen(dcgm_data_t *row);
 
 #endif

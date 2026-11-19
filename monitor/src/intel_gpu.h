@@ -16,7 +16,8 @@
       X(gpu_xe_link_rx_bytes, "E,W=64,U=B", "Xe Link / fabric received bytes (accumulated)"),      \
       X(gpu_xe_link_tx_bytes, "E,W=64,U=B", "Xe Link / fabric transmitted bytes (accumulated)"),   \
       X(clocks_event_reasons, "", "Frequency throttle reason flags when available"),               \
-      X(gpu_count, "", "Number of XPUM-visible Intel GPUs on this node")
+      X(gpu_count, "", "Number of XPUM-visible Intel GPUs on this node"),                          \
+      X(compute_engine_util, "", "Compute engine group utilization %, max over tiles")
 
 struct stats_type;
 extern struct stats_type intel_gpu_stats_type;

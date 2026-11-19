@@ -49,8 +49,9 @@ static void intel_gpu_env_prepare(void)
 {
   /* On-demand pulls only, to avoid XPUM background sampler jitter on HPC nodes. */
   setenv("XPUM_DISABLE_PERIODIC_METRIC_MONITOR", "1", 1);
-  /* XPUM 1.2.33: metric IDs 0-36 only (37/38 rejected). Include memory temp (30). */
-  setenv("XPUM_METRICS", "0,1,4,6-10,30,34,35,36", 1);
+  /* XPUM 1.2.33: metric IDs 0-36 only (37/38 rejected). Include compute engine group (15) and
+   * memory temp (30). */
+  setenv("XPUM_METRICS", "0,1,4,6-10,15,30,34,35,36", 1);
 }
 
 static int intel_gpu_lookup_mem_total_mb(xpum_device_id_t id, unsigned long long *out_mb)
@@ -138,6 +139,9 @@ static void intel_gpu_publish_from_rt(struct stats *stats,
     stats_set_missing(stats, "clocks_event_reasons", STATS_SENTINEL_NOT_PRESENT);
 
   stats_set(stats, "gpu_count", (unsigned long long)gpu_count);
+
+  intel_gpu_publish_rt(stats, "compute_engine_util",
+                       intel_gpu_find_rt(row, XPUM_STATS_ENGINE_GROUP_COMPUTE_ALL_UTILIZATION));
 }
 
 static void intel_gpu_publish_xe_link(struct stats *stats, xpum_device_id_t id)
@@ -173,16 +177,20 @@ static void intel_gpu_publish_xe_link(struct stats *stats, xpum_device_id_t id)
   stats_set(stats, "gpu_xe_link_tx_bytes", tx);
 }
 
-static void intel_gpu_apply_package_power(const xpum_device_realtime_metrics_t *rows,
-                                          uint32_t count, xpum_device_realtime_metrics_t *out_row)
+/* Package POWER (device-level or sum of tiles) and compute engine group = max over tiles. */
+static void intel_gpu_apply_tile_aggregates(const xpum_device_realtime_metrics_t *rows,
+                                            uint32_t count, xpum_device_realtime_metrics_t *out_row)
 {
-  double package_w;
+  double v;
 
   if (out_row == NULL)
     return;
-  package_w = intel_gpu_package_power_watts(rows, count);
-  if (package_w >= 0.0)
-    (void)intel_gpu_row_set_power_watts(out_row, package_w);
+  v = intel_gpu_package_power_watts(rows, count);
+  if (v >= 0.0)
+    (void)intel_gpu_row_set_metric(out_row, XPUM_STATS_POWER, v);
+  v = intel_gpu_max_metric(rows, count, XPUM_STATS_ENGINE_GROUP_COMPUTE_ALL_UTILIZATION);
+  if (v >= 0.0)
+    (void)intel_gpu_row_set_metric(out_row, XPUM_STATS_ENGINE_GROUP_COMPUTE_ALL_UTILIZATION, v);
 }
 
 static int intel_gpu_collect_one_rt(xpum_device_id_t id, xpum_device_realtime_metrics_t *out_row)
@@ -206,8 +214,8 @@ static int intel_gpu_collect_one_rt(xpum_device_id_t id, xpum_device_realtime_me
   *out_row = rows[best];
   if (!intel_gpu_row_is_usable(out_row))
     intel_gpu_merge_tile_rows(rows, count, out_row);
-  /* Always resolve package POWER (device-level or sum of tiles); never publish one tile. */
-  intel_gpu_apply_package_power(rows, count, out_row);
+  /* Always resolve package POWER and tile maxima; never publish one tile's POWER. */
+  intel_gpu_apply_tile_aggregates(rows, count, out_row);
   return 0;
 }
 
@@ -268,7 +276,7 @@ static int intel_gpu_collect_one_stats_fallback(xpum_device_id_t id,
   *out_row = as_rt[best];
   if (!intel_gpu_row_is_usable(out_row))
     intel_gpu_merge_tile_rows(as_rt, n_rt, out_row);
-  intel_gpu_apply_package_power(as_rt, n_rt, out_row);
+  intel_gpu_apply_tile_aggregates(as_rt, n_rt, out_row);
   return out_row->count > 0 ? 0 : -1;
 }
 
