@@ -2183,6 +2183,48 @@ class IndependentReadTests(unittest.TestCase):
         self.assertTrue(any("host_mem/0 mem_total: emitted 0 in both captures, source reads 8000000" in e for e in errors))
         self.assertTrue(any("host_power_socket/0 socket_power_w" in e for e in errors))
 
+    def test_host_mem_dirty_small_live_after_flat_zero_is_note_not_fail(self) -> None:
+        from lib.independent_read import check_independent_reads
+
+        schema = {
+            **self._GAUGE_SCHEMA,
+            "host_mem": ["mem_total,U=KB", "mem_free,U=KB", "dirty,U=KB"],
+        }
+        live = {("host_mem", "0", "dirty"): 48}
+        notes, errors = check_independent_reads(
+            schema,
+            "1000.0 j h\nhost_mem 0 7999000 100 0\n",
+            "1030.0 j h\nhost_mem 0 7999000 100 0\n",
+            1030.0,
+            1010.0,
+            live,
+            require_tier=False,
+            allowed_tier=None,
+        )
+        self.assertFalse(errors)
+        self.assertTrue(any("volatile gauge" in n and "dirty" in n for n in notes))
+
+    def test_host_mem_dirty_large_live_still_fails_flat_zero(self) -> None:
+        from lib.independent_read import check_independent_reads
+
+        schema = {
+            **self._GAUGE_SCHEMA,
+            "host_mem": ["mem_total,U=KB", "mem_free,U=KB", "dirty,U=KB"],
+        }
+        live = {("host_mem", "1", "dirty"): 128}
+        _, errors = check_independent_reads(
+            schema,
+            "1000.0 j h\nhost_mem 1 7999000 100 0\n",
+            "1030.0 j h\nhost_mem 1 7999000 100 0\n",
+            1030.0,
+            1010.0,
+            live,
+            require_tier=False,
+            allowed_tier=None,
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("host_mem/1 dirty: emitted 0 in both captures, source reads 128", errors[0])
+
     def test_new_sources_read_from_sysfs(self) -> None:
         from lib.independent_read import read_independent_sources
 

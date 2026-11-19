@@ -7,8 +7,9 @@ and the ACPI hwmon power meters (host_power_socket).
 
 - Counters (``E`` keys) are monotonic, so a read taken after capture A was written and before
   collect B started (``t_read < ts_b``) must satisfy ``v_a <= r <= v_b`` (mod 2^W).
-- Gauges cannot be bracketed: a gauge FAILs only when it was emitted 0 in both captures while the
-  source reads non-zero.
+- Gauges cannot be bracketed: a gauge FAILs when it was emitted 0 in both captures while the
+  source reads non-zero. ``host_mem`` ``dirty`` and ``writeback`` swing quickly (kB-scale); when
+  the live read is below 64 kB that mismatch is a NOTE, not a FAIL.
 
 A collector that silently stopped reading (flat, or stuck at 0) fails this even when idle.
 
@@ -48,6 +49,8 @@ _IB_MAD_ONLY_KEYS = (
     "port_unicast_rcv_pkts", "port_multicast_xmit_pkts", "port_multicast_rcv_pkts",
 )
 _IB_MAD_SLUG_TOKENS = frozenset({"ib", "ibdyn"})
+_HOST_MEM_VOLATILE_GAUGE_MIN_KB = 64
+_HOST_MEM_VOLATILE_GAUGE_KEYS = frozenset({"dirty", "writeback"})
 _HOST_KEY_ALIAS = Path(__file__).resolve().parents[2] / "src" / "host_key_alias.c"
 
 
@@ -266,10 +269,21 @@ def check_independent_reads(
         checked += 1
         if not schema_token_is_event_counter(token):
             if va == 0 and vb == 0 and r > 0:
-                errors.append(
-                    f"FAIL independent_read {key[0]}/{key[1]} {key[2]}: emitted 0 in both captures,"
-                    f" source reads {r}"
-                )
+                if (
+                    key[0] == "host_mem"
+                    and key[2] in _HOST_MEM_VOLATILE_GAUGE_KEYS
+                    and r < _HOST_MEM_VOLATILE_GAUGE_MIN_KB
+                ):
+                    notes.append(
+                        f"NOTE independent_read {key[0]}/{key[1]} {key[2]}: emitted 0 in both"
+                        f" captures, source reads {r} kB"
+                        f" (< {_HOST_MEM_VOLATILE_GAUGE_MIN_KB} kB volatile gauge)"
+                    )
+                else:
+                    errors.append(
+                        f"FAIL independent_read {key[0]}/{key[1]} {key[2]}: emitted 0 in both"
+                        f" captures, source reads {r}"
+                    )
             continue
         mod = 1 << _width(token)
         if (r - va) % mod + (vb - r) % mod != (vb - va) % mod:
