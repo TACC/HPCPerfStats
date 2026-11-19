@@ -170,7 +170,7 @@ main() {
   if test -n "${WAIT_SHM_SECONDS:-}"; then
     validate_args+=(--wait-shm-seconds "${WAIT_SHM_SECONDS}")
   else
-    validate_args+=(--wait-shm-seconds 30)
+    validate_args+=(--wait-shm-seconds 300)
   fi
   if env_flag_on "${STRICT_LIVE_SPOT_CHECK:-1}"; then
     validate_args+=(--strict-live-spot-check)

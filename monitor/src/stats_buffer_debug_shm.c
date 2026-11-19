@@ -1,6 +1,7 @@
 /* Overwrite latest schema/@fast/@full payloads in shm (DEBUG). */
 #ifdef DEBUG
 
+#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
@@ -72,9 +73,21 @@ static int stats_buffer_debug_shm_ensure_dir(void)
   return 0;
 }
 
+/* The previous daemon's samples would otherwise sit beside the new schema until the first tick.
+ * schema, sentinels and sentinel_sites stay; the startup header payload rewrites them. */
 void stats_buffer_debug_shm_init(void)
 {
-  (void)stats_buffer_debug_shm_ensure_dir();
+  static const char *const stale[] = {"fast", "full", "fast.burst", "full.burst"};
+  char path[PATH_MAX];
+  size_t i;
+
+  if (stats_buffer_debug_shm_ensure_dir() < 0)
+    return;
+  for (i = 0; i < sizeof(stale) / sizeof(stale[0]); i++)
+    if (snprintf(path, sizeof(path), "%s/%s", stats_buffer_debug_shm_base_dir(), stale[i]) <
+            (int)sizeof(path) &&
+        unlink(path) < 0 && errno != ENOENT)
+      monitor_log_debug("debug_shm: unlink %s: %m\n", path);
 }
 
 static const char *stats_buffer_debug_shm_kind_name(enum stats_buffer_debug_shm_payload_kind kind)

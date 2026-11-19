@@ -62,6 +62,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_opa_schema_contract.c` | OPA collector schema token contract (`host_opa.h`) |
 | `test_opa_sysfs_map.c` | hfi1 classic + hw_counters filename → KEYS; classic-miss → hw fallback |
 | `test_opa_mad_backoff.c` | OPA MAD failure backoff |
+| `test_opa_mad_missing_lib.c` | `host_opa` on a MAD-dlopen build with `liboib_utils` missing: STL-only keys `NOT_PRESENT` (not `NOT_BUILT`), sysfs keys read (includes `opa.c`) |
 | `test_ib_hca_is_opa_hfi.c` | HFI vs IB HCA classification |
 | `test_opa_lspci_match.c` | Stampede3 Cornelis/OPA lspci fixture match |
 | `test_intel_gpu_schema_contract.c` | Intel PVC `intel_gpu` KEYS contract (Xe Link, no NvLink, `compute_engine_util`) |

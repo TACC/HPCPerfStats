@@ -127,17 +127,45 @@ def schema_keys_from_manifest(manifest: dict) -> dict[str, list[str]]:
     return out
 
 
+def payload_header_ts(path: Path) -> float | None:
+    """Timestamp of the first sample header line (schema: after its `$`/`!` banner)."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    header = next((ln.strip() for ln in lines if ln.strip()[:1].isdigit()), None)
+    try:
+        return float(header.split()[0]) if header else None
+    except ValueError:
+        return None
+
+
 def wait_for_shm(shm_dir: Path, *, enable_slow: bool, timeout_sec: float) -> None:
-    needed = {"schema", "full"}
-    if enable_slow:
-        needed.add("fast")
+    """Wait until schema/full (and fast) exist and no sample predates the schema.
+
+    A restarted daemon rewrites `schema` at startup while `fast`/`full` may still be the
+    previous daemon's payloads until its first tick.
+    """
+    samples = ["full", "fast"] if enable_slow else ["full"]
     deadline = time.time() + timeout_sec
-    while time.time() < deadline:
-        if all((shm_dir / name).is_file() for name in needed):
+    while True:
+        missing = [n for n in ["schema", *samples] if not (shm_dir / n).is_file()]
+        schema_ts = payload_header_ts(shm_dir / "schema")
+        stale = []
+        if schema_ts is not None:
+            for name in samples:
+                ts = payload_header_ts(shm_dir / name)
+                if ts is not None and ts < schema_ts:
+                    stale.append(f"{name} ts={ts:.6f}")
+        if not missing and not stale:
             return
+        if time.time() >= deadline:
+            break
         time.sleep(0.25)
-    missing = sorted(name for name in needed if not (shm_dir / name).is_file())
-    raise TimeoutError(f"shm files not ready after {timeout_sec}s: {missing}")
+    raise TimeoutError(
+        f"shm files not ready after {timeout_sec}s: missing {missing}; "
+        f"stale (header older than schema ts={schema_ts}, previous daemon?): {stale}"
+    )
 
 
 def validate_schema_file(path: Path, schema_by_type: dict[str, list[str]], manifest: dict) -> str:

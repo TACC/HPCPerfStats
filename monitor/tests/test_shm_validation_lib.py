@@ -1900,6 +1900,16 @@ class SentinelManifestLayerTests(unittest.TestCase):
         self.assertNotIn(10, allowed["host_ib"]["*"])
         self.assertEqual(expect, {})
 
+    def test_opa_mad_build_allows_not_present_not_not_built(self) -> None:
+        # An OPA MAD build with liboib_utils missing at runtime reports STL keys as NOT_PRESENT.
+        from lib.sentinel_validate import NOT_BUILT, NOT_PRESENT, allowed_sentinels
+
+        allowed, _ = allowed_sentinels("x86_64-ver3.1-hw-opa-opadyn-x86perf-sent1", ["host_opa"])
+        self.assertIn(NOT_PRESENT, allowed["host_opa"]["*"])
+        self.assertNotIn(NOT_BUILT, allowed["host_opa"]["*"])
+        allowed, _ = allowed_sentinels("x86_64-ver3.1-hw-x86perf-sent1", ["host_opa"])
+        self.assertIn(NOT_BUILT, allowed["host_opa"]["*"])
+
     def test_x86perf_host_cpu_hw_disallows_not_built(self) -> None:
         from lib.sentinel_validate import allowed_sentinels
 
@@ -2799,6 +2809,62 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
             self.assertFalse(ibdyn)
             self.assertEqual(features, {"GPU"})
             self.assertEqual(cpu, "arm")
+
+
+class WaitForShmFreshnessTests(unittest.TestCase):
+    """Regression: after an RPM restart the new daemon's schema sat next to the old
+    daemon's fast, with fewer host_cpu_hw values, until the first fast tick."""
+
+    @staticmethod
+    def _write(shm: Path, name: str, ts: str) -> None:
+        if name == "schema":
+            body = f"\n$hpcperfstats 3.0\n$hostname h\n!host_ps ctxt,E\n\n{ts} job h\nhost_ps - 1\n"
+        else:
+            body = f"\n{ts} job h\nhost_ps - @fast 1\n"
+        (shm / name).write_text(body, encoding="utf-8")
+
+    def _shm(self, td: str, schema_ts: str, fast_ts: str, full_ts: str) -> Path:
+        shm = Path(td)
+        self._write(shm, "schema", schema_ts)
+        self._write(shm, "fast", fast_ts)
+        self._write(shm, "full", full_ts)
+        return shm
+
+    def test_stale_fast_times_out_naming_file(self) -> None:
+        import validate_shm_messages as vsm
+
+        with tempfile.TemporaryDirectory() as td:
+            shm = self._shm(td, "200.5", "100.0", "200.5")
+            with self.assertRaises(TimeoutError) as ctx:
+                vsm.wait_for_shm(shm, enable_slow=True, timeout_sec=0.3)
+            msg = str(ctx.exception)
+            self.assertIn("stale", msg)
+            self.assertIn("fast", msg)
+            self.assertNotIn("full", msg.split("stale", 1)[1])
+
+    def test_stale_fast_ignored_without_slow_tier(self) -> None:
+        import validate_shm_messages as vsm
+
+        with tempfile.TemporaryDirectory() as td:
+            shm = self._shm(td, "200.5", "100.0", "300.0")
+            vsm.wait_for_shm(shm, enable_slow=False, timeout_sec=0.3)
+
+    def test_equal_or_newer_payloads_pass(self) -> None:
+        import validate_shm_messages as vsm
+
+        with tempfile.TemporaryDirectory() as td:
+            shm = self._shm(td, "200.5", "200.5", "230.5")
+            vsm.wait_for_shm(shm, enable_slow=True, timeout_sec=0.3)
+
+    def test_missing_fast_after_clean_start_still_times_out(self) -> None:
+        import validate_shm_messages as vsm
+
+        with tempfile.TemporaryDirectory() as td:
+            shm = self._shm(td, "200.5", "200.5", "200.5")
+            (shm / "fast").unlink()
+            with self.assertRaises(TimeoutError) as ctx:
+                vsm.wait_for_shm(shm, enable_slow=True, timeout_sec=0.3)
+            self.assertIn("missing ['fast']", str(ctx.exception))
 
 
 if __name__ == "__main__":

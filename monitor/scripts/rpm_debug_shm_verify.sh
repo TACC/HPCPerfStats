@@ -463,7 +463,7 @@ verify_node() {
   record_check "${results}" preflight PASS - "installed, service active, full payload, slug ${slug}"
 
   if test "${SKIP_SHM_LS:-0}" != "1"; then
-    ls -la "${shm_dir}"/{schema,fast,full}
+    ls -la "${shm_dir}"/{schema,fast,full} || true
   fi
 
   expectations="${verify_dir}/expectations_${slug}.json"
@@ -488,7 +488,7 @@ verify_node() {
   if test -n "${WAIT_SHM_SECONDS:-}"; then
     validate_args+=(--wait-shm-seconds "${WAIT_SHM_SECONDS}")
   else
-    validate_args+=(--wait-shm-seconds 30)
+    validate_args+=(--wait-shm-seconds 300)
   fi
   if env_flag_on "${STRICT_LIVE_SPOT_CHECK:-1}"; then
     validate_args+=(--strict-live-spot-check)

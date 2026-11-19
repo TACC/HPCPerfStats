@@ -188,6 +188,40 @@ static void test_second_write_overwrites(void)
   free(sf.sf_data);
 }
 
+/* Regression: after an RPM restart the new schema sat next to the old daemon's fast/full
+ * until the first tick, and verify validated an old-build fast against the new schema. */
+static void test_init_removes_stale_payloads(void)
+{
+  static const char *const stale[] = {"fast", "full", "fast.burst", "full.burst"};
+  static const char *const kept[] = {"schema", "sentinels", "sentinel_sites"};
+  char path[512];
+  char buf[64];
+  size_t i;
+
+  for (i = 0; i < sizeof(stale) / sizeof(stale[0]); i++) {
+    snprintf(path, sizeof(path), "%s/%s", g_shm_base, stale[i]);
+    stats_buffer_debug_shm_write_file(stale[i], "old\n", 4);
+    assert(path_exists(path));
+  }
+  for (i = 0; i < sizeof(kept) / sizeof(kept[0]); i++)
+    stats_buffer_debug_shm_write_file(kept[i], "keep\n", 5);
+
+  stats_buffer_debug_shm_init();
+  stats_buffer_debug_shm_init(); /* already absent: ENOENT stays silent */
+
+  for (i = 0; i < sizeof(stale) / sizeof(stale[0]); i++) {
+    snprintf(path, sizeof(path), "%s/%s", g_shm_base, stale[i]);
+    assert(!path_exists(path));
+  }
+  for (i = 0; i < sizeof(kept) / sizeof(kept[0]); i++) {
+    snprintf(path, sizeof(path), "%s/%s", g_shm_base, kept[i]);
+    assert(read_file_text(path, buf, sizeof(buf)) == 5);
+    assert(strcmp(buf, "keep\n") == 0);
+    if (strcmp(kept[i], "schema") != 0)
+      unlink(path);
+  }
+}
+
 /* Regression: if the mirror dir is removed mid-run, recreate on next write. */
 static void test_recreate_dir_after_rm(void)
 {
@@ -306,6 +340,7 @@ int main(void)
 #else
   test_daemon_write_hdr_gate();
   assert(setup_shm_dir() == 0);
+  test_init_removes_stale_payloads();
   test_schema_writes_schema_file();
   test_second_write_overwrites();
   test_recreate_dir_after_rm();

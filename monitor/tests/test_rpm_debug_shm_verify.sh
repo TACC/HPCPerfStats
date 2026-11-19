@@ -59,6 +59,16 @@ grep -q '\-\-live-spot-check' "${verify}" \
 grep -q '\-\-wait-shm-seconds' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must wait for shm payloads" >&2; exit 1; }
 
+# The daemon deletes the previous run's fast/full at startup, so fast may not exist yet when
+# the listing runs under errexit, and the freshness wait must cover one sample_freq of a
+# production conf.
+# shellcheck disable=SC2016  # literal $ text matched in script source
+grep -q 'ls -la "\${shm_dir}"/{schema,fast,full} || true' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh shm listing must tolerate a missing fast" >&2; exit 1; }
+
+grep -q '\-\-wait-shm-seconds 300' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must default the shm freshness wait to 300 s" >&2; exit 1; }
+
 grep -q 'FULL=' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must define FULL for post-install sleep" >&2; exit 1; }
 

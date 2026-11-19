@@ -205,6 +205,7 @@ static void opa_collect_one_port(struct stats *stats, const char *hfi, int port)
 #if defined(MONITOR_OPA_MAD_DLOPEN)
   if (!opa_mad_dyn_available()) {
     opa_mad_note_disabled_once();
+    mad_code = STATS_SENTINEL_NOT_PRESENT;
   } else
 #endif
       if (!opa_mad_collect_cycle_ok()) {

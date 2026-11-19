@@ -32,7 +32,7 @@ Configure selects optional collectors via Automake conditionals; use **`./config
 ### Omni-Path / Cornelis (`host_opa`)
 
 - **`host_opa` is always built.** It collects Cornelis CN5000 and Intel Omni-Path HFI 100 Series devices (`hfi1_*` under `/sys/class/infiniband`). Device ids use a slash (`hfi1_0/1`), not the IB dot form.
-- **Sysfs fallback (default):** reads overlapping utilization counters from `ports/N/counters` first (Stampede3 OPA100). Maps `port_*_packets` → schema `*_pkts`; a schema key without its counter file (e.g. without `multicast_*`) emits `NOT_PRESENT` (`-2`). On **Cornelis CN5000 NDR**, classic `counters/` files often exist but read **EINVAL**; when no classic keys are readable, fall back to `ports/N/hw_counters` map: `TxWords`/`RxWords`/`TxPkt`/`RxPkt`/`TxWait` → `port_xmit_data`/`port_rcv_data`/`port_xmit_pkts`/`port_rcv_pkts`/`port_xmit_wait`. Do not map `DmaWait` / `RcvHdrOvr*` into KEYS. STL-only keys (FECN/BECN, bubbles, …) emit `NOT_BUILT` (`-10`) without MAD.
+- **Sysfs fallback (default):** reads overlapping utilization counters from `ports/N/counters` first (Stampede3 OPA100). Maps `port_*_packets` → schema `*_pkts`; a schema key without its counter file (e.g. without `multicast_*`) emits `NOT_PRESENT` (`-2`). On **Cornelis CN5000 NDR**, classic `counters/` files often exist but read **EINVAL**; when no classic keys are readable, fall back to `ports/N/hw_counters` map: `TxWords`/`RxWords`/`TxPkt`/`RxPkt`/`TxWait` → `port_xmit_data`/`port_rcv_data`/`port_xmit_pkts`/`port_rcv_pkts`/`port_xmit_wait`. Do not map `DmaWait` / `RcvHdrOvr*` into KEYS. STL-only keys (FECN/BECN, bubbles, …) emit `NOT_BUILT` (`-10`) on a build without OPA MAD, and `NOT_PRESENT` (`-2`) on a MAD-dlopen build whose `liboib_utils` is missing at runtime.
 - **Collectible ports only:** inactive/DOWN ports are skipped (`ib_port_collectible`) — e.g. CN5000 dual-port with port1 Offline emits only `hfi1_0/2`.
 - **`--enable-opa-mad-dlopen`:** compiles STL MAD against vendored `third_party/oib-shim/` and **`dlopen`s `liboib_utils`** at runtime (`HPCPERFSTATS_OIB_LIB`). No link-time `-loib_utils`. Stampede3 fleet default. If the `.so` is missing (common on PVC and other nodes that only have `opa-basic-tools`), MAD is **probed once then disabled**—no recurring MAD journal lines; **sysfs `host_opa` continues**. `opa-basic-tools` alone does **not** provide `liboib_utils` for MAD.
 - **`--enable-opa`:** legacy link-time Cornelis/Intel IFS **`liboib_utils`** (+ system `oib_utils.h`). Requires IFS devel on the build host.
@@ -619,6 +619,14 @@ RabbitMQ but does not overwrite those single-slot mirrors). The same tick’s
 complete set is in `fast.burst` / `full.burst` (parts separated by
 `#---burst-part---`). Idle (`disc.n==0`) still mirrors `-` into `fast`/`full`
 and the matching `.burst` file.
+
+At startup the daemon removes `fast`, `full` and both `.burst` files left by the previous
+daemon (the new `schema` is written at once, the samples only on the first tick), so a reader
+never pairs an old build's sample with the new schema. `validate_shm_messages.py
+--wait-shm-seconds N` also waits until `fast` / `full` exist and their header timestamp is not
+older than the `schema` header, and fails naming the stale file after `N` seconds.
+`rpm_debug_shm_verify.sh` and `validate_stampede3_profile.sh` pass `N = 300` unless
+`WAIT_SHM_SECONDS` is set: the first `fast` arrives one `sample_freq` after the first `full`.
 
 Override the base directory with **`HPCPERFSTATS_DEBUG_SHM_DIR`** (must be an
 absolute path under **`/dev/shm/`** with no `..` components). Payloads
