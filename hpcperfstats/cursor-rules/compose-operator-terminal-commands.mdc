@@ -388,6 +388,20 @@ podman-compose -p hpcperfstats exec -T db psql -h localhost \
 |----|-------|
 | `systemctl status hpcperfstats --no-pager`, `journalctl -u hpcperfstats`, `rpm -q hpcperfstatsd`, `ps … \| grep '[h]pcperfstatsd'` | `systemctl is-active hpcperfstatsd` (unit not found reads as `inactive`); `rpm -q hpcperfstats` |
 
+### Anti-pattern — GPU node discovery commands (GPU field response, 2026-11-18)
+
+Four GPU-node commands failed on real nodes during the GPU discovery round:
+
+| Failed | Why | Do instead |
+|--------|-----|------------|
+| One `dcgmi dmon -e 1002,…,1015,1016` on A100 (DCGM 3.1.8) | Every watch failed with `Error setting watches. Result: -6: Feature not supported`: A100 lacks 1015/1016 and keeps profiling fields in separate groups (A.1 / A.2 / A.3, `dcgmi profile -l`), so a mixed list fails as a whole | One `dmon` per profiling group (`1002,1003,1004,1006` / `1008,1013,1014` / `1007` / `1015,1016`); a failing group then costs one line, not the run |
+| `journalctl -b -o cat -u hpcperfstats \| grep …` | `timeout 30` killed it (`Terminated`) on nodes with a long boot journal | `journalctl -u hpcperfstats --since -12h` (bounded window) |
+| `xpumcli version` | Not a subcommand on XPUM 1.2.33 (`The following argument was not expected`) | `xpumcli discovery -d 0` for versions |
+| `xpumcli diag -d 0 -l 2` as a GPU load | Finished in under 10 s, before sampling started, so EU metrics saw no load | `xpumcli diag -d 0 --stress --stresstime 1` (one minute) |
+| Per-group `dcgmi dmon` on A100 with the monitor running | `Result: -37: The third-party Profiling module returned an unrecoverable error` for every group: the monitor's DCGM profiling watch holds the module | Read the monitor's own `nvidia_gpu` row from `/dev/shm/hpcperfstatsd-debug/fast` (debug builds) as the evidence; do not stop the service for discovery |
+
+`dcgmproftester1N --no-dcgm-validation -t <field>` exits 253 for 1013 / 1014 / 1015 (no direct IMMA / HMMA / DFMA load); its tensor load (1004) is HMMA. Print `--help | grep -A14 -- '-t <'` before relying on a target field.
+
 ### Anti-pattern — `rabbitmqctl … 2>/dev/null` hides failures (hpcperfstats04)
 
 Piping or redirecting **`rabbitmqctl` / `rabbitmq-plugins` stderr to `/dev/null`** yields empty pastes when the CLI fails (wrong user, node not ready, cookie mismatch) while **`ss`/`netstat` listeners still print**. Operators then cannot tell whether plugins/queues were queried.
