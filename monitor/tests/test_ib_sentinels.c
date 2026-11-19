@@ -1,5 +1,6 @@
 /* host_ib / host_opa value sentinels: sysfs NOT_PRESENT / READ_FAILED, MAD NOT_BUILT / BACKOFF /
- * BACKEND_ERROR, OPA STL-only keys without MAD. Real stats.c state bytes over a fake sysfs root. */
+ * BACKEND_ERROR, switch NOT_PRESENT, OPA STL-only keys without MAD. Real stats.c state bytes over a
+ * fake sysfs root. */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,34 +34,24 @@ static struct stats_type g_opa;
 static char g_root[] = "/tmp/hps_ib_sentXXXXXX";
 
 #if defined(MONITOR_WITH_INFINIBAND)
-static int g_ext_ok = 1, g_ext_rc, g_sw_ok = 1, g_sw_rc;
+static enum stats_sentinel g_ext_code, g_sw_code;
 
-int ib_mad_ext_collect_cycle_ok(void)
-{
-  return g_ext_ok;
-}
-
-int ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
+enum stats_sentinel ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
 {
   (void)hca;
   (void)port;
-  if (g_ext_rc == 0)
+  if (g_ext_code == STATS_SENTINEL_OK)
     stats_set(stats, "port_select", 1ULL);
-  return g_ext_rc;
+  return g_ext_code;
 }
 
-int ib_mad_sw_collect_cycle_ok(void)
-{
-  return g_sw_ok;
-}
-
-int ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
+enum stats_sentinel ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
 {
   (void)hca;
   (void)port;
-  if (g_sw_rc == 0)
+  if (g_sw_code == STATS_SENTINEL_OK)
     stats_set(stats, "sw_rx_bytes", 2ULL);
-  return g_sw_rc;
+  return g_sw_code;
 }
 #endif
 
@@ -136,18 +127,16 @@ static void test_ib_mad_codes(void)
   struct stats *s;
 
 #if defined(MONITOR_WITH_INFINIBAND)
-  g_ext_ok = 1;
-  g_ext_rc = 0;
-  g_sw_ok = 1;
-  g_sw_rc = -1;
+  g_ext_code = STATS_SENTINEL_OK;
+  g_sw_code = STATS_SENTINEL_BACKEND_ERROR;
   s = collect_ib("mlx5_0", 1);
   assert(state_of(s, "port_select") == STATS_SENTINEL_OK);
   assert(state_of(s, "port_xmit_pkts") == STATS_SENTINEL_NOT_PRESENT);
   assert(state_of(s, "sw_rx_bytes") == STATS_SENTINEL_BACKEND_ERROR);
   assert(state_of(s, "sw_tx_packets") == STATS_SENTINEL_BACKEND_ERROR);
 
-  g_ext_rc = -1;
-  g_sw_ok = 0;
+  g_ext_code = STATS_SENTINEL_BACKEND_ERROR;
+  g_sw_code = STATS_SENTINEL_BACKOFF;
   s = collect_ib("mlx5_0", 1);
   assert(state_of(s, "port_select") == STATS_SENTINEL_BACKEND_ERROR);
   assert(state_of(s, "port_multicast_rcv_pkts") == STATS_SENTINEL_BACKEND_ERROR);
@@ -155,12 +144,19 @@ static void test_ib_mad_codes(void)
   /* sysfs-backed keys keep their sysfs reading when MAD fails. */
   assert(state_of(s, "port_rcv_data") == STATS_SENTINEL_OK);
 
-  g_ext_ok = 0;
-  g_sw_ok = 1;
-  g_sw_rc = 0;
+  g_ext_code = STATS_SENTINEL_BACKOFF;
+  g_sw_code = STATS_SENTINEL_OK;
   s = collect_ib("mlx5_0", 1);
   assert(state_of(s, "counter_select") == STATS_SENTINEL_BACKOFF);
   assert(state_of(s, "sw_rx_bytes") == STATS_SENTINEL_OK);
+
+  /* A port whose switch MAD open was refused: sw_* NOT_PRESENT, extended counters still read. */
+  g_ext_code = STATS_SENTINEL_OK;
+  g_sw_code = STATS_SENTINEL_NOT_PRESENT;
+  s = collect_ib("mlx5_0", 1);
+  assert(state_of(s, "sw_rx_bytes") == STATS_SENTINEL_NOT_PRESENT);
+  assert(state_of(s, "sw_tx_packets") == STATS_SENTINEL_NOT_PRESENT);
+  assert(state_of(s, "port_select") == STATS_SENTINEL_OK);
 #else
   s = collect_ib("mlx5_0", 1);
   assert(state_of(s, "port_select") == STATS_SENTINEL_NOT_BUILT);

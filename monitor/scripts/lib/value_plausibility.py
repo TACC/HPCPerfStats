@@ -94,10 +94,13 @@ def _narrow_counter_widths(keys: list[str]) -> dict[str, int]:
     return out
 
 
-def _host_cpu_hw_values(body: str, keys: list[str], *, enable_slow: bool, tier: str) -> dict[str, dict[str, int]]:
+def _host_cpu_hw_values(
+    body: str, schema_by_type: dict[str, list[str]], *, enable_slow: bool, tier: str
+) -> dict[str, dict[str, int]]:
     """dev -> key -> value of the host_cpu_hw rows of one payload (``tier`` "@fast" / "@full")."""
+    keys = schema_by_type["host_cpu_hw"]
     rows = rows_by_type(
-        body, {"host_cpu_hw": keys}, require_tier=enable_slow, allowed_tier=tier if enable_slow else None
+        body, schema_by_type, require_tier=enable_slow, allowed_tier=tier if enable_slow else None
     ).get("host_cpu_hw", [])
     out: dict[str, dict[str, int]] = {}
     for row in rows:
@@ -121,8 +124,8 @@ def check_host_cpu_hw_pair_rates(
     if not keys or ts_fast is None or ts_full is None or abs(ts_fast - ts_full) < 1.0:
         return []
     caps = [
-        (ts_fast, _host_cpu_hw_values(fast_body, keys, enable_slow=enable_slow, tier="@fast")),
-        (ts_full, _host_cpu_hw_values(full_body, keys, enable_slow=enable_slow, tier="@full")),
+        (ts_fast, _host_cpu_hw_values(fast_body, schema_by_type, enable_slow=enable_slow, tier="@fast")),
+        (ts_full, _host_cpu_hw_values(full_body, schema_by_type, enable_slow=enable_slow, tier="@full")),
     ]
     caps.sort(key=lambda c: c[0])
     (t_old, old), (t_new, new) = caps

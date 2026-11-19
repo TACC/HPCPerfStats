@@ -2401,6 +2401,19 @@ class X86DirectPerfValidationTests(unittest.TestCase):
             schema_body=None, no_freshness=True, strict=False)
         self.assertEqual(warnings, [])
 
+    def test_pair_rates_ignore_other_types_in_the_payload(self) -> None:
+        """Regression: the fast/full pair check parsed whole payloads against a host_cpu_hw-only
+        schema, so the first row of another type raised `unknown type in row`."""
+        manifest = self._manifest()
+        schema = {"host_cpu_hw": manifest["types"]["host_cpu_hw"]["schema_keys"],
+                  "host_block": ["rd_ios,E", "wr_ios,E"]}
+        vals = " ".join(self._row(**self._intel()))
+        full = f"1000.0 - h\nhost_block sda @full 1 2\nhost_cpu_hw 0 @full {vals}\n"
+        fast = f"970.0 - h\nhost_block sda @fast 1 2\nhost_cpu_hw 0 @fast {vals}\n"
+        _, warnings, errors = check_plausibility(manifest, schema, full_body=full, fast_body=fast,
+                                                 schema_body=None, no_freshness=True, strict=True)
+        self.assertEqual((warnings, errors), ([], []))
+
     def test_pair_rates_handle_w48_wrap(self) -> None:
         top = (1 << 48) - 1000
         old = self._intel(aperf=top, cycles_unhalted_core=top)

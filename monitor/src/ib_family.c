@@ -77,14 +77,13 @@ void ib_family_collect_port(const char *hca, int port, void *ctx)
   ib_sysfs_collect_port(stats, hca, port);
 
 #if defined(MONITOR_WITH_INFINIBAND)
-  if (!ib_mad_ext_collect_cycle_ok())
-    ib_family_mark_mad_keys(stats, 0, STATS_SENTINEL_BACKOFF);
-  else if (ib_mad_ext_collect_port(stats, hca, port) < 0)
-    ib_family_mark_mad_keys(stats, 0, STATS_SENTINEL_BACKEND_ERROR);
-  if (!ib_mad_sw_collect_cycle_ok())
-    ib_family_mark_mad_keys(stats, 1, STATS_SENTINEL_BACKOFF);
-  else if (ib_mad_sw_collect_port(stats, hca, port) < 0)
-    ib_family_mark_mad_keys(stats, 1, STATS_SENTINEL_BACKEND_ERROR);
+  enum stats_sentinel code = ib_mad_ext_collect_port(stats, hca, port);
+
+  if (code != STATS_SENTINEL_OK)
+    ib_family_mark_mad_keys(stats, 0, code);
+  code = ib_mad_sw_collect_port(stats, hca, port);
+  if (code != STATS_SENTINEL_OK)
+    ib_family_mark_mad_keys(stats, 1, code);
 #else
   ib_family_mark_mad_keys(stats, 0, STATS_SENTINEL_NOT_BUILT);
   ib_family_mark_mad_keys(stats, 1, STATS_SENTINEL_NOT_BUILT);

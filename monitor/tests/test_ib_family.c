@@ -7,30 +7,20 @@
 #include "stats.h"
 
 #if defined(MONITOR_WITH_INFINIBAND)
-int ib_mad_ext_collect_cycle_ok(void)
-{
-  return 0;
-}
-
-int ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
+enum stats_sentinel ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
 {
   (void)stats;
   (void)hca;
   (void)port;
-  return 0;
+  return STATS_SENTINEL_OK;
 }
 
-int ib_mad_sw_collect_cycle_ok(void)
-{
-  return 0;
-}
-
-int ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
+enum stats_sentinel ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
 {
   (void)stats;
   (void)hca;
   (void)port;
-  return 0;
+  return STATS_SENTINEL_OK;
 }
 #endif
 
