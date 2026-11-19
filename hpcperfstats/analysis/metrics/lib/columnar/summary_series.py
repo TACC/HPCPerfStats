@@ -16,6 +16,8 @@ Attributes:
     first > 0 per row wins (new ``host_power_socket`` sum, then history).
   NODE_POWER_CPU_COLUMNS: CPU-power columns for the node estimate, first
     present per row wins (socket sum, retired DCGM key, Intel/AMD RAPL).
+  RAPL_MJ_RATE_TO_W: ``arc`` of the RAPL ``*_energy`` keys (running totals
+    in mJ, wrap undone at ingest) to watts.
   FREQ_GHZ_SCALE: ``freq = FREQ_GHZ_SCALE * acycles / mcycles``.
   FREQ_PLOT_MIN_MAX: ``freq`` is plotted only when its maximum exceeds this.
 """
@@ -32,7 +34,12 @@ from hpcperfstats.analysis.metrics.lib.columnar import segments as sg
 from hpcperfstats.analysis.metrics.lib.columnar.kernels import AggTable
 from hpcperfstats.analysis.metrics.lib.columnar.series_frame import (
   SeriesFrame,
+  inner_join,
   outer_join_sum,
+)
+from hpcperfstats.analysis.metrics.lib.gen.imc_cas_bw import (
+  DDR_CAS_GIB,
+  HBM_CAS_GIB,
 )
 from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
   GPU_TYPE_PRECEDENCE,
@@ -61,6 +68,7 @@ NODE_POWER_CPU_COLUMNS = (
   "watts",
   "amd_pkg_w",
 )
+RAPL_MJ_RATE_TO_W = 1e-3
 FREQ_GHZ_SCALE = 2.7
 FREQ_PLOT_MIN_MAX = 500.0
 
@@ -282,6 +290,52 @@ def combine_bw(dram: AggTable | None, hbm: AggTable | None) -> AggTable | None:
   return d if d is not None else h
 
 
+def weighted_event_sum(
+  jt: Any,
+  typ: str,
+  val_col: str,
+  event_weights: Sequence[tuple[str, float]],
+  conv: float,
+) -> AggTable:
+  """
+  Per-sample ``sum(weight x event)`` over the samples every read event has.
+
+  Events without rows (absent counters) are left out; a sample missing from
+  any event that has rows is dropped, never summed partially. The sum is
+  clamped at 0 (a negative weight subtracts a separately scaled counter).
+
+  Args:
+    jt (Any): ColumnarJobTable.
+    typ (str): Type alias.
+    val_col (str): Column.
+    event_weights (Sequence[tuple[str, float]]): ``(event, weight)`` pairs.
+    conv (float): Multiplier applied to every event.
+
+  Returns:
+    AggTable: Weighted rows (empty when no event has rows).
+
+  Examples:
+    >>> weighted_event_sum(
+    ...   jt, "host_cpu_hw", "arc", [("fp_ops_retired", 1.0)], 1e-9
+    ... )  # doctest: +SKIP
+  """
+  out: AggTable | None = None
+  for ev, weight in event_weights:
+    agg = agg_if_feasible(jt, typ, val_col, [ev], conv * weight)
+    if agg.empty:
+      continue
+    if out is None:
+      out = agg
+      continue
+    li, ri = inner_join(out, agg)
+    out = AggTable(
+      out.host_id[li], out.time_us[li], out.sum_val[li] + agg.sum_val[ri]
+    )
+  if out is None:
+    return AggTable.zero()
+  return AggTable(out.host_id, out.time_us, np.maximum(out.sum_val, 0.0))
+
+
 def _merge_first_full_coverage(
   frame: SeriesFrame, jt: Any, name: str, val_col: str, tries: Sequence[Any]
 ) -> None:
@@ -293,7 +347,8 @@ def _merge_first_full_coverage(
     jt (Any): ColumnarJobTable.
     name (str): Column name.
     val_col (str): Column.
-    tries (Sequence[Any]): ``(typ, events, conv)`` rows.
+    tries (Sequence[Any]): ``(typ, events, conv)`` rows; ``events`` of
+      ``(event, weight)`` pairs go through ``weighted_event_sum``.
 
   Returns:
     None
@@ -304,7 +359,10 @@ def _merge_first_full_coverage(
     ... )  # doctest: +SKIP
   """
   for typ, events, conv in tries:
-    agg = agg_if_feasible(jt, typ, val_col, list(events), conv)
+    if events and isinstance(events[0], tuple):
+      agg = weighted_event_sum(jt, typ, val_col, events, conv)
+    else:
+      agg = agg_if_feasible(jt, typ, val_col, list(events), conv)
     if agg.empty:
       continue
     vals = frame.join_values(agg)
@@ -329,19 +387,18 @@ def _merge_intel_imc_cas_mbw(frame: SeriesFrame, jt: Any) -> None:
   Examples:
     >>> _merge_intel_imc_cas_mbw(frame, jt)  # doctest: +SKIP
   """
-  conv = _sp()._CAS_BW_CONV
   for imc_typ in imc_types_probe_order():
     dram = None
     for read_ev, write_ev in dram_cas_read_write_pairs():
       dram = bw_table(
-        agg_if_feasible(jt, imc_typ, "arc", [read_ev, write_ev], conv)
+        agg_if_feasible(jt, imc_typ, "arc", [read_ev, write_ev], DDR_CAS_GIB)
       )
       if dram is not None:
         break
     hbm = None
     for read_ev, write_ev in hbm_cas_read_write_pairs():
       hbm = bw_table(
-        agg_if_feasible(jt, imc_typ, "arc", [read_ev, write_ev], conv)
+        agg_if_feasible(jt, imc_typ, "arc", [read_ev, write_ev], HBM_CAS_GIB)
       )
       if hbm is not None:
         break

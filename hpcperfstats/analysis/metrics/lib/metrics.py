@@ -19,16 +19,19 @@ Attributes:
   NO_TIME_SERIES_MSG: Attribute.
   NUMEXPR_MIN_ARRAY_SIZE: Attribute.
   STAFF_ONLY_JOB_METRICS: Catalog metrics computed for every job but shown
-    to staff sessions only (Grace PMU sharing diagnostics).
+    to staff sessions only (PMU sharing diagnostics).
   _COMPLEX_NO_DATA_REASONS: Attribute.
   _COMPLEX_PLACEHOLDER_TYPE_UNITS: Attribute.
   _GPU_JOB_DETAIL_CATALOG: Attribute.
+  _GPU_PERCENT_GAUGE_SOURCES: GPU percent gauge metric to ``(event, vendor
+    types tried in order)``; the job mean of the first type with samples.
   _GPU_VALUE_REASON_TYPES: GPU types the vendor-ordered GPU gauge metrics
     read; none in the schema means no GPU collector.
   _HOST_DATA_ROWS_MEMO_MAX_TIME_IN: Attribute.
   _MAX_FABRIC_BW_SANITY_MB_S: Attribute.
   _MAX_SANE_GPU_LINK_GBPS: Attribute.
   _MAX_SANE_PACKETRATE: Attribute.
+  _NV_AMD_GPU_TYPES: Vendor order of the NVIDIA / AMD GPU gauge metrics.
   _PARENT_PERSIST_TIMEOUT_MARKERS: Attribute.
   _TIME_IMBALANCE_MAX_SLICE_RATIO: Attribute.
 """
@@ -73,7 +76,16 @@ from hpcperfstats.analysis.metrics.lib.columnar.kernels import (
 )
 from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
 from hpcperfstats.analysis.metrics.lib.gen import jid_table
+from hpcperfstats.analysis.metrics.lib.gen.cpu_fp_events import (
+  INTEL_FP_ARITH_ALL_LANES,
+  INTEL_FP_ARITH_DOUBLE_LANES,
+  INTEL_FP_ARITH_SINGLE_LANES,
+)
 from hpcperfstats.analysis.metrics.lib.gen.imc_cas_bw import (
+  DDR_CAS_BYTES,
+  DDR_CAS_GIB,
+  HBM_CAS_BYTES,
+  HBM_CAS_GIB,
   combine_cas_bw_scalars,
 )
 from hpcperfstats.analysis.metrics.lib.gen.utils import utils
@@ -92,6 +104,8 @@ from hpcperfstats.analysis.metrics.lib.sentinel_reasons import (
 )
 from hpcperfstats.dbload.lib.db_unavailable import DatabaseUnavailableExit
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+  AMD_FP_DP_OPS,
+  FP_OPS_RETIRED,
   HOST_BLOCK_TYPE,
   HOST_CPU_HW_TYPE,
   HOST_CPU_TYPE,
@@ -104,10 +118,14 @@ from hpcperfstats.dbload.lib.monitor_naming.canonical import (
   INTEL_FP_ARITH_ALL_EVENTS,
   INTEL_FP_ARITH_DOUBLE_EVENTS,
   INTEL_FP_ARITH_SINGLE_EVENTS,
+  INTEL_GPU_COMPUTE_ENGINE_UTIL,
   INTEL_LEGACY_SSE_FLOP_EVENTS,
   LUSTRE_LLITE_TYPE,
+  NVIDIA_GPU_INTEGER_ACTIVE,
+  NVIDIA_GPU_TENSOR_DMMA_ACTIVE,
 )
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+  amd_df_bw_event_conv_tries,
   amd_df_type_names,
   amd_pmc_type_names,
   arm_dram_bw_event_names,
@@ -685,7 +703,25 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # maximum when mem_peak is absent or 0 (no memory.peak in the job cgroup).
 # 11 (2026-11-17): a sentinel sample opens no per-sample aggregate group, so
 # it no longer counts as a 0 in node power means and FSIO sums.
-METRICS_CONTRACT_VERSION = 11
+# 12 (2026-11-18): x86 direct-perf host_cpu_hw keys. avg_flops reads AMD
+# fp_ops_retired (Zen3 / Zen4 / Zen5) and lane-weighted lowercase Intel
+# FP_ARITH from host_cpu_hw; avg_fp64_instr / avg_fp32_instr (CPU pie) also
+# take Zen5 FLOPs by precision (amd_fp_dp_ops, SP = total - DP) and Intel
+# FP_ARITH instruction counts, avg_flops64b / avg_flops32b the matching
+# FLOP rates. The PMU sharing metrics cover x86 rows. HBM CAS counts are
+# HBM_CAS_BYTES each (was the DDR size), halving SPR Max HBM bandwidth.
+# RAPL pkg_energy arcs (mJ/s of a running mJ total in every monitor era) are
+# converted to watts with RAPL_MJ_RATE_TO_W instead of a raw MSR energy
+# unit, which changes the node power estimate on x86 hosts.
+# 13 (2026-11-18): AMD DF dram_chanN_bytes count 64-byte DRAM beats in every
+# monitor era (AMD_DF_BYTES_PER_BEAT), so AMD avg_mbw, the roofline
+# bandwidth points and the Summary amd_mbw series read 64x higher; the
+# MBW_CHANNEL factor is unchanged.
+# 14 (2026-11-18): avg_integer_active and avg_tensor_dmma_active from the
+# nvidia_gpu integer_active / tensor_dmma_active pipe busy percents.
+# 15 (2026-11-18): avg_compute_engine_util from the intel_gpu (PVC)
+# compute_engine_util busy percent.
+METRICS_CONTRACT_VERSION = 15
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.
@@ -704,6 +740,19 @@ _GPU_VALUE_REASON_TYPES = (
   *type_probe_names("nvidia_gpu"),
   *type_probe_names("amd_gpu"),
 )
+_NV_AMD_GPU_TYPES = ("nvidia_gpu", "amd_gpu")
+_GPU_PERCENT_GAUGE_SOURCES: dict[str, tuple[str, tuple[str, ...]]] = {
+  "avg_tensor_active": ("tensor_active", _NV_AMD_GPU_TYPES),
+  "avg_tensor_imma_active": ("tensor_imma_active", _NV_AMD_GPU_TYPES),
+  "avg_tensor_hmma_active": ("tensor_hmma_active", _NV_AMD_GPU_TYPES),
+  "avg_tensor_dmma_active": (NVIDIA_GPU_TENSOR_DMMA_ACTIVE, _NV_AMD_GPU_TYPES),
+  "avg_tensor_dfma_active": ("tensor_dfma_active", _NV_AMD_GPU_TYPES),
+  "avg_fp16_active": ("fp16_active", _NV_AMD_GPU_TYPES),
+  "avg_fp32_active": ("fp32_active", _NV_AMD_GPU_TYPES),
+  "avg_fp64_active": ("fp64_active", _NV_AMD_GPU_TYPES),
+  "avg_integer_active": (NVIDIA_GPU_INTEGER_ACTIVE, _NV_AMD_GPU_TYPES),
+  "avg_compute_engine_util": (INTEL_GPU_COMPUTE_ENGINE_UTIL, ("intel_gpu",)),
+}
 
 
 def _metric_reason_fields(
@@ -2021,6 +2070,12 @@ class Metrics:
         "conv": 0.0,
         "units": "%",
       },
+      "avg_tensor_dmma_active": {
+        "typename": "nvidia_gpu",
+        "events": [NVIDIA_GPU_TENSOR_DMMA_ACTIVE],
+        "conv": 0.0,
+        "units": "%",
+      },
       "avg_tensor_dfma_active": {
         "typename": "nvidia_gpu",
         "events": ["tensor_dfma_active"],
@@ -2045,6 +2100,20 @@ class Metrics:
         "conv": 0.0,
         "units": "%",
       },
+      "avg_integer_active": {
+        "typename": "nvidia_gpu",
+        "events": [NVIDIA_GPU_INTEGER_ACTIVE],
+        "conv": 0.0,
+        "units": "%",
+      },
+      # PVC busy: the working signal while the EU metrics are NOT_PRESENT
+      # below the XPU Manager GFX firmware minimum.
+      "avg_compute_engine_util": {
+        "typename": "intel_gpu",
+        "events": [INTEL_GPU_COMPUTE_ENGINE_UTIL],
+        "conv": 0.0,
+        "units": "%",
+      },
       "avg_flops64b": {
         "typename": "pmc",
         "events": list(INTEL_FP_ARITH_DOUBLE_EVENTS),
@@ -2057,18 +2126,28 @@ class Metrics:
         "conv": 1e-9,
         "units": "GF",
       },
-      # FP instruction rates by width (CPU Multiprecision Mix pie, O10).
-      # Generic job_arc path: a sampled 0 stays 0 (idle), a key the job's
-      # schema never carried is None (NO_SIMPLE_SAMPLES_MSG).
+      # CPU Multiprecision Mix inputs by precision. FP64 / FP32 come from
+      # _job_cpu_fp_instr_rate (Grace FP instructions, AMD Zen5 FLOPs, Intel
+      # FP_ARITH instructions; events list every key it reads). A sampled 0
+      # stays 0 (idle); keys the job never sampled give None.
       "avg_fp64_instr": {
         "typename": HOST_CPU_HW_TYPE,
-        "events": [arm_fp_dp_spec_event_names()[0]],
+        "events": [
+          arm_fp_dp_spec_event_names()[0],
+          AMD_FP_DP_OPS,
+          *(ev for ev, _lanes in INTEL_FP_ARITH_DOUBLE_LANES),
+        ],
         "conv": 1e-9,
         "units": "Ginstr/s",
       },
       "avg_fp32_instr": {
         "typename": HOST_CPU_HW_TYPE,
-        "events": [arm_fp_sp_spec_event_names()[0]],
+        "events": [
+          arm_fp_sp_spec_event_names()[0],
+          FP_OPS_RETIRED,
+          AMD_FP_DP_OPS,
+          *(ev for ev, _lanes in INTEL_FP_ARITH_SINGLE_LANES),
+        ],
         "conv": 1e-9,
         "units": "Ginstr/s",
       },
@@ -2090,8 +2169,9 @@ class Metrics:
         "conv": 1e-9,
         "units": "Ginstr/s",
       },
-      # Grace PMU sharing (D6, monitor 3.1 Phase 1b): ratios of counter-time rates,
-      # computed by _job_pmu_sharing_pct (events list the keys each needs).
+      # PMU sharing on host_cpu_hw (Grace and direct-perf x86): ratios of
+      # counter-time rates, computed by _job_pmu_sharing_pct (events list the
+      # keys each needs).
       "avg_pmu_running_pct": {
         "typename": HOST_CPU_HW_TYPE,
         "events": list(pmu_sharing_event_names()[:2]),
@@ -2138,7 +2218,9 @@ class Metrics:
           "MBW_CHANNEL_6",
           "MBW_CHANNEL_7",
         ],
-        "conv": 1 / (1024 * 1024 * 1024),
+        # _job_arc_avg_mbw applies each key family's own factor from
+        # amd_df_bw_event_conv_tries; this is the DF beat factor.
+        "conv": amd_df_bw_event_conv_tries()[0][1],
         "units": "GB/s",
       },
     }
@@ -2695,11 +2777,12 @@ class Metrics:
     cache: Any | None = None,
   ) -> float | None:
     """
-    Grace PMU sharing percentage from counter-time rates (D6, monitor 3.1 Phase 1b).
+    PMU sharing percentage of host_cpu_hw from counter-time rates.
 
     ``avg_pmu_running_pct`` is 100 x rate(running) / rate(enabled): the share
     of enabled time the core events spent on a counter (~78% is normal on
-    Grace with only the monitor on the PMU). ``avg_pmu_outside_pct`` is
+    Grace with only the monitor on the PMU; x86 direct-perf rows carry the
+    same keys). ``avg_pmu_outside_pct`` is
     100 x (1 - rate(running) / rate(solo)), clamped to 0-100: the share of the
     expected counter time that other programs (for example nvidia-powerd)
     took. Rates come from ``job_arc`` (host_cpu_hw rows are summed across
@@ -2744,6 +2827,229 @@ class Metrics:
       return 100.0 * share
     return 100.0 * min(1.0, max(0.0, 1.0 - share))
 
+  def _pick_cpu_fp_source(
+    self, jt: Any, probes: Any
+  ) -> tuple[float | None, str | None]:
+    """
+    Pick the CPU FP rate among per-family readers that share one job.
+
+    Every CPU family's keys can sit in the same ``host_cpu_hw`` schema
+    (absent families as static sentinels, or as hard zeros on older
+    monitors), so the first positive rate wins in probe order and stops the
+    scan; when none is positive, the first probe that read 0 with
+    ``zero_ok`` wins (an idle job). Only the winner's sentinel quality
+    records stay in ``jt.sentinel_sink``, so a valued row carries no note
+    about another family's absent keys; without a winner every probe's
+    records stay to explain the gap.
+
+    Args:
+      jt (Any): ``ColumnarJobTable`` (any object without ``sentinel_sink``
+        skips the record bookkeeping).
+      probes (Any): Iterable of ``(read, typename, zero_ok)`` where
+        ``read()`` returns a rate (float) or None and ``zero_ok`` (bool)
+        says whether a measured 0 from that reader is trusted.
+
+    Returns:
+      tuple[float | None, str | None]: ``(rate, typename)`` of the winner,
+      or ``(None, None)``.
+
+    Examples:
+      >>> Metrics()._pick_cpu_fp_source(
+      ...   object(),
+      ...   [(lambda: 0.0, "a", False), (lambda: 2.0, "b", True)],
+      ... )
+      (2.0, 'b')
+    """
+    sink = getattr(jt, "sentinel_sink", None)
+    seen = []
+    winner = None
+    for read, typ, zero_ok in probes:
+      mark = len(sink) if sink is not None else 0
+      value = read()
+      records = list(sink[mark:]) if sink is not None else []
+      if sink is not None:
+        del sink[mark:]
+      seen.append((value, typ, zero_ok, records))
+      if value is not None and float(value) > 0:
+        winner = seen[-1]
+        break
+    if winner is None:
+      winner = next((p for p in seen if p[0] is not None and p[2]), None)
+    if sink is not None:
+      for p in [winner] if winner is not None else seen:
+        sink.extend(p[3])
+    if winner is None:
+      return None, None
+    return float(winner[0]), winner[1]
+
+  def _has_direct_perf_cpu_rows(self, jt: Any, cache: Any | None) -> bool:
+    """
+    True when the job's ``host_cpu_hw`` rows come from a direct-perf reader.
+
+    Only that reader publishes the PMU enabled-time lifetime, and only it
+    programs the Intel FP_ARITH events; older monitors left the lowercase
+    FP_ARITH keys at 0 (or, on Grace, at stale scalar values), so they are
+    not read without this marker.
+
+    Args:
+      jt (Any): ``ColumnarJobTable`` of the job.
+      cache (Any | None): Per-job memo dict shared with ``job_arc``.
+
+    Returns:
+      bool: ``pmu_enabled_time`` has a positive rate.
+
+    Examples:
+      >>> Metrics()._has_direct_perf_cpu_rows(None, None)
+      False
+    """
+    enabled = self.job_arc(
+      jt,
+      typename=HOST_CPU_HW_TYPE,
+      events=[pmu_sharing_event_names()[0]],
+      conv=1.0,
+      cache=cache,
+    )
+    return enabled is not None and float(enabled) > 0
+
+  def _intel_fp_arith_rate(
+    self, jt: Any, lanes: Any, cache: Any | None
+  ) -> float | None:
+    """
+    Weighted Intel FP_ARITH rate (x 1e-9) from lowercase ``host_cpu_hw`` keys.
+
+    Each event's rate is multiplied by its weight (FLOP lanes for GFLOP/s,
+    1 for Ginstr/s) and summed. Every event is read aligned with the others,
+    so a sample that is a sentinel gap on one width is left out of all of
+    them instead of becoming a partial sum. Returns None unless the rows
+    come from a direct-perf reader (``_has_direct_perf_cpu_rows``).
+
+    Args:
+      jt (Any): ``ColumnarJobTable`` of the job.
+      lanes (Any): Sequence of ``(event, weight)`` pairs.
+      cache (Any | None): Per-job memo dict shared with ``job_arc``.
+
+    Returns:
+      float | None: Weighted sum, or None when no event has samples.
+
+    Examples:
+      >>> Metrics()._intel_fp_arith_rate(None, INTEL_FP_ARITH_ALL_LANES, None)
+    """
+    if not self._has_direct_perf_cpu_rows(jt, cache):
+      return None
+    events = [ev for ev, _weight in lanes]
+    total = None
+    for ev, weight in lanes:
+      part = self.job_arc(
+        jt,
+        typename=HOST_CPU_HW_TYPE,
+        events=[ev],
+        conv=1e-9 * weight,
+        cache=cache,
+        align_events=[e for e in events if e != ev],
+      )
+      if part is not None:
+        total = float(part) + (total or 0.0)
+    return total
+
+  def _zen5_fp_flops(
+    self, jt: Any, fp64: bool, cache: Any | None
+  ) -> float | None:
+    """
+    AMD Zen5 GFLOP/s of one precision from ``host_cpu_hw`` FLOP lifetimes.
+
+    Double precision is ``amd_fp_dp_ops``; single precision is
+    ``fp_ops_retired`` minus it (bf16 counts as single), clamped at 0 since
+    both are scaled separately when the kernel multiplexes them. Zen3 and
+    Zen4 never program ``amd_fp_dp_ops`` (static sentinel), so they get None
+    and no CPU precision split. Both reads skip the samples where either key
+    is a sentinel gap.
+
+    Args:
+      jt (Any): ``ColumnarJobTable`` of the job.
+      fp64 (bool): Double precision when True, else single precision.
+      cache (Any | None): Per-job memo dict shared with ``job_arc``.
+
+    Returns:
+      float | None: GFLOP/s, or None without Zen5 samples.
+
+    Examples:
+      >>> Metrics()._zen5_fp_flops(None, True, None)
+    """
+    dp = self.job_arc(
+      jt,
+      typename=HOST_CPU_HW_TYPE,
+      events=[AMD_FP_DP_OPS],
+      conv=1e-9,
+      cache=cache,
+      align_events=[FP_OPS_RETIRED],
+    )
+    if dp is None or fp64:
+      return dp
+    total = self.job_arc(
+      jt,
+      typename=HOST_CPU_HW_TYPE,
+      events=[FP_OPS_RETIRED],
+      conv=1e-9,
+      cache=cache,
+      align_events=[AMD_FP_DP_OPS],
+    )
+    if total is None:
+      return None
+    return max(0.0, float(total) - float(dp))
+
+  def _job_cpu_fp_instr_rate(
+    self, jt: Any, metric_name: str, cache: Any | None = None
+  ) -> float | None:
+    """
+    CPU Multiprecision Mix input ``avg_fp64_instr`` / ``avg_fp32_instr``.
+
+    Grace: speculative FP instruction counts (``arm_fp_*_spec``). AMD Zen5:
+    FLOPs by precision (the only split that CPU exposes; Zen3 / Zen4 have
+    none, so no pie). Intel: unweighted FP_ARITH counts summed over widths,
+    i.e. retired FP instructions. A measured 0 is an idle job.
+
+    Args:
+      jt (Any): ``ColumnarJobTable`` of the job.
+      metric_name (str): ``avg_fp64_instr`` or ``avg_fp32_instr``.
+      cache (Any | None): Per-job memo dict shared with ``job_arc``.
+
+    Returns:
+      float | None: Rate x 1e-9, or None when no family has samples.
+
+    Examples:
+      >>> Metrics()._job_cpu_fp_instr_rate(None, "avg_fp64_instr")
+    """
+    fp64 = metric_name == "avg_fp64_instr"
+    arm_ev = (
+      arm_fp_dp_spec_event_names() if fp64 else arm_fp_sp_spec_event_names()
+    )[0]
+    lanes = INTEL_FP_ARITH_DOUBLE_LANES if fp64 else INTEL_FP_ARITH_SINGLE_LANES
+    value, _typ = self._pick_cpu_fp_source(
+      jt,
+      [
+        (
+          lambda: self.job_arc(
+            jt,
+            typename=HOST_CPU_HW_TYPE,
+            events=[arm_ev],
+            conv=1e-9,
+            cache=cache,
+          ),
+          HOST_CPU_HW_TYPE,
+          True,
+        ),
+        (lambda: self._zen5_fp_flops(jt, fp64, cache), HOST_CPU_HW_TYPE, True),
+        (
+          lambda: self._intel_fp_arith_rate(
+            jt, [(ev, 1) for ev, _lanes in lanes], cache
+          ),
+          HOST_CPU_HW_TYPE,
+          True,
+        ),
+      ],
+    )
+    return value
+
   def _job_arc_avg_flops_precision(
     self,
     jt: Any,
@@ -2752,22 +3058,32 @@ class Metrics:
     rows_cache: Any | None = None,
     *,
     grace_scalar_events: Any | None = None,
+    fp64: bool | None = None,
   ) -> Any:
     """
-    GFLOP/s from Intel FP_ARITH; else Grace host_cpu_hw scalar events.
+    GFLOP/s of one precision (``avg_flops64b`` / ``avg_flops32b``).
+
+    Historical uppercase Intel FP_ARITH on the core PMC types first (ingest
+    already applied the lanes), then ``host_cpu_hw``: AMD Zen5 FLOPs and
+    lane-weighted lowercase Intel FP_ARITH (``fp64`` picks the precision;
+    None skips both), then the retired Grace scalar keys (positive only).
 
     Args:
-      jt (Any): Jt passed to this helper.
-      events (Any): Events passed to this helper.
-      cache (Any | None): One of ``Any``, ``None``.
-      rows_cache (Any | None): One of ``Any``, ``None``.
-      grace_scalar_events (Any | None): One of ``Any``, ``None``.
+      jt (Any): ``ColumnarJobTable`` of the job.
+      events (Any): Uppercase Intel FP_ARITH events of the precision.
+      cache (Any | None): Per-job memo dict shared with ``job_arc``.
+      rows_cache (Any | None): Unused row cache, forwarded to ``job_arc``.
+      grace_scalar_events (Any | None): Grace scalar keys of the precision,
+        or None.
+      fp64 (bool | None): True for FP64, False for FP32, None for the
+        historical probes only.
 
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: ``(GFLOP/s, typename)`` or ``(None, None)``.
 
     Examples:
-      >>> Metrics()._job_arc_avg_flops_precision(None, None, None, None, None)
+      >>> Metrics()._job_arc_avg_flops_precision(None, [], fp64=True)
+      (None, None)
     """
     for core_typ in core_pmc_types_probe_order():
       v = self.job_arc(
@@ -2781,21 +3097,36 @@ class Metrics:
       )
       if v is not None and float(v) > 0:
         return v, core_typ
-    if grace_scalar_events:
-      for hw_typ in host_cpu_hw_type_names():
-        for flop_ev in grace_scalar_events:
-          v = self.job_arc(
+    probes = []
+    if fp64 is not None:
+      lanes = (
+        INTEL_FP_ARITH_DOUBLE_LANES if fp64 else INTEL_FP_ARITH_SINGLE_LANES
+      )
+      probes += [
+        (lambda: self._zen5_fp_flops(jt, fp64, cache), HOST_CPU_HW_TYPE, True),
+        (
+          lambda: self._intel_fp_arith_rate(jt, lanes, cache),
+          HOST_CPU_HW_TYPE,
+          True,
+        ),
+      ]
+    for flop_ev in grace_scalar_events or ():
+      probes.append(
+        (
+          lambda ev=flop_ev: self.job_arc(
             jt,
-            typename=hw_typ,
-            events=[flop_ev],
+            typename=HOST_CPU_HW_TYPE,
+            events=[ev],
             conv=1e-9,
             units="GF",
             cache=cache,
             rows_cache=rows_cache,
-          )
-          if v is not None and float(v) > 0:
-            return v, hw_typ
-    return None, None
+          ),
+          HOST_CPU_HW_TYPE,
+          False,
+        )
+      )
+    return self._pick_cpu_fp_source(jt, probes)
 
   def _job_arc_avg_flops(
     self,
@@ -2804,20 +3135,25 @@ class Metrics:
     rows_cache: Any | None = None,
   ) -> Any:
     """
-    GFLOP/s from AMD PMC, else Intel FP_ARITH/SSE, else ARM host_cpu_hw.
+    Total CPU GFLOP/s for ``avg_flops`` and the FLOP-based ratios.
 
-      estimate.
+    Historical collectors first (AMD PMC ``fp_ops_retired``, uppercase Intel
+    FP_ARITH, SNB/IVB SSE/AVX proxies), then ``host_cpu_hw``: AMD
+    ``fp_ops_retired`` (Zen3 / Zen4 / Zen5), lane-weighted lowercase Intel
+    FP_ARITH, Grace ``arm_est_flops``; there a positive rate wins over
+    another family's 0.
 
     Args:
-      jt (Any): Jt passed to this helper.
-      cache (Any | None): One of ``Any``, ``None``.
-      rows_cache (Any | None): One of ``Any``, ``None``.
+      jt (Any): ``ColumnarJobTable`` of the job.
+      cache (Any | None): Per-job memo dict shared with ``job_arc``.
+      rows_cache (Any | None): Unused row cache, forwarded to ``job_arc``.
 
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: ``(GFLOP/s, typename)`` or ``(None, None)``.
 
     Examples:
-      >>> Metrics()._job_arc_avg_flops(None, None, None)  # doctest: +SKIP
+      >>> Metrics()._job_arc_avg_flops(None)
+      (None, None)
     """
     for pmc_typ in amd_pmc_type_names():
       for flop_ev in fp_ops_retired_event_names():
@@ -2860,20 +3196,41 @@ class Metrics:
           total = part if total is None else total + part
       if total is not None and total > 0:
         return total, core_typ
-    for hw_typ in host_cpu_hw_type_names():
-      for flop_ev in arm_est_flops_event_names():
-        v = self.job_arc(
-          jt,
-          typename=hw_typ,
-          events=[flop_ev],
-          conv=1e-9,
-          units="GF",
-          cache=cache,
-          rows_cache=rows_cache,
-        )
-        if v is not None:
-          return v, hw_typ
-    return None, None
+
+    def hw_rate(ev: str) -> float | None:
+      """
+      ``host_cpu_hw`` GFLOP/s of one FLOP lifetime key.
+
+      Args:
+        ev (str): Event name.
+
+      Returns:
+        float | None: GFLOP/s, or None without samples.
+
+      Examples:
+        >>> hw_rate("fp_ops_retired")  # doctest: +SKIP
+      """
+      return self.job_arc(
+        jt,
+        typename=HOST_CPU_HW_TYPE,
+        events=[ev],
+        conv=1e-9,
+        units="GF",
+        cache=cache,
+        rows_cache=rows_cache,
+      )
+
+    intel = (
+      lambda: self._intel_fp_arith_rate(jt, INTEL_FP_ARITH_ALL_LANES, cache),
+      HOST_CPU_HW_TYPE,
+      True,
+    )
+    arm = [
+      (lambda ev=ev: hw_rate(ev), HOST_CPU_HW_TYPE, True)
+      for ev in arm_est_flops_event_names()
+    ]
+    amd = (lambda: hw_rate(FP_OPS_RETIRED), HOST_CPU_HW_TYPE, True)
+    return self._pick_cpu_fp_source(jt, [amd, intel, *arm])
 
   def _job_arc_avg_mbw(
     self,
@@ -2898,9 +3255,6 @@ class Metrics:
     from hpcperfstats.dbload.lib.monitor_naming.canonical import (
       AMD_DF_STATS_TYPES,
     )
-    from hpcperfstats.dbload.lib.monitor_naming.resolve import (
-      amd_df_bw_event_conv_tries,
-    )
 
     for df_typ in amd_df_type_names():
       if df_typ in AMD_DF_STATS_TYPES:
@@ -2919,7 +3273,6 @@ class Metrics:
         )
         if v is not None:
           return v, df_typ
-    cas_conv = 64 / (1024**3)
     for imc_typ in imc_types_probe_order():
       dram_v = None
       for read_ev, write_ev in dram_cas_read_write_pairs():
@@ -2927,7 +3280,7 @@ class Metrics:
           jt,
           typename=imc_typ,
           events=[read_ev, write_ev],
-          conv=cas_conv,
+          conv=DDR_CAS_GIB,
           units="GB/s",
           cache=cache,
           rows_cache=rows_cache,
@@ -2941,7 +3294,7 @@ class Metrics:
           jt,
           typename=imc_typ,
           events=[read_ev, write_ev],
-          conv=cas_conv,
+          conv=HBM_CAS_GIB,
           units="GB/s",
           cache=cache,
           rows_cache=rows_cache,
@@ -2958,7 +3311,7 @@ class Metrics:
           jt,
           typename=imc_typ,
           events=[read_ev, write_ev],
-          conv=cas_conv,
+          conv=DDR_CAS_GIB,
           units="GB/s",
           cache=cache,
           rows_cache=rows_cache,
@@ -3334,6 +3687,7 @@ class Metrics:
             cache=simple_metric_cache,
             rows_cache=host_data_rows_cache,
             grace_scalar_events=grace_fp_scalar_double_event_names(),
+            fp64=True,
           )
           row_type = flops_typename or metric_obj["typename"]
         elif metric_name == "avg_flops32b":
@@ -3343,6 +3697,7 @@ class Metrics:
             cache=simple_metric_cache,
             rows_cache=host_data_rows_cache,
             grace_scalar_events=grace_fp_scalar_single_event_names(),
+            fp64=False,
           )
           row_type = flops_typename or metric_obj["typename"]
         elif metric_name == "avg_mbw":
@@ -3399,28 +3754,13 @@ class Metrics:
             row_type = (
               fabric_typename or flops_typename or metric_obj["typename"]
             )
-        elif metric_name in (
-          "avg_tensor_active",
-          "avg_tensor_imma_active",
-          "avg_tensor_hmma_active",
-          "avg_tensor_dfma_active",
-          "avg_fp16_active",
-          "avg_fp32_active",
-          "avg_fp64_active",
-        ):
-          metric_event = {
-            "avg_tensor_active": "tensor_active",
-            "avg_tensor_imma_active": "tensor_imma_active",
-            "avg_tensor_hmma_active": "tensor_hmma_active",
-            "avg_tensor_dfma_active": "tensor_dfma_active",
-            "avg_fp16_active": "fp16_active",
-            "avg_fp32_active": "fp32_active",
-            "avg_fp64_active": "fp64_active",
-          }[metric_name]
+        elif metric_name in _GPU_PERCENT_GAUGE_SOURCES:
+          metric_event, gauge_types = _GPU_PERCENT_GAUGE_SOURCES[metric_name]
           value = None
-          row_type = "nvidia_gpu"
-          reason_types, check_schema = _GPU_VALUE_REASON_TYPES, True
-          for gt in ("nvidia_gpu", "amd_gpu"):
+          row_type = gauge_types[0]
+          reason_types = [t for gt in gauge_types for t in type_probe_names(gt)]
+          check_schema = True
+          for gt in gauge_types:
             v = self.job_value_mean(
               jt,
               typename=gt,
@@ -3487,6 +3827,12 @@ class Metrics:
           else:
             value = None
             row_type = fabric_typename or metric_obj["typename"]
+        elif metric_name in ("avg_fp64_instr", "avg_fp32_instr"):
+          value = self._job_cpu_fp_instr_rate(
+            jt, metric_name, cache=simple_metric_cache
+          )
+          row_type = metric_obj["typename"]
+          check_schema = True
         elif metric_name in ("avg_pmu_running_pct", "avg_pmu_outside_pct"):
           value = self._job_pmu_sharing_pct(
             jt, metric_name, cache=simple_metric_cache
@@ -3734,7 +4080,7 @@ def expected_job_metric_row_count() -> Any:
   return len(job_metrics_catalog_entries())
 
 
-# Counter-coverage diagnostics (Grace PMU sharing, cpu-precision Phase 1b):
+# Counter-coverage diagnostics (PMU sharing on Grace and x86 host_cpu_hw):
 # computed and persisted for every job, shown to staff only (user decision
 # 2026-11-14) because a node service (Horizon GB200 GPU power service) keeps
 # them high on every job and researchers would misread them.
@@ -4904,12 +5250,14 @@ def _dram_bw_weighted_events_for_imbalance(u: Any) -> Any:
     if pair:
       weighted.extend(pair)
       break
+  # Weights are relative to a DDR CAS, so mixed DDR + HBM hosts compare bytes.
+  hbm_weight = HBM_CAS_BYTES / DDR_CAS_BYTES
   for read_ev, write_ev in hbm_cas_read_write_pairs():
     pair = []
     if read_ev in schema_imc:
-      pair.append((read_ev, 1.0))
+      pair.append((read_ev, hbm_weight))
     if write_ev in schema_imc:
-      pair.append((write_ev, 1.0))
+      pair.append((write_ev, hbm_weight))
     if pair:
       weighted.extend(pair)
       break

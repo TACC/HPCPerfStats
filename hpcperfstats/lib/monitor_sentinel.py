@@ -21,7 +21,8 @@ Attributes:
   RESEARCHER_VISIBLE_CODES (frozenset[int]): Codes whose reason non-staff
     users see on Job Detail.
   _LIKWID_UNPROVEN_BRIDGE_TYPES (frozenset[str]): Types whose bridge is not
-    proven on a LIKWID build without ``x86perf``.
+    proven on a monitor 3.0 LIKWID build (``likwid`` slug without
+    ``x86perf``); 3.1 x86 builds carry ``x86perf`` and bridge.
 """
 
 from __future__ import annotations
@@ -122,11 +123,13 @@ def bridge_proven(typename: str, build_slug: str | None) -> bool:
   """
   Report whether bridgeable codes may bridge for ``typename`` on this build.
 
-  ``host_cpu_hw`` on LIKWID publishes LIKWID's counter values directly, and
-  their behavior across a failed read is unverified, so it bridges only once
-  the ``$build`` slug carries ``x86perf`` (x86 core counters on direct perf).
-  A missing slug (old daemon) is treated as LIKWID without ``x86perf``.
-  Slug tokens are compared exactly after splitting on ``-``.
+  Monitor 3.1 x86 builds read core counters from perf_event directly and
+  carry the ``x86perf`` slug token (never ``likwid``), so ``host_cpu_hw``
+  bridges there. Monitor 3.0 x86 builds published LIKWID's counter values,
+  whose behavior across a failed read is unverified, so a ``likwid`` slug
+  without ``x86perf`` (3.0 hosts and archived history) keeps ``host_cpu_hw``
+  unbridged. A missing slug (old daemon) is treated as LIKWID without
+  ``x86perf``. Slug tokens are compared exactly after splitting on ``-``.
 
   Args:
     typename (str): Monitor type name (for example ``host_cpu_hw``).
@@ -140,6 +143,8 @@ def bridge_proven(typename: str, build_slug: str | None) -> bool:
   Examples:
     >>> bridge_proven("host_cpu_hw", "x86_64-ver3-hw-likwid-full")
     False
+    >>> bridge_proven("host_cpu_hw", "x86_64-ver3.1-hw-ib-x86perf-sent1")
+    True
     >>> bridge_proven("host_ib", None)
     True
   """

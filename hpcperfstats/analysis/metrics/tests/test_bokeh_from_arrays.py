@@ -37,6 +37,9 @@ from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
 from hpcperfstats.analysis.metrics.lib.plot.job_detail_bokeh_plot_descriptions import (
   SENTINEL_GAP_HELP,
 )
+from hpcperfstats.analysis.metrics.tests.test_columnar_golden import (
+  capture_golden_scales,
+)
 from hpcperfstats.site.lib.machine.job_plot_artifacts import (
   compute_plot_item_for_kind,
 )
@@ -63,7 +66,50 @@ VOLATILE_DOC_KEYS = frozenset({"version", "target_id", "root_id"})
 # golden text, substituted inside strings of the new document before diffing.
 # D35 (monitor round 2): the node power estimate reads host_power_socket.
 # The sentinel gap sentence was appended to every per-sample plot's help.
+# The CPU FLOP and RAPL summary help names the x86 direct-perf sources.
+# nv_tensor_dfma_active is the FP64 FMA pipe, not a tensor pipe.
 GOLDEN_PROSE_UPDATES = {
+  (
+    "FP64 FMA pipe busy percentage from DCGM (DFMA), same as FP64 on "
+    "Hopper/Blackwell; it is not a tensor pipe."
+  ): "DFMA (FP64) tensor-pipe activity percentage from DCGM when available.",
+  (
+    "Read with FP64 pipe activity for double-precision GPU kernels; FP64 "
+    "matrix work on tensor cores shows as tensor DMMA."
+  ): (
+    "FP64 tensor-path activity versus scalar FP64 for double-precision GPU "
+    "kernels."
+  ),
+  (
+    "Floating-point operation rate from the AMD retired FLOPs counter "
+    "(fp_ops_retired, all precisions), in GFLOP/s."
+  ): (
+    "Floating-point operation rate from AMD PMC FLOPS events "
+    "(32b + 64b), in GFLOP/s."
+  ),
+  (
+    "Double-precision floating-point operation rate from Intel FP_ARITH "
+    "(instructions times vector lanes) or AMD Zen5 double-precision FLOPs, "
+    "in GFLOP/s."
+  ): (
+    "Double-precision floating-point operation rate from Intel FP_ARITH "
+    "or equivalent core PMCs, in GFLOP/s."
+  ),
+  (
+    "Single-precision floating-point operation rate from Intel FP_ARITH "
+    "(instructions times vector lanes) or AMD Zen5 FLOPs minus "
+    "double-precision FLOPs, in GFLOP/s."
+  ): (
+    "Single-precision floating-point operation rate from Intel FP_ARITH "
+    "or equivalent core PMCs, in GFLOP/s."
+  ),
+  (
+    "Intel package power from the RAPL package energy counter (mJ) deltas, "
+    "in watts."
+  ): (
+    "Intel package power estimated from RAPL MSR_PKG_ENERGY_STATUS deltas, "
+    "in watts."
+  ),
   " " + SENTINEL_GAP_HELP: "",
   (
     "Estimated on-node power: module power when a module meter reads above "
@@ -699,8 +745,9 @@ def compare_summary_grid(
 @pytest.mark.parametrize("kind", PLOT_KINDS)
 @pytest.mark.parametrize("jid", _jids() or ["__no_corpus__"])
 def test_plot_json_matches_golden_after_id_normalization(
-  golden_tables, jid, kind
+  golden_tables, jid, kind, monkeypatch
 ):
+  capture_golden_scales(monkeypatch)
   jt, golden = golden_tables[jid]
   stored = (golden.get("plots") or {}).get(kind, {}).get("normal")
   if stored is None:

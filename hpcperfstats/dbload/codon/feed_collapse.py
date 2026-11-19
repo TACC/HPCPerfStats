@@ -1243,7 +1243,13 @@ def _collapse_kind(typ: str, event: str) -> int:
 
 
 def _header_bridge_flag(slug: str) -> float:
-  """1.0 when ``$build`` proves ``host_cpu_hw`` bridges (no ``likwid`` token, or ``x86perf``)."""
+  """1.0 when ``$build`` proves ``host_cpu_hw`` bridges, else 0.0.
+
+  Port of ``monitor_sentinel.bridge_proven``: monitor 3.1 x86 builds carry
+  ``x86perf`` (direct perf) and bridge; a 3.0 ``likwid`` slug without
+  ``x86perf`` (3.0 hosts, archived history) does not. Slugs with neither
+  token (ARM, non-x86) bridge.
+  """
   likwid = False
   x86perf = False
   for tok in slug.split("-"):

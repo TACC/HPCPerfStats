@@ -998,7 +998,7 @@ def test_gpu_activity_zero_mean_gate_accepts_zero():
   import hpcperfstats.analysis.metrics.lib.metrics as metrics_mod
 
   text = Path(metrics_mod.__file__).read_text()
-  start = text.index('elif metric_name in (\n          "avg_tensor_active"')
+  start = text.index("elif metric_name in _GPU_PERCENT_GAUGE_SOURCES:")
   end = text.index('elif metric_name == "avg_fabric_mb_per_avg_tensor"', start)
   snippet = text[start:end]
   assert "if v is not None and float(v) > 0:" not in snippet
@@ -1067,6 +1067,9 @@ def test_job_cpu_gpu_watt_hours_integrates_and_gates():
   """Watt-hours requires CPU fragments (GPU optional); integrates Wxs/3600 per host."""
   import pandas as pd
 
+  from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
+    RAPL_MJ_RATE_TO_W,
+  )
   from hpcperfstats.analysis.metrics.lib.columnar.testing import (
     table_from_records,
   )
@@ -1074,7 +1077,7 @@ def test_job_cpu_gpu_watt_hours_integrates_and_gates():
 
   t0 = pd.Timestamp("2024-01-01 00:00:00+00:00")
   t1 = pd.Timestamp("2024-01-01 00:01:00+00:00")
-  rapl_conv = 0.00001526
+  # pkg_energy arc is mJ/s; RAPL_MJ_RATE_TO_W turns it into 40 W per host.
   cpu_rows = [
     (
       t,
@@ -1083,7 +1086,7 @@ def test_job_cpu_gpu_watt_hours_integrates_and_gates():
       "pkg_energy",
       None,
       None,
-      40.0 / rapl_conv,
+      40.0 / RAPL_MJ_RATE_TO_W,
       None,
     )
     for t in (t0, t1)

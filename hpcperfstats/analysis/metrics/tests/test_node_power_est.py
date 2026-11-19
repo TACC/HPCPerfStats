@@ -2,6 +2,9 @@
 
 import pandas as pd
 
+from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
+  RAPL_MJ_RATE_TO_W,
+)
 from hpcperfstats.analysis.metrics.lib.columnar.testing import (
   table_from_records,
 )
@@ -15,11 +18,12 @@ from hpcperfstats.analysis.metrics.lib.gen.node_power_est import (
 def test_max_node_power_est_w_from_table():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   t1 = pd.Timestamp("2024-06-01 12:01:00+00:00")
-  c = 0.00001526
+  # RAPL arcs are mJ/s of the running energy total: 1.0e5 mJ/s = 100 W.
+  c = RAPL_MJ_RATE_TO_W
   table = table_from_records(
     [
-      (t0, "h1", "intel_x86_rapl", "pkg_energy", None, None, 10.0, None),
-      (t1, "h1", "intel_x86_rapl", "pkg_energy", None, None, 20.0, None),
+      (t0, "h1", "intel_x86_rapl", "pkg_energy", None, None, 1.0e5, None),
+      (t1, "h1", "intel_x86_rapl", "pkg_energy", None, None, 2.0e5, None),
     ],
     schema={
       "intel_x86_rapl": ["pkg_energy"],
@@ -30,10 +34,10 @@ def test_max_node_power_est_w_from_table():
   )
   frame = build_node_power_est_dataframe(table)
   assert "node_power_est_w" in frame.columns
-  assert max_node_power_est_w(table) == 20.0 * c
+  assert max_node_power_est_w(table) == 2.0e5 * c == 200.0
   m = mean_node_power_est_w(table)
   assert m is not None
-  assert abs(m - 15.0 * c) < 1e-18
+  assert abs(m - 150.0) < 1e-9
 
 
 # -- D35: per-socket host_power_socket estimate (monitor round 2) -------------

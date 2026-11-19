@@ -50,17 +50,22 @@ JOB_DETAIL_BOKEH_HELP: dict[str, HelpPair] = {
     "from avg_fp64_instr / avg_fp32_instr / avg_fp16_instr and "
     "avg_arm_int16_ops / avg_arm_int8_ops (Ginstr/s; idle excluded). On Grace"
     " these are speculative instruction counts, which slightly over-count "
-    "retired work. A vector instruction counts once whatever its width, so "
-    "wedges are FP instruction shares, not FLOP shares.",
+    "retired work; on Intel they are retired FP_ARITH instructions. A vector "
+    "instruction counts once whatever its width, so wedges are FP instruction "
+    "shares, not FLOP shares, except on AMD Zen5, whose counters split FLOPs "
+    "(not instructions) into FP64 and FP32 (bf16 included). Zen3 and Zen4 "
+    "have no precision split, so their jobs show no CPU pie.",
     "Compare FP64 versus FP32 and FP16 instruction share (and INT16/INT8) "
     "when tuning numerical precision; use avg_flops and the CPU roofline for "
     "FLOP/s.",
   ),
   "jobDetailPlot_multiprecision_gpu": (
-    "GPU multiprecision mix: wedge areas show each active pipe's share of busy GPU "
-    "activity only (idle excluded). Hover shows share of busy percent. Tensor "
-    "IMMA (INT8/INT4), Tensor HMMA (FP16/BF16), and Tensor DFMA (FP64) splits are "
-    "preferred over lumped tensor_active when present.",
+    "GPU multiprecision mix: wedge areas show each pipe's share of busy time "
+    "(pipe busy share, not FLOPs; idle excluded). Tensor IMMA (INT8/INT4), "
+    "Tensor HMMA (FP16/BF16/TF32/FP8), Tensor DMMA (FP64) and Tensor "
+    "(unattributed: tensor activity no split explains) replace lumped "
+    "tensor_active when splits are present; FP16 / FP32 / FP64 and Integer "
+    "pipe complete the pie.",
     "Use it to spot FP16-heavy kernels versus FP32/64 or tensor-pipe-dominated "
     "phases.",
   ),

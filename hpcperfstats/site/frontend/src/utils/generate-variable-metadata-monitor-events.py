@@ -6,8 +6,9 @@ macros.
 Attributes:
   DESC: Attribute.
   EXTRA_EVENT_NAMES: Consumer-known events always listed (``host_power_socket``
-    keys, monitor 3.1 Grace ``arm_fp_*_spec`` keys), independent of the
-    checked-out monitor tree.
+    keys, monitor 3.1 Grace ``arm_fp_*_spec`` keys, ``nvidia_gpu`` pipe and
+    ``intel_gpu`` compute engine busy keys), independent of the checked-out
+    monitor tree.
   HISTORICAL_EVENT_NAMES: Attribute.
   MARKERS: Attribute.
   MONITOR_SRC: Attribute.
@@ -58,10 +59,15 @@ EXTRA_EVENT_NAMES = frozenset(
     "arm_fp_dp_spec",
     "arm_fp_sp_spec",
     "arm_fp_hp_spec",
-    # Grace PMU sharing counter-time lifetimes (monitor 3.1, Phase 1b D6).
+    # PMU sharing counter-time lifetimes (monitor 3.1, Grace and x86).
     "pmu_enabled_time",
     "pmu_running_time",
     "pmu_solo_running_time",
+    # nvidia_gpu pipe busy ratios (monitor 3.1): integer pipe, FP64 tensor core.
+    "integer_active",
+    "tensor_dmma_active",
+    # intel_gpu (PVC) compute engine group busy percent, max over tiles.
+    "compute_engine_util",
   }
 )
 
@@ -94,7 +100,8 @@ def extract_x_keys(lines: list[str]) -> set[str]:
   """
   out: set[str] = set()
   for line in lines:
-    s = line.strip()
+    # A one-line ``#define KEYS X(...)`` carries keys after the macro name.
+    s = re.sub(r"^#\s*define\s+\w+", "", line.strip())
     if s.startswith("#"):
       continue
     # KEYS macros often put multiple X(name, ...) entries on one continuation line.
@@ -241,14 +248,14 @@ DESC: dict[str, str] = {
   ),
   "DCGM_CPU_POWER_UTIL_W": "Per-socket CPU power draw from DCGM on Grace/superchip hosts (watts; replicated per logical CPU in that socket).",
   "DCGM_CPU_POWER_LIMIT_W": "Per-socket CPU power limit from DCGM when exposed (watts).",
-  "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE": "Intel PMU: scalar double-precision floating-point arithmetic instructions retired (Intel SDM).",
-  "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE": "Intel PMU: 128-bit packed double-precision FP arithmetic instructions retired.",
-  "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE": "Intel PMU: 256-bit packed double-precision FP arithmetic instructions retired.",
-  "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE": "Intel PMU: 512-bit packed double-precision FP arithmetic instructions retired.",
-  "FP_ARITH_INST_RETIRED_SCALAR_SINGLE": "Intel PMU: scalar single-precision FP arithmetic instructions retired.",
-  "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE": "Intel PMU: 128-bit packed single-precision FP arithmetic instructions retired.",
-  "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE": "Intel PMU: 256-bit packed single-precision FP arithmetic instructions retired.",
-  "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE": "Intel PMU: 512-bit packed single-precision FP arithmetic instructions retired.",
+  "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE": "Intel PMU: scalar double-precision floating-point arithmetic instructions retired (Intel SDM). Historical intel_x86_pmc_* rows: ingest applied the schema lane factor, so stored values are FLOPs.",
+  "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE": "Intel PMU: 128-bit packed double-precision FP arithmetic instructions retired. Historical intel_x86_pmc_* rows: ingest applied the schema lane factor, so stored values are FLOPs.",
+  "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE": "Intel PMU: 256-bit packed double-precision FP arithmetic instructions retired. Historical intel_x86_pmc_* rows: ingest applied the schema lane factor, so stored values are FLOPs.",
+  "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE": "Intel PMU: 512-bit packed double-precision FP arithmetic instructions retired. Historical intel_x86_pmc_* rows: ingest applied the schema lane factor, so stored values are FLOPs.",
+  "FP_ARITH_INST_RETIRED_SCALAR_SINGLE": "Intel PMU: scalar single-precision FP arithmetic instructions retired. Historical intel_x86_pmc_* rows: ingest applied the schema lane factor, so stored values are FLOPs.",
+  "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE": "Intel PMU: 128-bit packed single-precision FP arithmetic instructions retired. Historical intel_x86_pmc_* rows: ingest applied the schema lane factor, so stored values are FLOPs.",
+  "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE": "Intel PMU: 256-bit packed single-precision FP arithmetic instructions retired. Historical intel_x86_pmc_* rows: ingest applied the schema lane factor, so stored values are FLOPs.",
+  "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE": "Intel PMU: 512-bit packed single-precision FP arithmetic instructions retired. Historical intel_x86_pmc_* rows: ingest applied the schema lane factor, so stored values are FLOPs.",
   "tensor_active": (
     "GPU tensor/matrix pipe activity as percent in monitor output. "
     "On `nvidia_gpu` this comes from DCGM PROF; `amd_gpu` shares the same KEY name with a slimmer schema."
@@ -298,6 +305,27 @@ DESC: dict[str, str] = {
   "temperature": "GPU temperature (degrees C). DCGM on `nvidia_gpu`; `amd_gpu` when GPUPerfAPI supplies it.",
   "fp64_active": (
     "FP64 pipe activity ratio as percent. DCGM PROF on `nvidia_gpu`; same semantic field on `amd_gpu` (wave/SM naming differs)."
+  ),
+  "tensor_imma_active": "Tensor-core IMMA (INT8/INT4) pipe busy percent on `nvidia_gpu`.",
+  "tensor_hmma_active": (
+    "Tensor-core HMMA pipe busy percent on `nvidia_gpu`; one counter for FP16, BF16, TF32 and FP8 "
+    "matrix math, so it does not say which of those precisions ran."
+  ),
+  "tensor_dmma_active": (
+    "Tensor-core DMMA (FP64 matrix) pipe busy percent on `nvidia_gpu`; real on Hopper and Blackwell "
+    "(GPM path, monitor 3.1), counter not present on the DCGM path (A100, monitor 3.0)."
+  ),
+  "tensor_dfma_active": (
+    "FP64 FMA pipe busy percent on `nvidia_gpu` (DCGM PROF DFMA); equal to fp64_active on Hopper and "
+    "Blackwell, so it is not a separate tensor pipe."
+  ),
+  "integer_active": (
+    "Integer pipe busy percent on `nvidia_gpu`; on Hopper it is busy (about half) under FP work too, "
+    "on Blackwell it stays near 0; absent on A100."
+  ),
+  "compute_engine_util": (
+    "Compute engine group busy percent on `intel_gpu` (PVC, XPU Manager, max over tiles); the working "
+    "PVC busy signal while EU Array Active (`sm_active`) reads not present below GFX firmware PVC2_1.23423."
   ),
   "fp32_active": "FP32 pipe activity percent (DCGM PROF on NVIDIA; shared KEY on `amd_gpu`).",
   "fp16_active": "FP16 pipe activity percent (DCGM PROF on NVIDIA; shared KEY on `amd_gpu`).",
@@ -562,48 +590,124 @@ DESC: dict[str, str] = {
     "scaled for counter sharing; monitor 3.1)."
   ),
   "pmu_enabled_time": (
-    "Grace host_cpu_hw / arm_aarch64_imc: nanoseconds the hardware-counter "
-    "events were enabled, summed over events (monitor 3.1 Phase 1b)."
+    "host_cpu_hw (Grace and x86) and the arm_aarch64_imc, "
+    "intel_x86_uncore_imc_* and amd_x86_uncore_df_* rows: nanoseconds the "
+    "hardware-counter events were enabled, summed over events (monitor 3.1)."
   ),
   "pmu_running_time": (
-    "Grace host_cpu_hw / arm_aarch64_imc: nanoseconds the hardware-counter "
-    "events actually ran on a counter; below pmu_enabled_time the counts "
-    "were scaled (monitor 3.1 Phase 1b)."
+    "host_cpu_hw (Grace and x86) and the arm_aarch64_imc, "
+    "intel_x86_uncore_imc_* and amd_x86_uncore_df_* rows: nanoseconds the "
+    "hardware-counter events actually ran on a counter; below "
+    "pmu_enabled_time the counts were scaled (monitor 3.1)."
   ),
   "pmu_solo_running_time": (
-    "Grace host_cpu_hw: nanoseconds the core events would run if the monitor "
-    "were the only counter user; pmu_running_time below it means another "
-    "program held counters (monitor 3.1 Phase 1b)."
+    "host_cpu_hw (Grace and x86): nanoseconds the core events would run if "
+    "the monitor were the only counter user; pmu_running_time below it means "
+    "another program held counters (monitor 3.1)."
+  ),
+  # x86 host_cpu_hw by direct perf (x86_core_perf.c, monitor 3.1 Phases 2+3).
+  "fp_ops_retired": (
+    "AMD host_cpu_hw: retired SSE/AVX floating-point operations of all "
+    "precisions (FLOPs) on Zen3, Zen4 and Zen5, scaled for counter sharing; "
+    "feeds avg_flops."
+  ),
+  "amd_fp_dp_ops": (
+    "AMD Zen5 host_cpu_hw: retired double-precision FLOPs (packed + scalar); "
+    "single precision is fp_ops_retired minus this key (bf16 lands there). "
+    "Other CPU classes store a sentinel."
   ),
   "fp_arith_inst_retired_scalar_double": (
-    "Grace host_cpu_hw: retired scalar double-precision FP arithmetic instructions."
+    "Intel host_cpu_hw: retired scalar double-precision FP arithmetic "
+    "instructions (1 FLOP each; real counts since monitor 3.1). Always 0 on "
+    "Grace rows."
+  ),
+  "fp_arith_inst_retired_128b_packed_double": (
+    "Intel host_cpu_hw: retired 128-bit packed double-precision FP arithmetic "
+    "instructions (2 FLOPs each; real counts since monitor 3.1)."
+  ),
+  "fp_arith_inst_retired_256b_packed_double": (
+    "Intel host_cpu_hw: retired 256-bit packed double-precision FP arithmetic "
+    "instructions (4 FLOPs each; real counts since monitor 3.1)."
+  ),
+  "fp_arith_inst_retired_512b_packed_double": (
+    "Intel host_cpu_hw: retired 512-bit packed double-precision FP arithmetic "
+    "instructions (8 FLOPs each; real counts since monitor 3.1)."
   ),
   "fp_arith_inst_retired_scalar_single": (
-    "Grace host_cpu_hw: retired scalar single-precision FP arithmetic instructions."
+    "Intel host_cpu_hw: retired scalar single-precision FP arithmetic "
+    "instructions (1 FLOP each; real counts since monitor 3.1). Always 0 on "
+    "Grace rows."
   ),
-  # Intel SPR IMC HBM CAS (intel_spr_imc.c); DDR CAS remain dram_cas_*.
+  "fp_arith_inst_retired_128b_packed_single": (
+    "Intel host_cpu_hw: retired 128-bit packed single-precision FP arithmetic "
+    "instructions (4 FLOPs each; real counts since monitor 3.1)."
+  ),
+  "fp_arith_inst_retired_256b_packed_single": (
+    "Intel host_cpu_hw: retired 256-bit packed single-precision FP arithmetic "
+    "instructions (8 FLOPs each; real counts since monitor 3.1)."
+  ),
+  "fp_arith_inst_retired_512b_packed_single": (
+    "Intel host_cpu_hw: retired 512-bit packed single-precision FP arithmetic "
+    "instructions (16 FLOPs each; real counts since monitor 3.1)."
+  ),
+  "mem_load_uops_retired_l1_hit": (
+    "Intel host_cpu_hw: retired loads that hit L1 on every Intel class since "
+    "monitor 3.1; older ICX / SPR / EMR / GNR rows counted all loads, so do "
+    "not compare across that upgrade."
+  ),
+  "mem_load_uops_retired_l2_hit": (
+    "Intel host_cpu_hw: retired loads that hit L2 (ICX and newer: filled "
+    "since monitor 3.1)."
+  ),
+  "mem_load_uops_retired_llc_hit": (
+    "Intel host_cpu_hw: retired loads that hit the last-level cache (ICX and "
+    "newer: filled since monitor 3.1)."
+  ),
+  # Intel IMC HBM CAS (x86_uncore_perf.c); DDR CAS remain dram_cas_*.
   "hbm_cas_reads": (
-    "SPR IMC HBM CAS read count (intel_x86_uncore_imc_spr); paired with hbm_cas_writes for measured HBM BW."
+    "SPR / EMR HBM CAS read count (32 bytes each) on the hbm<N> rows of "
+    "intel_x86_uncore_imc_spr / _emr, all sockets; paired with "
+    "hbm_cas_writes for measured HBM BW."
   ),
   "hbm_cas_writes": (
-    "SPR IMC HBM CAS write count (intel_x86_uncore_imc_spr); paired with hbm_cas_reads for measured HBM BW."
+    "SPR / EMR HBM CAS write count (32 bytes each) on the hbm<N> rows of "
+    "intel_x86_uncore_imc_spr / _emr, all sockets; paired with "
+    "hbm_cas_reads for measured HBM BW."
   ),
-  # RAPL package energy (intel_rapl.c / amd_rapl.c).
+  # RAPL energy (x86_rapl.c): running mJ totals since begin, modulo 2^32.
   "pkg_energy": (
-    "CPU package energy (mJ) from intel_x86_rapl or amd_x86_rapl; drives summary watts / amd_pkg_w and node power estimates."
+    "CPU package energy from intel_x86_rapl or amd_x86_rapl, a running total "
+    "in mJ modulo 2^32 (its rate is watts); drives summary watts / amd_pkg_w "
+    "and node power estimates."
   ),
-  # Live AMD family DF (amd_x86_uncore_df.c); historical archives may use MBW_CHANNEL_*.
+  "core_energy": (
+    "AMD amd_x86_rapl core energy, a running total in mJ modulo 2^32 (its "
+    "rate is watts)."
+  ),
+  "pp0_energy": (
+    "Intel intel_x86_rapl cores (PP0) energy, a running total in mJ modulo "
+    "2^32 (its rate is watts)."
+  ),
+  "pp1_energy": (
+    "Intel intel_x86_rapl PP1 (graphics, where present) energy, a running "
+    "total in mJ modulo 2^32 (its rate is watts)."
+  ),
+  "dram_energy": (
+    "Intel intel_x86_rapl DRAM energy, a running total in mJ modulo 2^32 "
+    "(its rate is watts)."
+  ),
+  # Live AMD family DF (x86_uncore_perf.c); historical archives may use MBW_CHANNEL_*.
   "dram_chan0_bytes": (
-    "AMD DF DRAM channel 0 byte counter from amd_x86_uncore_df_{rome,milan,genoa,turin} (LIKWID)."
+    "AMD DF DRAM channel 0 data beats (64 bytes each) from amd_x86_uncore_df_{rome,milan,genoa,turin} by direct perf; Zen4 / Zen5 count read + write beats since monitor 3.1 (reads only before)."
   ),
   "dram_chan1_bytes": (
-    "AMD DF DRAM channel 1 byte counter from amd_x86_uncore_df_{rome,milan,genoa,turin} (LIKWID)."
+    "AMD DF DRAM channel 1 data beats (64 bytes each) from amd_x86_uncore_df_{rome,milan,genoa,turin} by direct perf; Zen4 / Zen5 count read + write beats since monitor 3.1 (reads only before)."
   ),
   "dram_chan2_bytes": (
-    "AMD DF DRAM channel 2 byte counter from amd_x86_uncore_df_{rome,milan,genoa,turin} (LIKWID)."
+    "AMD DF DRAM channel 2 data beats (64 bytes each) from amd_x86_uncore_df_{rome,milan,genoa,turin} by direct perf; Zen4 / Zen5 count read + write beats since monitor 3.1 (reads only before)."
   ),
   "dram_chan3_bytes": (
-    "AMD DF DRAM channel 3 byte counter from amd_x86_uncore_df_{rome,milan,genoa,turin} (LIKWID)."
+    "AMD DF DRAM channel 3 data beats (64 bytes each) from amd_x86_uncore_df_{rome,milan,genoa,turin} by direct perf; Zen4 / Zen5 count read + write beats since monitor 3.1 (reads only before)."
   ),
   "MBW_CHANNEL_0": (
     "Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan0_bytes)."

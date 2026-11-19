@@ -61,7 +61,7 @@ $uptime 1
 !host_lnet tx_bytes,E,U=B rx_bytes,E,U=B
 !host_opa PortXmitData,E PortRcvData,E PortXmitPkts,E PortRcvPkts,E PortXmitWait,E SwPortCongestion,E PortRcvFECN,E PortRcvBECN,E
 !host_nfs read_ops,E write_ops,E
-!nvidia_gpu gpu_util,E tensor_active,E tensor_imma_active,E tensor_hmma_active,E tensor_dfma_active,E fp16_active,E fp32_active,E fp64_active,E gpu_mem_bw_bytes_rate,E power_usage,E gpu_io_link_total_bytes,E clocks_event_reasons,E gpu_count,E gpu_mem_util,E,R=S gpu_mem_used_mb,E,R=S
+!nvidia_gpu gpu_util,E tensor_active,E tensor_imma_active,E tensor_hmma_active,E tensor_dfma_active,E fp16_active,E fp32_active,E fp64_active,E integer_active,E tensor_dmma_active,E gpu_mem_bw_bytes_rate,E power_usage,E gpu_io_link_total_bytes,E clocks_event_reasons,E gpu_count,E gpu_mem_util,E,R=S gpu_mem_used_mb,E,R=S
 !amd_gpu gpu_util,E tensor_active,E gpu_mem_bw_bytes_rate,E power_usage,E gpu_count,E
 !intel_x86_pmc_gpr8 {intel_pmc_schema}
 !intel_x86_uncore_imc_skx dram_cas_reads,E dram_cas_writes,E
@@ -69,7 +69,7 @@ $uptime 1
 !amd_x86_uncore_df MBW_CHANNEL_0,E MBW_CHANNEL_1,E MBW_CHANNEL_2,E MBW_CHANNEL_3,E MBW_CHANNEL_4,E MBW_CHANNEL_5,E MBW_CHANNEL_6,E MBW_CHANNEL_7,E
 !arm_aarch64_imc dram_cas_reads,E dram_cas_writes,E
 !host_cpu_hw pmu_enabled_time,E,W=64,U=ns pmu_running_time,E,W=64,U=ns pmu_solo_running_time,E,W=64,U=ns
-!intel_x86_rapl pkg_energy,E,U=J
+!intel_x86_rapl pkg_energy,E,W=32,U=mJ
 !host_power_socket cpu_power_w,U=W socket_power_w,U=W sysio_power_w,U=W module_power_w,U=W
 """.format(
       fqdn=fqdn,
@@ -152,7 +152,7 @@ def _nvidia_fast_line(scale: int) -> str:
   """Fast-tier GPU sample (slow mem counters omitted)."""
   return (
       "nvidia_gpu 0 @fast "
-      "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.2f %.1f %.0f %d 1\n"
+      "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.2f %.1f %.0f %d 1\n"
       % (
           55.0 + (scale % 20),  # gpu_util
           12.0 + (scale % 5),  # tensor_active
@@ -162,6 +162,8 @@ def _nvidia_fast_line(scale: int) -> str:
           8.0 + (scale % 4),  # fp16_active
           10.0 + (scale % 4),  # fp32_active
           6.0 + (scale % 3),  # fp64_active
+          50.0 + (scale % 5),  # integer_active (Hopper: busy under FP work)
+          3.0 + (scale % 2),  # tensor_dmma_active (GPM path)
           80.0 + scale * 0.1,  # gpu_mem_bw_bytes_rate
           180.0 + scale,  # power_usage
           1e8 + scale * 1e6,  # gpu_io_link_total_bytes
@@ -174,7 +176,7 @@ def _nvidia_full_line(scale: int) -> str:
   """Full-tier GPU sample including slow-tier memory counters."""
   return (
       "nvidia_gpu 0 @full "
-      "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.2f %.1f %.0f %d 1 %.1f %.0f\n"
+      "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.2f %.1f %.0f %d 1 %.1f %.0f\n"
       % (
           55.0 + (scale % 20),
           12.0 + (scale % 5),
@@ -184,6 +186,8 @@ def _nvidia_full_line(scale: int) -> str:
           8.0 + (scale % 4),
           10.0 + (scale % 4),
           6.0 + (scale % 3),
+          50.0 + (scale % 5),
+          3.0 + (scale % 2),
           80.0 + scale * 0.1,
           180.0 + scale,
           1e8 + scale * 1e6,
@@ -322,3 +326,188 @@ def pipeline_e2e_publish_bodies_multihost(
   for fqdn in fqdns:
     bodies.append(rotation_dollar_schema(fqdn))
   return bodies
+
+
+# x86 direct-perf hosts (monitor 3.1 Phases 2+3, ``$build`` slug ``x86perf``):
+# one Intel SPR Max host (lowercase FP_ARITH instruction counts, HBM CAS on
+# ``hbm<N>`` rows, RAPL mJ running totals that wrap at 2^32) and one AMD Zen5
+# host (FLOP lifetimes). Each runs its own synthetic job so the CPU FLOP
+# source of one family never masks the other. Counters are rate x seconds
+# since the first sample, so every interval has the same rate; a key the CPU
+# class does not program carries the NOT_PRESENT sentinel, as the monitor
+# emits it.
+X86_E2E_NOT_PRESENT = -2
+X86_E2E_CPUS = ("0", "1")
+X86_E2E_HBM_ROWS = ("hbm0", "hbm1")
+X86_E2E_SOCKETS = ("0", "1")
+X86_E2E_INTEL_FP_LANES = (
+    ("fp_arith_inst_retired_scalar_double", 1),
+    ("fp_arith_inst_retired_128b_packed_double", 2),
+    ("fp_arith_inst_retired_256b_packed_double", 4),
+    ("fp_arith_inst_retired_512b_packed_double", 8),
+    ("fp_arith_inst_retired_scalar_single", 1),
+    ("fp_arith_inst_retired_128b_packed_single", 4),
+    ("fp_arith_inst_retired_256b_packed_single", 8),
+    ("fp_arith_inst_retired_512b_packed_single", 16),
+)
+_X86_HOST_CPU_HW_SCHEMA = (
+    ("instr_retired", "E,W=48"),
+    ("aperf", "E,W=48"),
+    ("mperf", "E,W=48"),
+    *((key, "E,W=48") for key, _lanes in X86_E2E_INTEL_FP_LANES),
+    ("fp_ops_retired", "E,W=64,U=FLOP"),
+    ("amd_fp_dp_ops", "E,W=64,U=FLOP"),
+    ("pmu_enabled_time", "E,W=64,U=ns"),
+    ("pmu_running_time", "E,W=64,U=ns"),
+    ("pmu_solo_running_time", "E,W=64,U=ns"),
+)
+# Per-CPU rates (instructions or FLOPs per second, ns per second).
+_X86_PMU_RATES = {
+    "pmu_enabled_time": 9.0e8,
+    "pmu_running_time": 6.3e8,
+    "pmu_solo_running_time": 7.0e8,
+}
+_X86_INTEL_CPU_RATES = {
+    "instr_retired": 2.0e9,
+    "aperf": 2.5e9,
+    "mperf": 2.0e9,
+    "fp_arith_inst_retired_scalar_double": 1.0e8,
+    "fp_arith_inst_retired_128b_packed_double": 0.0,
+    "fp_arith_inst_retired_256b_packed_double": 2.0e8,
+    "fp_arith_inst_retired_512b_packed_double": 1.0e8,
+    "fp_arith_inst_retired_scalar_single": 1.0e8,
+    "fp_arith_inst_retired_128b_packed_single": 0.0,
+    "fp_arith_inst_retired_256b_packed_single": 0.0,
+    "fp_arith_inst_retired_512b_packed_single": 5.0e7,
+    **_X86_PMU_RATES,
+}
+_X86_AMD_CPU_RATES = {
+    "instr_retired": 2.0e9,
+    "aperf": 2.5e9,
+    "fp_ops_retired": 2.0e9,
+    "amd_fp_dp_ops": 1.5e9,
+    **_X86_PMU_RATES,
+}
+# Per hbm<N> row CAS per second; the dram_cas_* pair is NOT_PRESENT there.
+_X86_HBM_RATES = {"hbm_cas_reads": 1.0e8, "hbm_cas_writes": 5.0e7}
+_X86_HBM_PMU_RATES = {"pmu_enabled_time": 1.0e9, "pmu_running_time": 1.0e9}
+# Per-socket package power; the counter starts near 2^32 so it wraps once.
+X86_E2E_PKG_W_PER_SOCKET = 200.0
+_X86_RAPL_START_MJ = 4_000_000_000
+_RAPL_MJ_MODULUS = 2**32
+
+
+def _x86_cpu_total(rates: dict[str, float], key: str) -> float:
+  """Rate of one ``host_cpu_hw`` key summed over the synthetic CPUs."""
+  return rates.get(key, 0.0) * len(X86_E2E_CPUS)
+
+
+def _x86_intel_rate(precision: str, weighted: bool) -> float:
+  """Node FP_ARITH rate of one precision: instructions, or FLOPs if weighted."""
+  return sum(
+      _x86_cpu_total(_X86_INTEL_CPU_RATES, key) * (lanes if weighted else 1)
+      for key, lanes in X86_E2E_INTEL_FP_LANES
+      if key.endswith(precision)
+  )
+
+
+# Each HBM CAS moves 32 bytes (measured on SPR Max); avg_mbw is GiB/s.
+_HBM_GB = sum(_X86_HBM_RATES.values()) * len(X86_E2E_HBM_ROWS) * 32 / 1024**3
+# Job metrics the x86 jobs must produce (GFLOP/s, Ginstr/s, GB/s, %, W).
+X86_E2E_INTEL_EXPECTED = {
+    "avg_flops": (
+        _x86_intel_rate("double", True) + _x86_intel_rate("single", True)
+    ) * 1e-9,
+    "avg_flops64b": _x86_intel_rate("double", True) * 1e-9,
+    "avg_flops32b": _x86_intel_rate("single", True) * 1e-9,
+    "avg_fp64_instr": _x86_intel_rate("double", False) * 1e-9,
+    "avg_fp32_instr": _x86_intel_rate("single", False) * 1e-9,
+    "avg_mbw": _HBM_GB,
+    "avg_pmu_running_pct": PMU_SHARING_E2E_RUNNING_PCT,
+    "avg_pmu_outside_pct": PMU_SHARING_E2E_OUTSIDE_PCT,
+    "max_node_power_est_w": X86_E2E_PKG_W_PER_SOCKET * len(X86_E2E_SOCKETS),
+}
+_AMD_TOTAL = _x86_cpu_total(_X86_AMD_CPU_RATES, "fp_ops_retired") * 1e-9
+_AMD_DP = _x86_cpu_total(_X86_AMD_CPU_RATES, "amd_fp_dp_ops") * 1e-9
+X86_E2E_AMD_EXPECTED = {
+    "avg_flops": _AMD_TOTAL,
+    "avg_flops64b": _AMD_DP,
+    "avg_flops32b": _AMD_TOTAL - _AMD_DP,
+    "avg_fp64_instr": _AMD_DP,
+    "avg_fp32_instr": _AMD_TOTAL - _AMD_DP,
+    "avg_pmu_running_pct": PMU_SHARING_E2E_RUNNING_PCT,
+    "avg_pmu_outside_pct": PMU_SHARING_E2E_OUTSIDE_PCT,
+}
+
+
+def x86_schema_header(fqdn: str, vendor: str) -> str:
+  """``$`` block of a direct-perf x86 host (``vendor`` is intel or amd)."""
+  cpu_hw = " ".join(f"{key},{flags}" for key, flags in _X86_HOST_CPU_HW_SCHEMA)
+  if vendor == "intel":
+    typed = (
+        "!intel_x86_uncore_imc_spr dram_cas_reads,E,W=48 dram_cas_writes,E,W=48"
+        " hbm_cas_reads,E,W=48 hbm_cas_writes,E,W=48"
+        " pmu_enabled_time,E,W=64,U=ns pmu_running_time,E,W=64,U=ns\n"
+        "!intel_x86_rapl pkg_energy,E,W=32,U=mJ\n"
+    )
+  else:
+    typed = "!amd_x86_rapl pkg_energy,E,W=32,U=mJ\n"
+  return (
+      f"$hpcperfstats 3.1\n$hostname {fqdn}\n$uname Linux x86_64 5.14.0 test\n"
+      "$uptime 1\n$build x86_64-ver3.1-hw-ib-x86perf-full\n"
+      f"!host_cpu_hw {cpu_hw}\n{typed}"
+  )
+
+
+def _counter(rate: float | None, seconds: float) -> int:
+  """Lifetime counter value, or the NOT_PRESENT code when ``rate`` is None."""
+  if rate is None:
+    return X86_E2E_NOT_PRESENT
+  return round(rate * seconds)
+
+
+def x86_stats_snapshot(
+    epoch: float, seconds: float, jid: str, fqdn: str, vendor: str
+) -> str:
+  """One sample of an x86 host ``seconds`` after its first sample."""
+  cpu_rates = _X86_INTEL_CPU_RATES if vendor == "intel" else _X86_AMD_CPU_RATES
+  lines = [f"{epoch:.6f} {jid} {fqdn}\n"]
+  for cpu in X86_E2E_CPUS:
+    vals = (
+        _counter(cpu_rates.get(key), seconds)
+        for key, _flags in _X86_HOST_CPU_HW_SCHEMA
+    )
+    lines.append(f"host_cpu_hw {cpu} {' '.join(map(str, vals))}\n")
+  if vendor == "intel":
+    for row in X86_E2E_HBM_ROWS:
+      vals = (
+          X86_E2E_NOT_PRESENT,
+          X86_E2E_NOT_PRESENT,
+          *(_counter(r, seconds) for r in _X86_HBM_RATES.values()),
+          *(_counter(r, seconds) for r in _X86_HBM_PMU_RATES.values()),
+      )
+      lines.append(
+          f"intel_x86_uncore_imc_spr {row} {' '.join(map(str, vals))}\n"
+      )
+  energy = (
+      _X86_RAPL_START_MJ + int(X86_E2E_PKG_W_PER_SOCKET * 1000 * seconds)
+  ) % _RAPL_MJ_MODULUS
+  rapl_type = "intel_x86_rapl" if vendor == "intel" else "amd_x86_rapl"
+  lines.extend(f"{rapl_type} {sock} {energy}\n" for sock in X86_E2E_SOCKETS)
+  return "".join(lines)
+
+
+def pipeline_e2e_x86_publish_bodies(
+    *, fqdn: str, jid: str, vendor: str, epoch_samples: list[float]
+) -> list[str]:
+  """Schema, samples and rotate ``$`` block of one x86 host in its own job."""
+  header = x86_schema_header(fqdn, vendor)
+  t0 = epoch_samples[0]
+  return [
+      header,
+      *(
+          x86_stats_snapshot(ep, ep - t0, jid, fqdn, vendor)
+          for ep in epoch_samples
+      ),
+      header,
+  ]

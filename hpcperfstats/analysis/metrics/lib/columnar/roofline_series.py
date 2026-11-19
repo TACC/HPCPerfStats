@@ -32,16 +32,25 @@ from hpcperfstats.analysis.metrics.lib.columnar.series_frame import (
 from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
   bw_table,
   combine_bw,
+  weighted_event_sum,
+)
+from hpcperfstats.analysis.metrics.lib.gen.cpu_fp_events import (
+  INTEL_FP_ARITH_ALL_LANES,
+  amd_flop_type_names,
+)
+from hpcperfstats.analysis.metrics.lib.gen.imc_cas_bw import (
+  DDR_CAS_GIB,
+  HBM_CAS_GIB,
 )
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
   AMD_DF_STATS_TYPES,
+  HOST_CPU_HW_TYPE,
   INTEL_FP_ARITH_ALL_EVENTS,
   INTEL_LEGACY_SSE_FLOP_EVENTS,
 )
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
   amd_df_bw_event_conv_tries,
   amd_df_type_names,
-  amd_pmc_type_names,
   arm_dram_bw_event_names,
   arm_est_flops_event_names,
   arm_imc_types_probe_order,
@@ -52,6 +61,7 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
   host_cpu_hw_type_names,
   host_roofline_peak_type_names,
   imc_types_probe_order,
+  pmu_sharing_event_names,
 )
 
 GPU_ROOFLINE_BW_AXIS_MEMORY = "memory_bw"
@@ -297,7 +307,12 @@ def _merge_weighted_event_arcs(
 
 def _intel_fp_arith_flops(jt: Any, attempts: list[str]) -> AggTable | None:
   """
-  ``roofline._intel_fp_arith_flops_gf``.
+  ``roofline._intel_fp_arith_flops_gf``: historical uppercase FP_ARITH on the
+  core PMC types (lanes applied at ingest), then the lowercase
+  ``host_cpu_hw`` keys times their lanes. Those are read only on rows of a
+  direct-perf reader (positive ``pmu_enabled_time``) and used only when
+  some sample is positive: older monitors and other CPU families carry the
+  keys as zeros.
 
   Args:
     jt (Any): ColumnarJobTable.
@@ -317,6 +332,19 @@ def _intel_fp_arith_flops(jt: Any, attempts: list[str]) -> AggTable | None:
     )
     if not cand.empty:
       return cand
+  enabled, _src = _agg_arc(
+    jt, HOST_CPU_HW_TYPE, pmu_sharing_event_names()[:1], 1.0
+  )
+  if not np.nan_to_num(enabled.sum_val, nan=0.0).any():
+    return None
+  cand = weighted_event_sum(
+    jt, HOST_CPU_HW_TYPE, "arc", INTEL_FP_ARITH_ALL_LANES, 1e-9
+  )
+  attempts.append(
+    f"intel_fp_arith_lanes:{HOST_CPU_HW_TYPE} rows(flops={len(cand)})"
+  )
+  if np.nan_to_num(cand.sum_val, nan=0.0).any():
+    return cand
   return None
 
 
@@ -357,11 +385,10 @@ def _intel_imc_bw(jt: Any, attempts: list[str]) -> AggTable | None:
   Examples:
     >>> _intel_imc_bw(jt, [])  # doctest: +SKIP
   """
-  conv = 64 / (1024**3)
   for imc_typ in imc_types_probe_order():
     dram = None
     for read_ev, write_ev in dram_cas_read_write_pairs():
-      agg, src = _agg_arc(jt, imc_typ, [read_ev, write_ev], conv)
+      agg, src = _agg_arc(jt, imc_typ, [read_ev, write_ev], DDR_CAS_GIB)
       attempts.append(
         f"{imc_typ} rows(bw={len(agg)}) events=({read_ev},{write_ev}) src(bw={src})"
       )
@@ -370,7 +397,7 @@ def _intel_imc_bw(jt: Any, attempts: list[str]) -> AggTable | None:
         break
     hbm = None
     for read_ev, write_ev in hbm_cas_read_write_pairs():
-      agg, src = _agg_arc(jt, imc_typ, [read_ev, write_ev], conv)
+      agg, src = _agg_arc(jt, imc_typ, [read_ev, write_ev], HBM_CAS_GIB)
       attempts.append(
         f"{imc_typ} rows(hbm_bw={len(agg)}) events=({read_ev},{write_ev}) src(bw={src})"
       )
@@ -427,10 +454,9 @@ def _arm_imc_bw(jt: Any, attempts: list[str]) -> AggTable | None:
   Examples:
     >>> _arm_imc_bw(jt, [])  # doctest: +SKIP
   """
-  conv = 64 / (1024**3)
   for imc_typ in arm_imc_types_probe_order():
     for read_ev, write_ev in dram_cas_read_write_pairs():
-      agg, src = _agg_arc(jt, imc_typ, [read_ev, write_ev], conv)
+      agg, src = _agg_arc(jt, imc_typ, [read_ev, write_ev], DDR_CAS_GIB)
       attempts.append(f"arm_imc:{imc_typ} rows(bw={len(agg)}) src(bw={src})")
       if not agg.empty:
         return agg
@@ -461,7 +487,7 @@ def cpu_roofline_points(jt: Any) -> tuple[RooflinePoints | None, str | None]:
   flops: AggTable | None = None
   bw: AggTable | None = None
   attempts: list[str] = []
-  for pmc_typ in amd_pmc_type_names():
+  for pmc_typ in amd_flop_type_names():
     for flop_ev in fp_ops_retired_event_names():
       agg_flops, fsrc = _agg_arc(jt, pmc_typ, [flop_ev], 1e-9)
       for df_typ in amd_df_type_names():

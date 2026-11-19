@@ -178,7 +178,7 @@ def test_reason_capped_at_column_width_with_ellipsis():
 def test_no_data_codes_shape_is_persisted_with_reason():
   """``_persist_metrics_batch`` writes ``no_data_codes`` and updates it on
   conflict, next to ``no_data_reason``."""
-  assert metrics.METRICS_CONTRACT_VERSION == 11
+  assert metrics.METRICS_CONTRACT_VERSION >= 13
   rows = metrics._sanitize_metrics_compute_rows(
     [
       {

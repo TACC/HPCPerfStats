@@ -391,6 +391,12 @@ def test_parsed_host_rows_is_zero_for_proc_only_input() -> None:
 
 
 _SENTINEL_HDR = ["$hpcperfstats 3.1", "$hostname hostA"]
+# Real monitor 3.1 x86 slug: direct perf readers, ``x86perf``, no ``likwid``.
+_X86PERF_31_SLUG = (
+  "x86_64-ver3.1-hw-ib-nvgpu-intelgpu-lustre-beegfs-x86perf-sent1-slowtier1"
+)
+# Monitor 3.0 x86 slug (LIKWID): old hosts and archived data.
+_LIKWID_30_SLUG = "x86_64-ver3.0-hw-ib-likwid-full"
 
 
 def _sentinel_corpora() -> dict[str, list[list[str]]]:
@@ -463,11 +469,22 @@ def _sentinel_corpora() -> dict[str, list[list[str]]]:
         *samples("host_ib", one([(120, 1300)])),
       ]
     ],
-    "likwid_override": [
+    "likwid30_history_override": [
       [
         hw,
         *_SENTINEL_HDR,
-        "$build x86_64-ver3.1-hw-ib-likwid-full",
+        f"$build {_LIKWID_30_SLUG}",
+        *samples(
+          "host_cpu_hw",
+          [(100, [("0", 10)]), (110, [("0", -1)]), (120, [("0", 30)])],
+        ),
+      ]
+    ],
+    "x86perf31_bridges": [
+      [
+        hw,
+        *_SENTINEL_HDR,
+        f"$build {_X86PERF_31_SLUG}",
         *samples(
           "host_cpu_hw",
           [(100, [("0", 10)]), (110, [("0", -1)]), (120, [("0", 30)])],
@@ -625,9 +642,10 @@ def _restart_drop_corpora() -> dict[str, list[list[str]]]:
 
 @pytest.mark.parametrize("name", sorted(_sentinel_corpora()))
 def test_sentinel_corpora_codon_matches_cpython(name: str) -> None:
-  """Bridge, chain break, limit, unknown code, restart, LIKWID override, W=48
-  wrap, valid-only collapse, modal code, per-device bridged arc, NVIDIA OR
-  restore, cross-flush carry and a header cut at a window boundary."""
+  """Bridge, chain break, limit, unknown code, restart, 3.0 LIKWID history
+  override, 3.1 x86perf bridge, W=48 wrap, valid-only collapse, modal code,
+  per-device bridged arc, NVIDIA OR restore, cross-flush carry and a header
+  cut at a window boundary."""
   mod = _load_feed_collapse()
   flushes = _sentinel_corpora()[name]
   want = _cpython_sentinel_rows(flushes)
@@ -713,6 +731,25 @@ def test_whole_file_cpython_path_breaks_chains_at_restart_headers() -> None:
   assert math.isnan(gap[("hostA", "host_ib", "", "rx_bytes", 120.0)][1])
   arm = _cpython_whole_file_rows(corpora["arm_bridges"])
   assert arm[("hostA", "host_cpu_hw", "", "instr_retired", 120.0)][1] == 150
+
+
+def test_host_cpu_hw_bridge_x86perf31_honored_likwid30_history_breaks() -> None:
+  """Both engines: a 3.1 x86perf slug bridges ``host_cpu_hw`` (delta 20
+  across the -1 gap); a 3.0 LIKWID slug keeps it a chain break (NaN)."""
+  mod = _load_feed_collapse()
+  key = ("hostA", "host_cpu_hw", "", "instr_retired", 120.0)
+  corpora = _sentinel_corpora()
+  for rows in (
+    _cpython_sentinel_rows(corpora["x86perf31_bridges"]),
+    _codon_sentinel_rows(mod, corpora["x86perf31_bridges"]),
+  ):
+    assert rows[key][1] == 20
+  for rows in (
+    _cpython_sentinel_rows(corpora["likwid30_history_override"]),
+    _codon_sentinel_rows(mod, corpora["likwid30_history_override"]),
+  ):
+    # Codon reports a chain-break delta as None, CPython as NaN.
+    assert rows[key][1] is None or math.isnan(rows[key][1])
 
 
 def test_sentinel_corpora_have_sentinel_and_bridged_rows() -> None:

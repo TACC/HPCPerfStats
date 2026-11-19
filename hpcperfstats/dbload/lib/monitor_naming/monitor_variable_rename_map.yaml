@@ -109,6 +109,22 @@ events:
   pmu_enabled_time: pmu_enabled_time
   pmu_running_time: pmu_running_time
   pmu_solo_running_time: pmu_solo_running_time
+  # Additive identity (monitor 3.1 Phases 2+3, direct perf on x86, no LIKWID):
+  # AMD host_cpu_hw FLOP lifetimes (E,W=64,U=FLOP). fp_ops_retired is total
+  # FLOPs on Zen3 / Zen4 / Zen5 (also the canonical form of legacy FLOPS);
+  # amd_fp_dp_ops is double-precision FLOPs on Zen5 only, single = total -
+  # double. Same release, keys unchanged but values change: Intel
+  # fp_arith_inst_retired_* (lowercase, E,W=48, no unit) become real retired
+  # instruction counts (consumers multiply by lanes per width); the pmu_*
+  # sharing times also appear on x86 host_cpu_hw rows and pmu_enabled_time /
+  # pmu_running_time on intel_x86_uncore_imc_* / amd_x86_uncore_df_* rows;
+  # mem_load_uops_retired_l1_hit is L1 hits on every Intel class (was all
+  # loads on ICX+); Zen4 / Zen5 dram_chanN_bytes count read + write beats;
+  # Intel IMC / HBM rows sum all sockets (each HBM CAS is 32 B); RAPL *_energy
+  # keys are running mJ totals modulo 2^32. No backfill; older rows keep the
+  # old values.
+  fp_ops_retired: fp_ops_retired
+  amd_fp_dp_ops: amd_fp_dp_ops
   Active: active
   AnonHugePages: anon_huge_pages
   AnonPages: anon_pages
@@ -198,6 +214,20 @@ events:
   nvlink_tx_bytes: gpu_nvlink_tx_bytes
   pcie_rx_bytes: gpu_pcie_rx_bytes
   pcie_tx_bytes: gpu_pcie_tx_bytes
+  # Additive identity (monitor 3.1, nvidia_gpu pipe busy ratios, percent like
+  # tensor_hmma_active): integer_active is the integer pipe (absent on A100);
+  # tensor_dmma_active is the FP64 tensor core, NOT_PRESENT on the DCGM path
+  # (A100, 3.0 hosts) and real on the GPM path (Hopper / Blackwell). New keys,
+  # no legacy alias; analysis avg_integer_active / avg_tensor_dmma_active.
+  # tensor_dfma_active keeps its name but is the FP64 FMA pipe (equal to
+  # fp64_active on Hopper / Blackwell), so the GPU pie no longer shows it.
+  integer_active: integer_active
+  tensor_dmma_active: tensor_dmma_active
+  # Additive identity (intel_gpu, PVC): compute engine group busy percent,
+  # max over tiles (XPU Manager). It reads real while the EU metrics
+  # (sm_active) are NOT_PRESENT below GFX firmware PVC2_1.23423; analysis
+  # avg_compute_engine_util.
+  compute_engine_util: compute_engine_util
   rx_bytes: sw_rx_bytes
   tx_bytes: sw_tx_bytes
   rx_packets: sw_rx_packets

@@ -124,7 +124,7 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   avg_tensor_active: {
     description:
-      "Average DCGM tensor-pipe activity percentage (NVIDIA preferred; AMD GPU when the same field is populated). Prefer avg_tensor_imma/hmma/dfma_active when those splits are present.",
+      "Average DCGM tensor-pipe activity percentage (NVIDIA preferred; AMD GPU when the same field is populated). Prefer avg_tensor_imma/hmma/dmma_active when those splits are present; the GPU Multiprecision Mix shows the part of this no split explains as Tensor (unattributed).",
     researcherUse:
       "See whether time sits in tensor-heavy paths when changing precision or framework version.",
   },
@@ -136,15 +136,33 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   avg_tensor_hmma_active: {
     description:
-      "Average DCGM tensor HMMA pipe activity percentage (FP16/BF16 tensor path).",
+      "Average tensor HMMA pipe busy percentage; one counter for FP16, BF16, TF32 and FP8 tensor math, so it does not say which of those precisions ran.",
     researcherUse:
-      "Useful when validating FP16/BF16 tensor-core usage versus scalar FP pipes.",
+      "Useful when validating reduced-precision tensor-core usage versus scalar FP pipes; tensor FLOPs derived from it are estimates.",
+  },
+  avg_tensor_dmma_active: {
+    description:
+      "Average tensor DMMA (FP64 matrix) pipe busy percentage; measured on Hopper and Blackwell, counter not present on A100.",
+    researcherUse:
+      "High DMMA shows FP64 work running on tensor cores (for example DGEMM in cuBLAS or cuSOLVER).",
   },
   avg_tensor_dfma_active: {
     description:
-      "Average DCGM tensor DFMA pipe activity percentage (FP64 tensor path).",
+      "Average FP64 FMA pipe busy percentage (DCGM DFMA). On Hopper and Blackwell it equals avg_fp64_active, so it is not a tensor pipe and is not a GPU Multiprecision Mix wedge.",
     researcherUse:
-      "High DFMA with low FP64 scalar activity can indicate tensorized FP64 kernels.",
+      "Read avg_fp64_active and avg_tensor_dmma_active for FP64 work; this row stays so older reports remain comparable.",
+  },
+  avg_integer_active: {
+    description:
+      "Average GPU integer pipe busy percentage (NVIDIA). On Hopper it is busy, about half the time, under FP work too (address and index math); on Blackwell it stays near 0; absent on A100.",
+    researcherUse:
+      "Integer-heavy kernels (hashing, sorting, graph codes) show here; on Hopper do not read a busy integer pipe as a lack of FP work.",
+  },
+  avg_compute_engine_util: {
+    description:
+      "Average Intel Data Center GPU Max (PVC) compute engine busy percentage from XPU Manager (compute engine group utilization, max over tiles). It is the working PVC busy signal: EU Array Active and the other EU metrics read N/A on GFX firmware below PVC2_1.23423.",
+    researcherUse:
+      "Low values on a PVC job mean the GPU tiles sat idle (host-side work, data movement, or too little work per launch); near 100 means the compute engines stayed busy.",
   },
   avg_fp16_active: {
     description:
@@ -178,31 +196,31 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   avg_flops: {
     description:
-      "Average floating-point throughput (GFLOP/s) from AMD FLOPS PMC, Intel FP_ARITH or legacy SSE proxies, or ARM synthetic counters.",
+      "Average floating-point throughput (GFLOP/s) from the AMD retired FLOPs counter (fp_ops_retired), Intel FP_ARITH (instructions times vector lanes) or legacy SSE proxies, or Grace measured FLOPs (arm_est_flops).",
     researcherUse:
       "Computational intensity over time; pair with fabric bytes and CPU roofline for bottleneck stories.",
   },
   avg_flops64b: {
     description:
-      "Average double-precision floating-point throughput (GFLOP/s) from Intel FP_ARITH double events, or Grace host_cpu_hw scalar double when Intel FP is absent (same basis as summary flops64b).",
+      "Average double-precision floating-point throughput (GFLOP/s) from Intel FP_ARITH double events (instructions times vector lanes) or AMD Zen5 double-precision FLOPs (same basis as summary flops64b).",
     researcherUse:
-      "Historical FP64 rate kept for older jobs; the CPU Multiprecision Mix pie now uses avg_fp64_instr.",
+      "FP64 FLOP rate on Intel and AMD Zen5 hosts; the CPU Multiprecision Mix pie uses avg_fp64_instr instead.",
   },
   avg_flops32b: {
     description:
-      "Average single-precision floating-point throughput (GFLOP/s) from Intel FP_ARITH single events, or Grace host_cpu_hw scalar single when Intel FP is absent (same basis as summary flops32b).",
+      "Average single-precision floating-point throughput (GFLOP/s) from Intel FP_ARITH single events (instructions times vector lanes) or AMD Zen5 FLOPs minus double-precision FLOPs (same basis as summary flops32b).",
     researcherUse:
-      "Historical FP32 rate kept for older jobs; the CPU Multiprecision Mix pie now uses avg_fp32_instr.",
+      "FP32 FLOP rate on Intel and AMD Zen5 hosts; the CPU Multiprecision Mix pie uses avg_fp32_instr instead.",
   },
   avg_fp64_instr: {
     description:
-      "Average CPU FP64 instruction rate (Ginstr/s) from host_cpu_hw arm_fp_dp_spec (Grace FP_DP_SPEC speculative count). Counts instructions, not FLOPs: a vector instruction counts once.",
+      "Average CPU FP64 rate from host_cpu_hw: Grace arm_fp_dp_spec (FP_DP_SPEC speculative count) or Intel retired FP_ARITH double instructions, in Ginstr/s, which count instructions, not FLOPs (a vector instruction counts once); on AMD Zen5 it is double-precision GFLOP/s (amd_fp_dp_ops), the only split that CPU exposes.",
     researcherUse:
       "FP64 wedge of the CPU Multiprecision Mix; a DGEMM-like code is FP64-dominant.",
   },
   avg_fp32_instr: {
     description:
-      "Average CPU FP32 instruction rate (Ginstr/s) from host_cpu_hw arm_fp_sp_spec (Grace FP_SP_SPEC speculative count). Counts instructions, not FLOPs: a vector instruction counts once.",
+      "Average CPU FP32 rate from host_cpu_hw: Grace arm_fp_sp_spec (FP_SP_SPEC speculative count) or Intel retired FP_ARITH single instructions, in Ginstr/s, which count instructions, not FLOPs (a vector instruction counts once); on AMD Zen5 it is single-precision GFLOP/s (fp_ops_retired minus amd_fp_dp_ops, bf16 included), the only split that CPU exposes.",
     researcherUse:
       "FP32 wedge of the CPU Multiprecision Mix; compare with FP64 when testing reduced precision.",
   },
@@ -616,19 +634,19 @@ const SUMMARY_PLOT_METRIC_METADATA = {
   },
   amd_flops: {
     description:
-      "Floating-point operation rate from AMD PMC FLOPS events (32b + 64b), in GFLOP/s.",
+      "Floating-point operation rate from the AMD retired FLOPs counter (fp_ops_retired, all precisions), in GFLOP/s.",
     researcherUse:
       "Computational intensity over time for AMD CPU paths; compare with fabric and I/O subplots.",
   },
   flops64b: {
     description:
-      "Double-precision floating-point operation rate from Intel FP_ARITH or equivalent core PMCs, in GFLOP/s.",
+      "Double-precision floating-point operation rate from Intel FP_ARITH (instructions times vector lanes) or AMD Zen5 double-precision FLOPs, in GFLOP/s.",
     researcherUse:
       "Computational intensity for FP64-heavy HPC codes versus memory and interconnect limits.",
   },
   flops32b: {
     description:
-      "Single-precision floating-point operation rate from Intel FP_ARITH or equivalent core PMCs, in GFLOP/s.",
+      "Single-precision floating-point operation rate from Intel FP_ARITH (instructions times vector lanes) or AMD Zen5 FLOPs minus double-precision FLOPs, in GFLOP/s.",
     researcherUse:
       "Computational intensity for FP32-heavy regions versus memory and interconnect limits.",
   },
@@ -668,7 +686,7 @@ const SUMMARY_PLOT_METRIC_METADATA = {
   },
   watts: {
     description:
-      "Intel package power estimated from RAPL MSR_PKG_ENERGY_STATUS deltas, in watts.",
+      "Intel package power from the RAPL package energy counter (mJ) deltas, in watts.",
     researcherUse:
       "Package power trends versus frequency for power-limited or cooling-limited runs.",
   },
@@ -709,9 +727,9 @@ const SUMMARY_PLOT_METRIC_METADATA = {
   },
   nv_tensor_dfma_active: {
     description:
-      "DFMA (FP64) tensor-pipe activity percentage from DCGM when available.",
+      "FP64 FMA pipe busy percentage from DCGM (DFMA), same as FP64 on Hopper/Blackwell; it is not a tensor pipe.",
     researcherUse:
-      "FP64 tensor-path activity versus scalar FP64 for double-precision GPU kernels.",
+      "Read with FP64 pipe activity for double-precision GPU kernels; FP64 matrix work on tensor cores shows as tensor DMMA.",
   },
   nv_tensor_active: {
     description:
@@ -853,13 +871,13 @@ const JOB_DETAIL_BOKEH_PLOT_METADATA = {
   },
   jobDetailPlot_multiprecision_cpu: {
     description:
-      "CPU multiprecision mix: wedge areas show each precision's share of busy FP instructions (FP64, FP32, FP16) plus SVE INT16/INT8 instructions, from avg_fp64_instr / avg_fp32_instr / avg_fp16_instr and avg_arm_int16_ops / avg_arm_int8_ops (Ginstr/s; idle excluded). On Grace these are speculative instruction counts, which slightly over-count retired work. A vector instruction counts once whatever its width, so wedges are FP instruction shares, not FLOP shares.",
+      "CPU multiprecision mix: wedge areas show each precision's share of busy FP instructions (FP64, FP32, FP16) plus SVE INT16/INT8 instructions, from avg_fp64_instr / avg_fp32_instr / avg_fp16_instr and avg_arm_int16_ops / avg_arm_int8_ops (Ginstr/s; idle excluded). On Grace these are speculative instruction counts, which slightly over-count retired work; on Intel they are retired FP_ARITH instructions. A vector instruction counts once whatever its width, so wedges are FP instruction shares, not FLOP shares, except on AMD Zen5, whose counters split FLOPs (not instructions) into FP64 and FP32 (bf16 included). Zen3 and Zen4 have no precision split, so their jobs show no CPU pie.",
     researcherUse:
       "Compare FP64 versus FP32 and FP16 instruction share (and INT16/INT8) when tuning numerical precision; use avg_flops and the CPU roofline for FLOP/s.",
   },
   jobDetailPlot_multiprecision_gpu: {
     description:
-      "GPU multiprecision mix: wedge areas show each active pipe's share of busy GPU activity only (idle excluded). Hover shows share of busy percent. Tensor IMMA (INT8/INT4), Tensor HMMA (FP16/BF16), and Tensor DFMA (FP64) splits are preferred over lumped tensor_active when present.",
+      "GPU multiprecision mix: wedge areas show each pipe's share of busy time (pipe busy share, not FLOPs; idle excluded). Tensor IMMA (INT8/INT4), Tensor HMMA (FP16/BF16/TF32/FP8), Tensor DMMA (FP64) and Tensor (unattributed: tensor activity no split explains) replace lumped tensor_active when splits are present; FP16 / FP32 / FP64 and Integer pipe complete the pie.",
     researcherUse:
       "Use it to spot FP16-heavy kernels versus FP32/64 or tensor-pipe-dominated phases.",
   },

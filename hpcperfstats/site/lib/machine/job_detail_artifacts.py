@@ -16,9 +16,14 @@ Attributes:
   _GPU_MULTIPRECISION_MIX_IDLE_REASON: Blank GPU pie reason when its inputs
     were sampled but every value is 0 (idle GPUs).
   _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON: Attribute.
-  _GPU_PRECISION_LABEL_ORDER: Attribute.
-  _GPU_PRECISION_METRIC_TO_LABEL: Attribute.
-  _GPU_TENSOR_SPLIT_METRICS: Attribute.
+  _GPU_PRECISION_LABEL_ORDER: GPU pie legend order.
+  _GPU_PRECISION_METRIC_TO_LABEL: Job metric to GPU pie wedge label.
+  _GPU_TENSOR_SPLIT_METRICS: Tensor-core pipe split metrics that replace the
+    lumped tensor wedge when any is positive.
+  _GPU_TENSOR_UNATTRIBUTED_EPSILON: Smallest tensor remainder (percentage
+    points) shown as the unattributed wedge.
+  _GPU_TENSOR_UNATTRIBUTED_LABEL: Wedge label for tensor activity no split
+    explains.
   _MULTIPRECISION_PIE_RADIUS: Attribute.
   _MULTIPRECISION_PLOT_RANGE: Attribute.
   logger: Attribute.
@@ -113,7 +118,9 @@ _GPU_MULTIPRECISION_MIX_IDLE_REASON = (
 # reasons distinguish idle (inputs all 0) from missing (inputs absent).
 # 16 (2026-11-17): Type Detail and FSIO peaks follow the sentinel sample
 # states (no partial sums; Type Detail fills short interior gaps).
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 16
+# 17 (2026-11-18): GPU pie drops the DFMA wedge (it duplicated FP64), adds
+# Integer pipe, Tensor DMMA (FP64) and the unattributed tensor remainder.
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 17
 
 _FSIO_FINGERPRINT_METRIC_NAMES = tuple(
   sorted(name for name, _t, _u in fsio_job_detail_catalog())
@@ -502,31 +509,40 @@ _CPU_PRECISION_METRIC_TO_LABEL = {
   "avg_arm_int8_ops": "INT8",
 }
 
+# Tensor-core pipe splits. avg_tensor_dfma_active is not one: it is the FP64
+# FMA pipe (equal to avg_fp64_active on Hopper / Blackwell), so it is no wedge.
 _GPU_TENSOR_SPLIT_METRICS = (
   "avg_tensor_imma_active",
   "avg_tensor_hmma_active",
-  "avg_tensor_dfma_active",
+  "avg_tensor_dmma_active",
 )
 
+# Wedges are pipe busy shares, not FLOP shares.
 _GPU_PRECISION_METRIC_TO_LABEL = {
   "avg_tensor_imma_active": "Tensor IMMA (INT8/INT4)",
-  "avg_tensor_hmma_active": "Tensor HMMA (FP16/BF16)",
-  "avg_tensor_dfma_active": "Tensor DFMA (FP64)",
+  "avg_tensor_hmma_active": "Tensor HMMA (FP16/BF16/TF32/FP8)",
+  "avg_tensor_dmma_active": "Tensor DMMA (FP64)",
   "avg_tensor_active": "Tensor",
   "avg_fp16_active": "FP16",
   "avg_fp32_active": "FP32",
   "avg_fp64_active": "FP64",
+  "avg_integer_active": "Integer pipe",
 }
+_GPU_TENSOR_UNATTRIBUTED_LABEL = "Tensor (unattributed)"
+# Percentage points below which the tensor remainder is sampling noise.
+_GPU_TENSOR_UNATTRIBUTED_EPSILON = 0.5
 
 _CPU_PRECISION_LABEL_ORDER = ("FP64", "FP32", "FP16", "INT16", "INT8")
 _GPU_PRECISION_LABEL_ORDER = (
   "Tensor IMMA (INT8/INT4)",
-  "Tensor HMMA (FP16/BF16)",
-  "Tensor DFMA (FP64)",
+  "Tensor HMMA (FP16/BF16/TF32/FP8)",
+  "Tensor DMMA (FP64)",
+  _GPU_TENSOR_UNATTRIBUTED_LABEL,
   "Tensor",
   "FP16",
   "FP32",
   "FP64",
+  "Integer pipe",
 )
 
 # Inset pie; legend is laid out *below* the figure (not inside the plot frame).
@@ -575,27 +591,27 @@ def _category10_palette_for_factors(factors: list[str]) -> list[str]:
 def _precision_mix_from_metric_values(
   metric_values: dict[str, float | None],
   metric_to_label: dict[str, str],
-  *,
-  skip_metrics: set[str] | None = None,
 ) -> dict[str, float]:
   """
-  Internal helper to handle precision mix from metric values.
+  Map each positive input metric to its wedge label (pie wedge values).
 
   Args:
-    metric_values (Dict[str, Optional[float]]): Mapping for metric values.
-    metric_to_label (Dict[str, str]): Mapping for metric to label.
-    skip_metrics (Optional[set[str]]): Skip metrics, or None when absent.
+    metric_values (dict[str, float | None]): Persisted metric name to value
+      (None for rows stored with a ``no_data_reason``).
+    metric_to_label (dict[str, str]): Input metric name to wedge label.
 
   Returns:
-    Dict[str, float]: Dict[str, float] produced by this call.
+    dict[str, float]: Wedge label to value, for values above 0 only.
 
   Examples:
-    >>> _precision_mix_from_metric_values({}, {}, None)  # doctest: +SKIP
+    >>> _precision_mix_from_metric_values(
+    ...   {"a": 2.0, "b": 0.0, "c": None}, {"a": "A", "b": "B", "c": "C"}
+    ... )
+    {'A': 2.0}
   """
-  skip = skip_metrics or set()
   out: dict[str, float] = {}
   for metric_name, label in metric_to_label.items():
-    if metric_name in skip or metric_name not in metric_values:
+    if metric_name not in metric_values:
       continue
     try:
       value = float(metric_values.get(metric_name))
@@ -652,28 +668,40 @@ def _gpu_precision_mix_from_metric_values(
   metric_values: dict[str, float | None],
 ) -> dict[str, float]:
   """
-  Prefer tensor IMMA/HMMA/DFMA splits over lumped ``avg_tensor_active``.
+  Build the GPU pie's pipe busy shares, preferring tensor splits.
+
+  When any IMMA / HMMA / DMMA split is positive the lumped
+  ``avg_tensor_active`` wedge is dropped and the part of it no split
+  explains, ``max(0, tensor - HMMA - IMMA - DMMA)``, becomes the
+  ``Tensor (unattributed)`` wedge when it exceeds
+  ``_GPU_TENSOR_UNATTRIBUTED_EPSILON``. Every wedge needs a positive value.
 
   Args:
-    metric_values (Dict[str, Optional[float]]): Mapping for metric values.
+    metric_values (dict[str, float | None]): Persisted metric name to value
+      (None for rows stored with a ``no_data_reason``).
 
   Returns:
-    Dict[str, float]: Dict[str, float] produced by this call.
+    dict[str, float]: Wedge label to pipe busy percent.
 
   Examples:
-    >>> _gpu_precision_mix_from_metric_values({})  # doctest: +SKIP
+    >>> mix = _gpu_precision_mix_from_metric_values(
+    ...   {"avg_tensor_active": 30.0, "avg_tensor_hmma_active": 20.0}
+    ... )
+    >>> mix["Tensor (unattributed)"], "Tensor" in mix
+    (10.0, False)
   """
-  skip: set[str] = set()
-  for split_metric in _GPU_TENSOR_SPLIT_METRICS:
-    try:
-      if float(metric_values.get(split_metric) or 0.0) > 0.0:
-        skip.add("avg_tensor_active")
-        break
-    except TypeError, ValueError:
-      continue
-  return _precision_mix_from_metric_values(
-    metric_values, _GPU_PRECISION_METRIC_TO_LABEL, skip_metrics=skip
+  mix = _precision_mix_from_metric_values(
+    metric_values, _GPU_PRECISION_METRIC_TO_LABEL
   )
+  split_total = sum(
+    mix.get(_GPU_PRECISION_METRIC_TO_LABEL[m], 0.0)
+    for m in _GPU_TENSOR_SPLIT_METRICS
+  )
+  if split_total > 0.0:
+    remainder = mix.pop("Tensor", 0.0) - split_total
+    if remainder > _GPU_TENSOR_UNATTRIBUTED_EPSILON:
+      mix[_GPU_TENSOR_UNATTRIBUTED_LABEL] = remainder
+  return mix
 
 
 def _pie_item_from_precision_mix(

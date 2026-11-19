@@ -1,6 +1,6 @@
 # Monitor variable rename table
 
-Generated 2026-06-17 from `docs/monitor_variable_rename_map.yaml`.
+Generated 2026-11-18 from `docs/monitor_variable_rename_map.yaml`.
 
 **Clean break:** no ingest aliases. Downstream must adopt new names.
 
@@ -13,7 +13,7 @@ Generated 2026-06-17 from `docs/monitor_variable_rename_map.yaml`.
 - `hpcperfstats/dbload/lib/sync_timedb_parsing_legacy.py`
 - `hpcperfstats/analysis/metrics/lib/metrics.py`
 - `tests/pipeline_e2e/monitor_payloads.py`
-- `hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.js`
+- `hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.ts`
 - `hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEventsLegacy.js`
 - `docs/MONITOR_VARIABLES.md`
 
@@ -23,11 +23,14 @@ Generated 2026-06-17 from `docs/monitor_variable_rename_map.yaml`.
 - `amd64_pmc` → `amd_x86_pmc`
 - `amd64_rapl` → `amd_x86_rapl`
 - `arm_imc` → `arm_aarch64_imc`
+- `beegfs` → `beegfs_client`
 - `block` → `host_block`
 - `cpu` → `host_cpu`
 - `cpu_counter_metrics` → `host_cpu_hw`
 - `host_ib_ext` → `host_ib`
 - `host_ib_sw` → `host_ib`
+- `host_mem_job` → `host_mem_job`
+- `host_power_socket` → `host_power_socket`
 - `ib` → `host_ib`
 - `ib_ext` → `host_ib`
 - `ib_sw` → `host_ib`
@@ -38,11 +41,14 @@ Generated 2026-06-17 from `docs/monitor_variable_rename_map.yaml`.
 - `intel_bdw_imc` → `intel_x86_uncore_imc_bdw`
 - `intel_bdw_qpi` → `intel_x86_uncore_qpi_bdw`
 - `intel_bdw_r2pci` → `intel_x86_uncore_r2pci_bdw`
+- `intel_emr_cha` → `intel_x86_uncore_cha_emr`
+- `intel_gnr_cha` → `intel_x86_uncore_cha_gnr`
 - `intel_hsw_cbo` → `intel_x86_uncore_cbo_hsw`
 - `intel_hsw_hau` → `intel_x86_uncore_hau_hsw`
 - `intel_hsw_imc` → `intel_x86_uncore_imc_hsw`
 - `intel_hsw_qpi` → `intel_x86_uncore_qpi_hsw`
 - `intel_hsw_r2pci` → `intel_x86_uncore_r2pci_hsw`
+- `intel_icx_cha` → `intel_x86_uncore_cha_icx`
 - `intel_icx_imc` → `intel_x86_uncore_imc_icx`
 - `intel_ivb_cbo` → `intel_x86_uncore_cbo_ivb`
 - `intel_ivb_hau` → `intel_x86_uncore_hau_ivb`
@@ -58,6 +64,7 @@ Generated 2026-06-17 from `docs/monitor_variable_rename_map.yaml`.
 - `intel_snb_imc` → `intel_x86_uncore_imc_snb`
 - `intel_snb_qpi` → `intel_x86_uncore_qpi_snb`
 - `intel_snb_r2pci` → `intel_x86_uncore_r2pci_snb`
+- `intel_spr_cha` → `intel_x86_uncore_cha_spr`
 - `intel_spr_imc` → `intel_x86_uncore_imc_spr`
 - `llite` → `lustre_llite`
 - `lnet` → `host_lnet`
@@ -80,7 +87,10 @@ Generated 2026-06-17 from `docs/monitor_variable_rename_map.yaml`.
 
 - `ACT_COUNT` → `dram_act_count`
 - `APERF` → `aperf`
+- `ARM_DRAM_BW_BYTES` → `arm_dram_bw_bytes`
 - `ARM_EST_FLOPS` → `arm_est_flops`
+- `ARM_INT16_OPS` → `arm_int16_ops`
+- `ARM_INT8_OPS` → `arm_int8_ops`
 - `Active` → `active`
 - `AnonHugePages` → `anon_huge_pages`
 - `AnonPages` → `anon_pages`
@@ -114,6 +124,10 @@ Generated 2026-06-17 from `docs/monitor_variable_rename_map.yaml`.
 - `INSTR_RETIRED_ANY` → `instr_retired_any`
 - `INST_RETIRED` → `instr_retired`
 - `Inactive` → `inactive`
+- `MBW_CHANNEL_0` → `dram_chan0_bytes`
+- `MBW_CHANNEL_1` → `dram_chan1_bytes`
+- `MBW_CHANNEL_2` → `dram_chan2_bytes`
+- `MBW_CHANNEL_3` → `dram_chan3_bytes`
 - `MERGE` → `fp_ops_merge`
 - `MPERF` → `mperf`
 - `MSR_CORE_ENERGY_STAT` → `core_energy`
@@ -155,8 +169,15 @@ Generated 2026-06-17 from `docs/monitor_variable_rename_map.yaml`.
 - `WRITE_rtt` → `write_rtt`
 - `WRITE_timeouts` → `write_timeouts`
 - `Writeback` → `writeback`
+- `amd_fp_dp_ops` → `amd_fp_dp_ops`
+- `arm_fp_dp_spec` → `arm_fp_dp_spec`
+- `arm_fp_hp_spec` → `arm_fp_hp_spec`
+- `arm_fp_sp_spec` → `arm_fp_sp_spec`
+- `compute_engine_util` → `compute_engine_util`
 - `dram_active` → `gpu_dram_active`
 - `fb_free` → `gpu_mem_free_mb`
+- `fp_ops_retired` → `fp_ops_retired`
+- `integer_active` → `integer_active`
 - `mem_total_mb` → `gpu_mem_total_mb`
 - `mem_used_mb` → `gpu_mem_used_mb`
 - `mem_util` → `gpu_mem_util`
@@ -165,9 +186,13 @@ Generated 2026-06-17 from `docs/monitor_variable_rename_map.yaml`.
 - `pcie_replay_counter` → `gpu_pcie_replay_counter`
 - `pcie_rx_bytes` → `gpu_pcie_rx_bytes`
 - `pcie_tx_bytes` → `gpu_pcie_tx_bytes`
+- `pmu_enabled_time` → `pmu_enabled_time`
+- `pmu_running_time` → `pmu_running_time`
+- `pmu_solo_running_time` → `pmu_solo_running_time`
 - `rx_bytes` → `sw_rx_bytes`
 - `rx_packets` → `sw_rx_packets`
 - `sm_clock` → `gpu_sm_clock`
+- `tensor_dmma_active` → `tensor_dmma_active`
 - `tx_bytes` → `sw_tx_bytes`
 - `tx_packets` → `sw_tx_packets`
 
@@ -218,6 +243,8 @@ Generated 2026-06-17 from `docs/monitor_variable_rename_map.yaml`.
 - `intel_x86_pmc_knl`
 - `intel_x86_uncore_edc_knl`
 - `intel_x86_uncore_mc_knl`
+- `amd_x86_pmc`
+- `amd_x86_uncore_df`
 - `CTL0`
 - `CTL1`
 - `CTL2`

@@ -489,14 +489,14 @@ Real values are unsigned on the wire. When the monitor could not read one metric
 | -4 | `PERMISSION_DENIED` | OS denied access | chain-breaking, static |
 | -5 | `PMU_BUSY` | Hardware counter held by another program | chain-breaking, transient |
 | -6 | `NOT_SCHEDULED` | Event multiplexed out for the whole interval | chain-breaking, transient |
-| -7 | `BACKEND_ERROR` | Library/API session failure (DCGM, MAD, LIKWID) | bridgeable, transient |
+| -7 | `BACKEND_ERROR` | Library/API session failure (DCGM, MAD) | bridgeable, transient |
 | -8 | `INVALID_VALUE` | Value read but rejected as non-physical | bridgeable, transient |
 | -9 | `BACKOFF` | Source in failure backoff, not queried this cycle | bridgeable, transient |
 | -10 | `NOT_BUILT` | Needs a backend not compiled into this build | chain-breaking, static |
 | -11 | `COUNTER_RESET` | Hardware counter restarted; this interval is unknown | chain-breaking, transient |
 | other < 0 | `UNKNOWN` | Code newer than the consumer's catalog | chain-breaking, transient |
 
-**Bridgeable** codes mean the source counter kept running, so the next valid sample's `delta` spans the gap. **Chain-breaking** codes start a new chain (next `delta` NaN). On `host_cpu_hw` every bridgeable code is chain-breaking unless the `$build` slug has `x86perf` or lacks `likwid`. Sentinel rows keep the code in `host_data.value` with `delta` / `arc` NULL; readers exclude `value < 0`.
+**Bridgeable** codes mean the source counter kept running, so the next valid sample's `delta` spans the gap. **Chain-breaking** codes start a new chain (next `delta` NaN). On `host_cpu_hw` every bridgeable code is chain-breaking for rows from x86 builds before monitor 3.1 Phases 2+3 (`$build` slug with the historical `likwid` token and no `x86perf`); direct-perf x86 (`x86perf`) and Grace rows bridge. Sentinel rows keep the code in `host_data.value` with `delta` / `arc` NULL; readers exclude `value < 0`.
 
 ---
 

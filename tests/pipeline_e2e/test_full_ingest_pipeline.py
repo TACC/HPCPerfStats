@@ -25,12 +25,18 @@ from .constants import (
     PIPELINE_E2E_HOST_SHORT,
     PIPELINE_E2E_JID,
     PIPELINE_E2E_USERNAME,
+    PIPELINE_E2E_X86_JOBS,
 )
 from .monitor_payloads import (
     PMU_SHARING_E2E_OUTSIDE_PCT,
     PMU_SHARING_E2E_RUNNING_PCT,
+    X86_E2E_AMD_EXPECTED,
+    X86_E2E_INTEL_EXPECTED,
     pipeline_e2e_publish_bodies_multihost,
+    pipeline_e2e_x86_publish_bodies,
 )
+
+_X86_EXPECTED = {"intel": X86_E2E_INTEL_EXPECTED, "amd": X86_E2E_AMD_EXPECTED}
 
 
 @pytest.mark.django_db(transaction=True)
@@ -44,6 +50,11 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
   host_ext = cfg.get_host_name_ext().strip().lstrip(".")
   fqdn = "{}.{}".format(PIPELINE_E2E_HOST_SHORT, host_ext)
   fqdn2 = "{}.{}".format(PIPELINE_E2E_HOST_SHORT + "b", host_ext)
+  x86_fqdn = {
+      vendor: f"{short}.{host_ext}"
+      for vendor, (_jid, short) in PIPELINE_E2E_X86_JOBS.items()
+  }
+  x86_jids = [jid for jid, _short in PIPELINE_E2E_X86_JOBS.values()]
 
   kh = ApiKey.hash_raw_key(PIPELINE_E2E_API_RAW_KEY)
   ApiKey.objects.filter(key=kh).delete()
@@ -55,10 +66,11 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
   )
 
   # Keep this test restart-safe/idempotent across repeated workflow runs.
-  metrics_data.objects.filter(jid_id=PIPELINE_E2E_JID).delete()
-  job_plot_artifact.objects.filter(jid_id=PIPELINE_E2E_JID).delete()
-  host_data.objects.filter(host__in=[fqdn, fqdn2]).delete()
-  job_data.objects.filter(jid=PIPELINE_E2E_JID).delete()
+  all_jids = [PIPELINE_E2E_JID, *x86_jids]
+  metrics_data.objects.filter(jid_id__in=all_jids).delete()
+  job_plot_artifact.objects.filter(jid_id__in=all_jids).delete()
+  host_data.objects.filter(host__in=[fqdn, fqdn2, *x86_fqdn.values()]).delete()
+  job_data.objects.filter(jid__in=all_jids).delete()
   now = django_timezone.now()
   if now.tzinfo is None:
     now = now.replace(tzinfo=dt_timezone.utc)
@@ -77,6 +89,19 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
       nhosts=2,
       ncores=4,
   )
+  for jid, short in PIPELINE_E2E_X86_JOBS.values():
+    job_data.objects.create(
+        jid=jid,
+        submit_time=start_job,
+        start_time=start_job,
+        end_time=end_job,
+        username=PIPELINE_E2E_USERNAME,
+        host_list=[short],
+        state="COMPLETED",
+        runtime=7200.0,
+        nhosts=1,
+        ncores=2,
+    )
 
   epoch_samples = [
       start_job.timestamp(),
@@ -92,6 +117,13 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
       jid=PIPELINE_E2E_JID,
       epoch_samples=epoch_samples,
   )
+  for vendor, (jid, _short) in PIPELINE_E2E_X86_JOBS.items():
+    bodies += pipeline_e2e_x86_publish_bodies(
+        fqdn=x86_fqdn[vendor],
+        jid=jid,
+        vendor=vendor,
+        epoch_samples=epoch_samples,
+    )
 
   os.makedirs(cfg.get_daily_archive_dir_path(), exist_ok=True)
   queue_name = cfg.get_rmq_queue()
@@ -174,6 +206,24 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
         "%s: expected ~%.1f from synthetic PMU counters, got %r"
         % (metric, want, got)
     )
+  # x86 direct perf (monitor 3.1 Phases 2+3): Intel SPR Max FP_ARITH
+  # instructions + HBM CAS + wrapping RAPL, AMD Zen5 FLOP lifetimes. The
+  # same numbers are proven on the host by test_pipeline_e2e_x86_payloads.
+  assert host_data.objects.filter(
+      type="host_cpu_hw", event="amd_fp_dp_ops", value__gt=0,
+  ).exists()
+  assert host_data.objects.filter(
+      type="intel_x86_uncore_imc_spr", event="hbm_cas_reads",
+  ).exists()
+  for vendor, (jid, _short) in PIPELINE_E2E_X86_JOBS.items():
+    x86_rows = list(metrics_data.objects.filter(jid_id=jid))
+    assert {r.metric for r in x86_rows} == catalog_metrics, jid
+    x86_values = {r.metric: r.value for r in x86_rows}
+    for metric, want in _X86_EXPECTED[vendor].items():
+      got = x86_values.get(metric)
+      assert got is not None and abs(float(got) - want) <= 0.01 * abs(want), (
+          f"{jid} {metric}: expected ~{want:.3f}, got {got!r}"
+      )
   numeric = sum(1 for r in rows if r.value is not None)
   # NFS detail + a few ratio/imbalance metrics may stay ``None`` with reasons.
   assert numeric >= 35, (

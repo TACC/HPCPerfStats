@@ -39,16 +39,18 @@ SUMMARY_METRIC_DESCRIPTIONS: dict[str, str] = {
     "(MBW_CHANNEL_*), in GB/s."
   ),
   "amd_flops": (
-    "Floating-point operation rate from AMD PMC FLOPS events "
-    "(32b + 64b), in GFLOP/s."
+    "Floating-point operation rate from the AMD retired FLOPs counter "
+    "(fp_ops_retired, all precisions), in GFLOP/s."
   ),
   "flops64b": (
     "Double-precision floating-point operation rate from Intel FP_ARITH "
-    "or equivalent core PMCs, in GFLOP/s."
+    "(instructions times vector lanes) or AMD Zen5 double-precision FLOPs, "
+    "in GFLOP/s."
   ),
   "flops32b": (
     "Single-precision floating-point operation rate from Intel FP_ARITH "
-    "or equivalent core PMCs, in GFLOP/s."
+    "(instructions times vector lanes) or AMD Zen5 FLOPs minus "
+    "double-precision FLOPs, in GFLOP/s."
   ),
   "instr": (
     "Retired instruction rate from core performance counters "
@@ -70,7 +72,8 @@ SUMMARY_METRIC_DESCRIPTIONS: dict[str, str] = {
     "(scaled by a fixed factor in this plot)."
   ),
   "watts": (
-    "Intel package power estimated from RAPL MSR_PKG_ENERGY_STATUS deltas, in watts."
+    "Intel package power from the RAPL package energy counter (mJ) deltas, "
+    "in watts."
   ),
   "cha_counter_arc_sum": (
     "Sum of selected Intel CHA (uncore) arc counters present in the job "
@@ -93,7 +96,8 @@ SUMMARY_METRIC_DESCRIPTIONS: dict[str, str] = {
     "HMMA (FP16/BF16) tensor-pipe activity percentage from DCGM when available."
   ),
   "nv_tensor_dfma_active": (
-    "DFMA (FP64) tensor-pipe activity percentage from DCGM when available."
+    "FP64 FMA pipe busy percentage from DCGM (DFMA), same as FP64 on "
+    "Hopper/Blackwell; it is not a tensor pipe."
   ),
   "nv_tensor_active": (
     "Lumped any-tensor-pipe activity percentage from DCGM; shown only when "
@@ -240,7 +244,8 @@ SUMMARY_METRIC_RESEARCHER_USE: dict[str, str] = {
     "FP16/BF16 tensor-core phases versus scalar FP pipes for precision policy changes."
   ),
   "nv_tensor_dfma_active": (
-    "FP64 tensor-path activity versus scalar FP64 for double-precision GPU kernels."
+    "Read with FP64 pipe activity for double-precision GPU kernels; FP64 "
+    "matrix work on tensor cores shows as tensor DMMA."
   ),
   "nv_tensor_active": (
     "Fallback any-pipe tensor activity when IMMA/HMMA/DFMA splits are not present."

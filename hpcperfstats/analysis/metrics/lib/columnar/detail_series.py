@@ -34,6 +34,7 @@ from hpcperfstats.analysis.metrics.lib.columnar.kernels import AggTable
 from hpcperfstats.analysis.metrics.lib.columnar.series_frame import SeriesFrame
 from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
   NODE_POWER_CPU_COLUMNS,
+  RAPL_MJ_RATE_TO_W,
   add_node_power_est_column,
   agg_if_feasible,
   dcgm_cpu_power_util_agg,
@@ -424,8 +425,8 @@ def node_power_est_frame(jt: Any) -> SeriesFrame:
   if frame.empty:
     return frame
   rows = (
-    ("intel_x86_rapl", "arc", ["pkg_energy"], "watts", 0.00001526),
-    ("amd_x86_rapl", "arc", ["pkg_energy"], "amd_pkg_w", 0.00001526),
+    ("intel_x86_rapl", "arc", ["pkg_energy"], "watts", RAPL_MJ_RATE_TO_W),
+    ("amd_x86_rapl", "arc", ["pkg_energy"], "amd_pkg_w", RAPL_MJ_RATE_TO_W),
     ("nvidia_gpu", "value", ["power_usage"], "nv_power_w", 1.0),
     # Retired monitor keys (D33): history rows only.
     ("nvidia_gpu", "value", ["module_power_usage"], "nv_module_power_w", 1.0),

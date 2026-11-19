@@ -9,7 +9,6 @@ arrays. No pandas.
 
 Attributes:
   log: Module logger.
-  _CAS_BW_CONV: 64 B per CAS to GB/s.
   _BYTES_TO_MB: Bytes to MiB.
   _BYTES_TO_GBPS: Bytes to decimal GB/s.
   _BYTES_TO_GB: Alias of ``_BYTES_TO_GBPS`` for GPU rate plots.
@@ -47,6 +46,15 @@ from hpcperfstats.analysis.metrics.lib.beegfs_metadata_iops_events import (
 )
 from hpcperfstats.analysis.metrics.lib.bokeh_job_embed import figure_embed_kw
 from hpcperfstats.analysis.metrics.lib.columnar.series_frame import SeriesFrame
+from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
+  RAPL_MJ_RATE_TO_W,
+)
+from hpcperfstats.analysis.metrics.lib.gen.cpu_fp_events import (
+  INTEL_FP_ARITH_DOUBLE_LANES,
+  INTEL_FP_ARITH_SINGLE_LANES,
+  amd_flop_type_names,
+)
+from hpcperfstats.analysis.metrics.lib.gen.imc_cas_bw import DDR_CAS_GIB
 from hpcperfstats.analysis.metrics.lib.gen.utils import (
   hover_plain_columns,
   non_degenerate_y_range_for_series,
@@ -78,10 +86,14 @@ from hpcperfstats.analysis.metrics.lib.plot.summary_metric_descriptions import (
   researcher_use_for_summary_metric,
 )
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+  AMD_FP_DP_OPS,
+  FP_OPS_RETIRED,
+  HOST_CPU_HW_TYPE,
   INTEL_FP_ARITH_DOUBLE_EVENTS,
   INTEL_FP_ARITH_SINGLE_EVENTS,
 )
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+  amd_df_bw_event_conv_tries,
   aperf_event_names,
   core_pmc_types_probe_order,
   events_probe_names,
@@ -133,9 +145,6 @@ def _cycled_d3_category20_palette(n: Any) -> Any:
   if n <= 0:
     return []
   return [base[i % len(base)] for i in range(n)]
-
-
-_CAS_BW_CONV = 64 / (1024 * 1024 * 1024)
 
 
 _BYTES_TO_MB = 1 / (1024 * 1024)
@@ -230,14 +239,6 @@ def _grace_fp_scalar_tries(events: Any, conv: Any) -> Any:
 _SUMMARY_SINGLE_SPECS = [
   (
     "amd_x86_pmc",
-    "arc",
-    ["fp_ops_retired"],
-    "amd_flops",
-    1e-9,
-    "CPU FLOPS32b+64b[GF]",
-  ),
-  (
-    "amd_x86_pmc",
     "value",
     list(instr_retired_event_names()),
     "amd_instr",
@@ -265,7 +266,7 @@ _SUMMARY_SINGLE_SPECS = [
     "arc",
     list(pkg_energy_event_names()),
     "watts",
-    0.00001526,
+    RAPL_MJ_RATE_TO_W,
     "CPU package power [W]",
   ),
   (
@@ -273,7 +274,7 @@ _SUMMARY_SINGLE_SPECS = [
     "arc",
     list(pkg_energy_event_names()),
     "amd_pkg_w",
-    0.00001526,
+    RAPL_MJ_RATE_TO_W,
     "CPU package power (AMD) [W]",
   ),
   (
@@ -597,24 +598,41 @@ _SUMMARY_TENSOR_SPLIT_METRICS = (
 
 
 # First typename with full host/time coverage wins (same column name).
+# Weighted tries list ``(event, weight)`` pairs: lowercase Intel FP_ARITH
+# instruction counts times lanes, and Zen5 single precision as total FLOPs
+# minus double-precision FLOPs.
 _SUMMARY_FIRST_WIN_SPECS = (
+  {
+    "name": "amd_flops",
+    "val_col": "arc",
+    "label": "CPU FLOPS32b+64b[GF]",
+    "tries": [(t, [FP_OPS_RETIRED], 1e-9) for t in amd_flop_type_names()],
+  },
   {
     "name": "flops64b",
     "val_col": "arc",
     "label": "CPU FLOPS64b[GF]",
-    "tries": (
-      _intel_core_tries(INTEL_FP_ARITH_DOUBLE_EVENTS, 1e-9)
-      + _grace_fp_scalar_tries(grace_fp_scalar_double_event_names(), 1e-9)
-    ),
+    "tries": [
+      *_intel_core_tries(INTEL_FP_ARITH_DOUBLE_EVENTS, 1e-9),
+      (HOST_CPU_HW_TYPE, list(INTEL_FP_ARITH_DOUBLE_LANES), 1e-9),
+      (HOST_CPU_HW_TYPE, [AMD_FP_DP_OPS], 1e-9),
+      *_grace_fp_scalar_tries(grace_fp_scalar_double_event_names(), 1e-9),
+    ],
   },
   {
     "name": "flops32b",
     "val_col": "arc",
     "label": "CPU FLOPS32b[GF]",
-    "tries": (
-      _intel_core_tries(INTEL_FP_ARITH_SINGLE_EVENTS, 1e-9)
-      + _grace_fp_scalar_tries(grace_fp_scalar_single_event_names(), 1e-9)
-    ),
+    "tries": [
+      *_intel_core_tries(INTEL_FP_ARITH_SINGLE_EVENTS, 1e-9),
+      (HOST_CPU_HW_TYPE, list(INTEL_FP_ARITH_SINGLE_LANES), 1e-9),
+      (
+        HOST_CPU_HW_TYPE,
+        [(FP_OPS_RETIRED, 1.0), (AMD_FP_DP_OPS, -1.0)],
+        1e-9,
+      ),
+      *_grace_fp_scalar_tries(grace_fp_scalar_single_event_names(), 1e-9),
+    ],
   },
   {
     "name": "instr",
@@ -666,8 +684,9 @@ def _summary_metric_specs() -> Any:
   )
   for fw in _SUMMARY_FIRST_WIN_SPECS:
     out.append(("", fw["val_col"], [], fw["name"], 0, fw["label"]))
-  out.append(("intel_imc", "arc", [], "mbw", _CAS_BW_CONV, "CPU DRAMBW[GB/s]"))
-  out.append(("", "arc", [], "amd_mbw", 1 / (1024**3), "CPU DRAMBW[GB/s]"))
+  out.append(("intel_imc", "arc", [], "mbw", DDR_CAS_GIB, "CPU DRAMBW[GB/s]"))
+  df_conv = amd_df_bw_event_conv_tries()[0][1]
+  out.append(("", "arc", [], "amd_mbw", df_conv, "CPU DRAMBW[GB/s]"))
   out.append(("", "", [], "cha_counter_arc_sum", 0, "CPU CHA uncore [#/s]"))
   out.append(("", "", [], "node_power_est_w", 0, "Node power [W]"))
   return out

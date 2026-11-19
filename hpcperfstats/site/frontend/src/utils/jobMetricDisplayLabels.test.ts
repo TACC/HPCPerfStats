@@ -24,6 +24,24 @@ describe("getJobMetricShortLabel", () => {
     expect(getJobMetricShortLabel("avg_fp16_instr")).toBe("Average CPU FP16 instruction rate");
   });
 
+  it("labels the GPU pipe and PVC compute engine metrics", () => {
+    expect(getJobMetricShortLabel("avg_integer_active")).toBe(
+      "Average GPU integer pipeline activity",
+    );
+    expect(getJobMetricShortLabel("avg_tensor_dmma_active")).toBe(
+      "Average GPU tensor DMMA (FP64) activity",
+    );
+    expect(getJobMetricShortLabel("avg_tensor_hmma_active")).toBe(
+      "Average GPU tensor HMMA (FP16/BF16/TF32/FP8) activity",
+    );
+    expect(getJobMetricShortLabel("avg_tensor_dfma_active")).toBe(
+      "FP64 FMA pipe (same as FP64 on Hopper/Blackwell)",
+    );
+    expect(getJobMetricShortLabel("avg_compute_engine_util")).toBe(
+      "Average Intel PVC compute engine busy",
+    );
+  });
+
   it("labels vector share metrics with percent wording", () => {
     expect(getJobMetricShortLabel("vecpercent_64b")).toMatch(/%/);
     expect(getJobMetricShortLabel("vecpercent_32b")).toMatch(/%/);

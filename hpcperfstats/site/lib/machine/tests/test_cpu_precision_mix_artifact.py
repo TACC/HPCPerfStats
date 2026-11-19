@@ -26,10 +26,11 @@ _GPU_INPUTS = (
   "avg_tensor_active",
   "avg_tensor_imma_active",
   "avg_tensor_hmma_active",
-  "avg_tensor_dfma_active",
+  "avg_tensor_dmma_active",
   "avg_fp16_active",
   "avg_fp32_active",
   "avg_fp64_active",
+  "avg_integer_active",
 )
 
 

@@ -209,7 +209,9 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 # 23 (2026-11-05): Summary node power estimate reads host_power_socket (D35).
 # 24 (2026-11-17): sentinel samples are gaps, not 0; an all-sentinel
 # host_mem_job falls back to host_mem.
-APP_PLOT_ARTIFACT_SCHEMA_VERSION = 24
+# 25 (2026-11-18): Summary hover help changed (DFMA is the FP64 FMA pipe,
+# x86 direct-perf FLOP / RAPL series text), embedded in the json_item.
+APP_PLOT_ARTIFACT_SCHEMA_VERSION = 25
 
 JOB_PLOT_JSON_KEYS: dict[str, tuple[str, str]] = {
   kind: (spec.json_item_key, spec.unavailable_reason_key)

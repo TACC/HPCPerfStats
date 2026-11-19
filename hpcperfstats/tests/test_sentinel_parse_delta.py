@@ -169,11 +169,21 @@ def test_w48_wrap_across_bridge():
   assert _row(out, 120.0)["delta"] == 150
 
 
+# Real monitor 3.1 x86 slug: direct perf readers, ``x86perf``, no ``likwid``.
+_X86PERF_31_SLUG = (
+  "x86_64-ver3.1-hw-ib-nvgpu-intelgpu-lustre-beegfs-x86perf-sent1-slowtier1"
+)
+# Monitor 3.0 x86 slug (LIKWID): still seen on old hosts and archived data.
+_LIKWID_30_SLUG = "x86_64-ver3.0-hw-ib-likwid-full"
+
+
 @pytest.mark.parametrize("code", ["-1", "-3", "-7", "-8", "-9"])
 @pytest.mark.parametrize(
-  "build", ["x86_64-ver3.1-hw-ib-likwid-full", None], ids=["likwid", "nobuild"]
+  "build", [_LIKWID_30_SLUG, None], ids=["likwid30", "nobuild"]
 )
-def test_likwid_host_cpu_hw_bridgeable_codes_break_chain(code, build):
+def test_history_likwid30_host_cpu_hw_bridgeable_codes_break_chain(code, build):
+  """3.0 history: a LIKWID slug (or no ``$build``) leaves the
+  ``host_cpu_hw`` bridge unproven, so a bridgeable gap breaks the chain."""
   out = _run(
     [
       _HW_SCHEMA,
@@ -186,28 +196,52 @@ def test_likwid_host_cpu_hw_bridgeable_codes_break_chain(code, build):
   assert _nan(_row(out, 120.0)["delta"])
 
 
+@pytest.mark.parametrize("code", ["-1", "-3", "-7", "-8", "-9"])
 @pytest.mark.parametrize(
   "build",
-  ["x86_64-ver3.1-hw-ib-likwid-x86perf-full", "aarch64-ver3.1-hw-arm-full"],
-  ids=["x86perf", "arm"],
+  [
+    _X86PERF_31_SLUG,
+    "x86_64-ver3.1-hw-ib-likwid-x86perf-full",
+    "aarch64-ver3.1-hw-arm-full",
+  ],
+  ids=["x86perf31", "likwid_and_x86perf", "arm"],
 )
-def test_proven_host_cpu_hw_builds_bridge(build):
+def test_proven_host_cpu_hw_builds_bridge(code, build):
+  """3.1 x86perf (and ARM) prove the bridge: a bridgeable gap is spanned,
+  not downgraded to a chain break; ``x86perf`` wins over ``likwid``."""
   out = _run(
     [
       _HW_SCHEMA,
       *_header(build=build),
       *_samples(
-        "host_cpu_hw", "0", [(100.0, "10"), (110.0, "-1"), (120.0, "30")]
+        "host_cpu_hw", "0", [(100.0, "10"), (110.0, code), (120.0, "30")]
       ),
     ]
   )
   assert _row(out, 120.0)["delta"] == 20
 
 
-def test_likwid_override_leaves_other_types_bridging():
+def test_x86perf31_bridge_arc_over_real_dt():
+  """3.1 x86perf ``host_cpu_hw`` bridged arc spans the real 20 s gap."""
+  out = _run(
+    [
+      _HW_SCHEMA,
+      *_header(build=_X86PERF_31_SLUG),
+      *_samples(
+        "host_cpu_hw", "0", [(100.0, "10"), (110.0, "-3"), (120.0, "50")]
+      ),
+    ]
+  )
+  row = _row(out, 120.0)
+  assert row["delta"] == 40
+  assert row["arc"] == pytest.approx(2.0)
+
+
+def test_history_likwid30_override_leaves_other_types_bridging():
+  """3.0 history: the LIKWID override is scoped to ``host_cpu_hw``."""
   out = _ib(
     [(100.0, "1000"), (110.0, "-3"), (120.0, "1300")],
-    build="x86_64-ver3.1-hw-ib-likwid-full",
+    build=_LIKWID_30_SLUG,
   )
   assert _row(out, 120.0)["delta"] == 300
 

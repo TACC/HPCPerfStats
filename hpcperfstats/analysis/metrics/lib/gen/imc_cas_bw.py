@@ -1,10 +1,17 @@
 """
 Combine Intel IMC DDR (dram_cas_*) and SPR HBM (hbm_cas_*) measured BW scalars.
 
-Same 64 B/CAS conversion is applied by callers before passing scalars here.
-Absent or non-finite sides are ignored; when both sides are usable they are
-summed. Per-sample series are combined by
-``columnar.summary_series.combine_bw``.
+Callers convert CAS counts to GiB/s before combining: a DDR CAS moves
+``DDR_CAS_BYTES`` and an HBM2e pseudo-channel CAS moves ``HBM_CAS_BYTES``
+(measured on SPR Max against the bytes a read kernel streamed). Absent or
+non-finite sides are ignored; when both sides are usable they are summed.
+Per-sample series are combined by ``columnar.summary_series.combine_bw``.
+
+Attributes:
+  DDR_CAS_BYTES: Bytes per DDR ``dram_cas_*`` count.
+  HBM_CAS_BYTES: Bytes per SPR HBM ``hbm_cas_*`` count.
+  DDR_CAS_GIB: GiB per DDR CAS count (``conv`` for GiB/s rates).
+  HBM_CAS_GIB: GiB per HBM CAS count (``conv`` for GiB/s rates).
 """
 
 from __future__ import annotations
@@ -12,6 +19,11 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+
+DDR_CAS_BYTES = 64
+HBM_CAS_BYTES = 32
+DDR_CAS_GIB = DDR_CAS_BYTES / (1024**3)
+HBM_CAS_GIB = HBM_CAS_BYTES / (1024**3)
 
 
 def _scalar_usable(value: Any) -> bool:

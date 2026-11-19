@@ -68,12 +68,54 @@ POST_GOLDEN_SHARING_METRICS = {
   "avg_pmu_running_pct": ("pmu_running_time", "pmu_enabled_time"),
   "avg_pmu_outside_pct": ("pmu_running_time", "pmu_solo_running_time"),
 }
+# GPU percent gauges added after the capture: metric -> (type, event),
+# checked against an independent job_value_mean. Contract 14: nvidia_gpu
+# pipe busy; contract 15: intel_gpu (PVC) compute engine busy.
+POST_GOLDEN_GPU_GAUGE_METRICS = {
+  "avg_integer_active": ("nvidia_gpu", "integer_active"),
+  "avg_tensor_dmma_active": ("nvidia_gpu", "tensor_dmma_active"),
+  "avg_compute_engine_util": ("intel_gpu", "compute_engine_util"),
+}
+# The capture converted the RAPL ``pkg_energy`` arcs (mJ/s of a running mJ
+# total) to watts with a raw MSR energy unit (2^-16 J) instead of
+# ``RAPL_MJ_RATE_TO_W``. The corpus is compared at the capture factor
+# (``capture_golden_scales``); the watt conversion has its own unit tests.
+GOLDEN_RAPL_CAPTURE_CONV = 0.00001526
+# Capture factor: the capture converted AMD DF ``dram_chanN_bytes`` beats as
+# one byte each, not ``AMD_DF_BYTES_PER_BEAT``, so ``avg_mbw`` / ``amd_mbw``
+# are compared at that factor; test_amd_df_beat_bytes.py covers the real one.
+GOLDEN_AMD_DF_CAPTURE_BYTES_PER_BEAT = 1
 # Units text changed on purpose after the capture (contract 8, O10):
 # (metric, golden units) -> current units. Values are never mapped.
 GOLDEN_UNITS_UPDATES = {
   ("avg_arm_int8_ops", "Gops"): "Ginstr/s",
   ("avg_arm_int16_ops", "Gops"): "Ginstr/s",
 }
+
+
+def capture_golden_scales(monkeypatch):
+  """Make the RAPL watt and AMD DF bandwidth columns use the capture's
+  conversion factors."""
+  from hpcperfstats.analysis.metrics.lib.columnar import detail_series
+  from hpcperfstats.analysis.metrics.lib.plot import summaryplot
+  from hpcperfstats.dbload.lib.monitor_naming import canonical
+
+  monkeypatch.setattr(
+    canonical, "AMD_DF_BYTES_PER_BEAT", GOLDEN_AMD_DF_CAPTURE_BYTES_PER_BEAT
+  )
+  monkeypatch.setattr(
+    detail_series, "RAPL_MJ_RATE_TO_W", GOLDEN_RAPL_CAPTURE_CONV
+  )
+  monkeypatch.setattr(
+    summaryplot,
+    "_SUMMARY_SINGLE_SPECS",
+    [
+      (*spec[:4], GOLDEN_RAPL_CAPTURE_CONV, spec[5])
+      if spec[3] in ("watts", "amd_pkg_w")
+      else spec
+      for spec in summaryplot._SUMMARY_SINGLE_SPECS
+    ],
+  )
 
 
 def _pmu_sharing_oracle(table, metric):
@@ -255,9 +297,10 @@ def _golden_frame_rows(columns: dict) -> dict[tuple[str, int], int]:
 
 
 @pytest.mark.parametrize("jid", _JIDS or ["__no_corpus__"])
-def test_summary_series_matches_golden(jid, golden_jobs):
+def test_summary_series_matches_golden(jid, golden_jobs, monkeypatch):
   if jid == "__no_corpus__":
     pytest.skip("golden corpus absent")
+  capture_golden_scales(monkeypatch)
   table, golden = golden_jobs[jid]
   gs = golden["series"]["summary"]
   try:
@@ -391,6 +434,7 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
 
   table, golden = golden_jobs[jid]
   gm = golden["metrics"]
+  capture_golden_scales(monkeypatch)
   monkeypatch.setattr(metrics_mod, "open_job_table", lambda job, **_kw: table)
   monkeypatch.setattr(
     metrics_mod,
@@ -426,11 +470,18 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
   post_golden = sorted(set(got) - set(exp))
   assert {k[1] for k in post_golden} == set(POST_GOLDEN_METRIC_EVENTS) | set(
     POST_GOLDEN_SHARING_METRICS
-  ), f"jid={jid} unexpected post-golden rows {post_golden}"
+  ) | set(POST_GOLDEN_GPU_GAUGE_METRICS), (
+    f"jid={jid} unexpected post-golden rows {post_golden}"
+  )
   for key in post_golden:
     row = got.pop(key)
     if key[1] in POST_GOLDEN_SHARING_METRICS:
       oracle = _pmu_sharing_oracle(table, key[1])
+    elif key[1] in POST_GOLDEN_GPU_GAUGE_METRICS:
+      gauge_type, gauge_event = POST_GOLDEN_GPU_GAUGE_METRICS[key[1]]
+      oracle = metrics_mod.Metrics().job_value_mean(
+        table, typename=gauge_type, events=[gauge_event], conv=1.0
+      )
     else:
       oracle = metrics_mod.Metrics().job_arc(
         table,

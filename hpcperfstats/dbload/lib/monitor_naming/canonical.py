@@ -2,8 +2,12 @@
 Canonical monitor st_name and event keys (current hpcperfstatsd emission).
 
 Attributes:
+  AMD_DF_BYTES_PER_BEAT: Bytes per AMD DF ``dram_chanN_bytes`` count; the
+    keys hold DRAM data beats in every monitor era, never bytes.
   AMD_DF_STATS_TYPES: Attribute.
   AMD_DF_TYPE: Attribute.
+  AMD_FP_DP_OPS: AMD Zen5 ``host_cpu_hw`` double-precision FLOP lifetime
+    (direct perf, ``E,W=64,U=FLOP``); other CPU classes store a sentinel.
   AMD_PMC_TYPE: Attribute.
   AMD_RAPL_STATS_TYPES: Attribute.
   APERF: Attribute.
@@ -24,7 +28,8 @@ Attributes:
   DRAM_CAS_READS: Attribute.
   DRAM_CAS_WRITES: Attribute.
   DRAM_CHAN_BYTES_EVENTS: Attribute.
-  FP_OPS_RETIRED: Attribute.
+  FP_OPS_RETIRED: AMD ``host_cpu_hw`` total FLOP lifetime (Zen3, Zen4 and
+    Zen5; ``E,W=64,U=FLOP``).
   GRACE_FP_ARITH_SCALAR_DOUBLE: Attribute.
   GPU_STATS_TYPES: GPU ``host_data.type`` names (keep hardware ``dev``;
     shared-node stamping skips them).
@@ -50,7 +55,12 @@ Attributes:
   INTEL_CORE_PMC_TYPES_ORDERED: Attribute.
   INTEL_FP_ARITH_ALL_EVENTS: Attribute.
   INTEL_FP_ARITH_DOUBLE_EVENTS: Attribute.
+  INTEL_FP_ARITH_KEYS: Lowercase direct-perf Intel ``host_cpu_hw``
+    ``fp_arith_inst_retired_*`` keys (retired instructions), double then
+    single precision.
   INTEL_FP_ARITH_SINGLE_EVENTS: Attribute.
+  INTEL_GPU_COMPUTE_ENGINE_UTIL: ``intel_gpu`` (PVC) compute engine group
+    busy percent, max over tiles (XPU Manager).
   INTEL_IMC_STATS_TYPES: Attribute.
   INTEL_LEGACY_SSE_FLOP_EVENTS: Attribute.
   INTEL_RAPL_STATS_TYPES: Attribute.
@@ -61,14 +71,18 @@ Attributes:
   MEM_TOTAL: Attribute.
   MEM_USED: Attribute.
   MPERF: Attribute.
+  NVIDIA_GPU_INTEGER_ACTIVE: ``nvidia_gpu`` integer pipe busy percent
+    (absent on A100).
+  NVIDIA_GPU_TENSOR_DMMA_ACTIVE: ``nvidia_gpu`` FP64 tensor-core (DMMA)
+    busy percent; NOT_PRESENT on the DCGM path, real on the GPM path.
   PKG_ENERGY: Attribute.
   PMC_TYPENAME_PRIORITY: Attribute.
-  PMU_ENABLED_TIME: Grace PMU enabled-time lifetime in ns (``host_cpu_hw`` and
-    ``arm_aarch64_imc``, monitor 3.1 Phase 1b).
-  PMU_RUNNING_TIME: Grace PMU running-time lifetime in ns (``host_cpu_hw`` and
-    ``arm_aarch64_imc``, monitor 3.1 Phase 1b).
-  PMU_SOLO_RUNNING_TIME: Grace ``host_cpu_hw`` time the core events would run
-    with no other PMU user, in ns (monitor 3.1 Phase 1b).
+  PMU_ENABLED_TIME: PMU enabled-time lifetime in ns on ``host_cpu_hw`` (Grace
+    and x86) and on the IMC / DF uncore rows (monitor 3.1).
+  PMU_RUNNING_TIME: PMU running-time lifetime in ns on ``host_cpu_hw`` (Grace
+    and x86) and on the IMC / DF uncore rows (monitor 3.1).
+  PMU_SOLO_RUNNING_TIME: ``host_cpu_hw`` (Grace and x86) time the core events
+    would run with no other PMU user, in ns (monitor 3.1).
   RETIRED_HOST_CPU_HW_POWER_EVENTS: ``host_cpu_hw`` power keys retired in
     monitor round 2 (history only).
   RETIRED_NVIDIA_GPU_POWER_EVENTS: ``nvidia_gpu`` module/SysIO power keys
@@ -100,7 +114,7 @@ INTEL_CORE_PMC_TYPES_ORDERED = (
 AMD_PMC_TYPE = "amd_x86_pmc"
 # Historical bare typename (removed from live monitor emit; dual-read only).
 AMD_DF_TYPE = "amd_x86_uncore_df"
-# Live LIKWID family DF collectors (rome -> turin).
+# Live per-family DF collectors (rome -> turin).
 AMD_DF_STATS_TYPES = (
   "amd_x86_uncore_df_rome",
   "amd_x86_uncore_df_milan",
@@ -110,6 +124,7 @@ AMD_DF_STATS_TYPES = (
 INTEL_RAPL_STATS_TYPES = ("intel_x86_rapl",)
 AMD_RAPL_STATS_TYPES = ("amd_x86_rapl",)
 DRAM_CHAN_BYTES_EVENTS = tuple(f"dram_chan{i}_bytes" for i in range(4))
+AMD_DF_BYTES_PER_BEAT = 64
 HOST_CPU_HW_TYPE = "host_cpu_hw"
 HOST_ROOFLINE_PEAK_TYPE = "host_roofline_peak"
 
@@ -127,7 +142,8 @@ PMC_TYPENAME_PRIORITY = (
 
 CHA_TYPENAME_PRIORITY = ("intel_x86_uncore_cha_skx",)
 
-# FP_ARITH events (unchanged monitor mnemonics).
+# Historical uppercase FP_ARITH mnemonics: the schema U= token carries the
+# lanes, so ingest already stored FLOPs.
 INTEL_FP_ARITH_DOUBLE_EVENTS = (
   "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE",
   "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE",
@@ -143,6 +159,12 @@ INTEL_FP_ARITH_SINGLE_EVENTS = (
 INTEL_FP_ARITH_ALL_EVENTS = (
   INTEL_FP_ARITH_DOUBLE_EVENTS + INTEL_FP_ARITH_SINGLE_EVENTS
 )
+# Direct-perf Intel host_cpu_hw keys (monitor 3.1 Phases 2+3, E,W=48, no
+# schema unit): the same events lowercased, double then single precision in
+# the order above. Values are retired instructions, not FLOPs; consumers
+# multiply by the lanes per width. On Grace rows the two scalar keys exist
+# but never carry data.
+INTEL_FP_ARITH_KEYS = tuple(e.lower() for e in INTEL_FP_ARITH_ALL_EVENTS)
 
 INTEL_LEGACY_SSE_FLOP_EVENTS = (
   ("SSE_DOUBLE_SCALAR", 1),
@@ -158,7 +180,10 @@ HBM_CAS_WRITES = "hbm_cas_writes"
 INSTR_RETIRED = "instr_retired"
 APERF = "aperf"
 MPERF = "mperf"
+# AMD host_cpu_hw FLOP lifetimes (direct perf, E,W=64,U=FLOP): total FLOPs
+# on Zen3 / Zen4 / Zen5, double-precision FLOPs on Zen5 only.
 FP_OPS_RETIRED = "fp_ops_retired"
+AMD_FP_DP_OPS = "amd_fp_dp_ops"
 PKG_ENERGY = "pkg_energy"
 DCGM_CPU_POWER_UTIL_W = "dcgm_cpu_power_util_w"
 DCGM_CPU_POWER_LIMIT_W = "dcgm_cpu_power_limit_w"
@@ -171,12 +196,14 @@ ARM_INT16_OPS = "arm_int16_ops"
 ARM_FP_DP_SPEC = "arm_fp_dp_spec"
 ARM_FP_SP_SPEC = "arm_fp_sp_spec"
 ARM_FP_HP_SPEC = "arm_fp_hp_spec"
-# Grace PMU sharing counter-time lifetimes in ns (monitor 3.1, Phase 1b D6,
-# E,W=64,U=ns). host_cpu_hw carries all three; arm_aarch64_imc the first two.
+# PMU sharing counter-time lifetimes in ns (monitor 3.1, E,W=64,U=ns) on
+# Grace and x86. host_cpu_hw carries all three; arm_aarch64_imc,
+# intel_x86_uncore_imc_* and amd_x86_uncore_df_* rows the first two.
 PMU_ENABLED_TIME = "pmu_enabled_time"
 PMU_RUNNING_TIME = "pmu_running_time"
 PMU_SOLO_RUNNING_TIME = "pmu_solo_running_time"
-# Grace host_cpu_hw PAPI scalars (lowercase; Intel FP_ARITH_* stay uppercase).
+# Grace host_cpu_hw scalar FP_ARITH keys (always 0 there); the same names
+# carry real counts on Intel rows (INTEL_FP_ARITH_KEYS).
 GRACE_FP_ARITH_SCALAR_DOUBLE = "fp_arith_inst_retired_scalar_double"
 GRACE_FP_ARITH_SCALAR_SINGLE = "fp_arith_inst_retired_scalar_single"
 # Monitor KEY (cpu_counter_metrics.h); uppercase form is legacy-only dual-read.
@@ -207,6 +234,15 @@ RETIRED_HOST_CPU_HW_POWER_EVENTS = (
   DCGM_CPU_POWER_LIMIT_W,
 )
 RETIRED_NVIDIA_GPU_POWER_EVENTS = ("module_power_usage", "sysio_power_usage")
+# nvidia_gpu pipe busy ratios (percent). integer_active is absent on A100;
+# tensor_dmma_active (FP64 tensor core) is NOT_PRESENT on the DCGM path and
+# real on the GPM path (Hopper / Blackwell, monitor 3.1).
+NVIDIA_GPU_INTEGER_ACTIVE = "integer_active"
+NVIDIA_GPU_TENSOR_DMMA_ACTIVE = "tensor_dmma_active"
+# intel_gpu (PVC) compute engine group busy percent, max over tiles. The PVC
+# busy signal that works while the EU metrics (sm_active) are NOT_PRESENT on
+# GFX firmware below the XPU Manager minimum.
+INTEL_GPU_COMPUTE_ENGINE_UTIL = "compute_engine_util"
 # GPU stats types keep their hardware ``dev`` in ingest collapse, shared-node
 # stamping and the per-core repair. Only Python copy (D34); the Codon compile
 # unit mirrors it as a literal (``codon/feed_collapse.py`` ``GPU_TYPES``),

@@ -8,3 +8,9 @@ PIPELINE_E2E_JID = "pipeline_e2e_j01"
 PIPELINE_E2E_USERNAME = "pipeline_e2e_user"
 
 PIPELINE_E2E_HOST_SHORT = "node001"
+
+# x86 direct-perf jobs (one host each): vendor -> (jid, host short name).
+PIPELINE_E2E_X86_JOBS = {
+    "intel": ("pipeline_e2e_x86_intel", "node001i"),
+    "amd": ("pipeline_e2e_x86_amd", "node001a"),
+}

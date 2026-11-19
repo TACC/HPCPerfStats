@@ -184,3 +184,31 @@ def test_type_probe_names_host_ib_includes_retired_collectors():
   assert "host_ib_sw" in names
   assert "ib_sw" in names
   assert "ib" in names
+
+
+def test_x86_direct_perf_flop_keys_match_monitor_schema():
+  """Canonical x86 FLOP keys are the ``host_cpu_hw`` keys the monitor emits."""
+  from hpcperfstats.dbload.lib.monitor_naming import canonical as canon
+
+  header = (
+    Path(__file__).resolve().parents[2]
+    / "monitor"
+    / "src"
+    / "cpu_counter_metrics.h"
+  ).read_text()
+  keys = (*canon.INTEL_FP_ARITH_KEYS, canon.FP_OPS_RETIRED, canon.AMD_FP_DP_OPS)
+  for key in keys:
+    assert f"X({key}," in header, key
+  assert canon.GRACE_FP_ARITH_SCALAR_DOUBLE in canon.INTEL_FP_ARITH_KEYS
+  assert canon.GRACE_FP_ARITH_SCALAR_SINGLE in canon.INTEL_FP_ARITH_KEYS
+
+
+def test_amd_flop_keys_are_yaml_identities_with_legacy_flops_alias():
+  """AMD FLOP keys map to themselves; ``FLOPS`` still probes as a legacy alias."""
+  from hpcperfstats.dbload.lib.monitor_naming.load_map import event_renames
+
+  renames = event_renames()
+  assert renames["fp_ops_retired"] == "fp_ops_retired"
+  assert renames["amd_fp_dp_ops"] == "amd_fp_dp_ops"
+  assert events_probe_names(["fp_ops_retired"]) == ["fp_ops_retired", "FLOPS"]
+  assert events_probe_names(["amd_fp_dp_ops"]) == ["amd_fp_dp_ops"]
