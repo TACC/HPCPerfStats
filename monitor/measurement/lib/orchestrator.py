@@ -9,7 +9,7 @@ under /run (gone on reboot, removed by the restore path):
                   MEASURE_CONF, a copy of the site conf whose only change is
                   ``queue <queue>_measure`` (CADENCE legs also change ``sample_freq``)
   VARIANT(V)      as SOLO(base) with one measurement-only daemon knob (driver_map.VARIANTS,
-                  e.g. HPCPERFSTATS_LIKWID_GRACE_SCF=0); paired with SOLO(base) per block
+                  e.g. driver_map.NOSCF_ENV=0); paired with SOLO(base) per block
 
 Governor leg sets (D13, D25): ``--governors performance`` (default) runs one block schedule with
 every CPU pinned to ``performance``; a comma list (e.g. ``performance,dynamic``) repeats the
@@ -649,7 +649,7 @@ class Run:
                 ok.append(ev)
         if not ok:
             self.flags["perf_reason"] = ("no perf event countable (perf_event_paranoid or PMU "
-                                         "held by LIKWID)")
+                                         "held by another program)")
         return ok
 
     def install(self) -> None:

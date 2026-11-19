@@ -22,8 +22,21 @@
 #           FAULT_INJECT (default 1; 0 = SKIP): after validation, restart the DEBUG daemon with
 #             debug_fault_inject for FAULT_INJECT_TICKS cycles and check codes, recovery,
 #             bridges and site coverage (scripts/fault_inject_verify.sh; release RPMs SKIP),
+#           COUNTER_CHECK (default 1; 0 = SKIP): after validation, the counter-accuracy layer
+#             (canary_counter_check.sh --accuracy): memory bytes, FLOPs, instructions and
+#             energy from the DEBUG shm mirror vs known loads; COUNTER_CHECK_SECONDS (load
+#             length, default 20), COUNTER_CHECK_TIMEOUT (default 3600; release RPMs SKIP),
+#           PERF_RAW_FLOPS_CHECK / SCF_PERF_CHECK / PMU_SHARING_CHECK / FP_SLICES_CHECK
+#             (default 1; 0 = SKIP): the standalone counter checks wired from the inventory
+#             in monitor/README.md (NOT_RUN where the arch does not apply),
+#             EXTRA_CHECK_TIMEOUT (default 1800 per check),
 #           GOLDEN_DIR=/path|auto or GOLDEN_CHECK=1 (opt-in golden diff),
-#           HPCPERFSTATS_CONF=/path/to/hpcperfstats.conf
+#           HPCPERFSTATS_CONF=/path/to/hpcperfstats.conf, REPORT_DIR (default
+#             <workspace>/test_runs/monitor).
+#
+# Every run (also an early failure) writes test_runs/monitor/correctness_<host>_<slug>_<UTC>.json
+# (scripts/lib/correctness_summary.py: each check PASS / FAIL / NOT_RUN / SKIP with reason and
+# ratio) for the cross-architecture campaign; the exit status is non-zero when any check FAILed.
 set -euo pipefail
 
 # Debug verify cadence: matches hpcperfstats.conf when built with hpc_debug_build 1.
@@ -38,7 +51,7 @@ env_flag_on() {
   esac
 }
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MONITOR_DIR="${MONITOR_DIR:-${SCRIPT_DIR}/..}"
 
 monitor_spec_field() {
@@ -165,6 +178,8 @@ Golden diff is opt-in: GOLDEN_DIR=/path|auto or GOLDEN_CHECK=1.
 Optional: SKIP_INSTALL=1 to re-validate without reinstall or post-install wait.
 Optional: RPM_BUILD=1 to remove stale daemon RPMs and run the debug rpmbuild first.
 Waits up to WAIT_FULL_SECONDS (default 900) for a full payload with metric rows.
+After validation: counter accuracy (COUNTER_CHECK=0 to skip), the wired canary checks, then
+fault injection (FAULT_INJECT=0 to skip). Writes a per-node campaign JSON next to the reports.
 EOF
 }
 
@@ -233,21 +248,160 @@ ensure_stress_ng() {
   fi
 }
 
+# record_check RESULTS NAME STATUS RATIO REASON: one campaign result line (TSV, no tabs in REASON).
+record_check() {
+  local reason="${5//$'\t'/ }"
+  printf '%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "${reason//$'\n'/ }" >>"$1"
+}
+
+# run_counter_accuracy CAPS SHM_DIR PY RESULTS REPORT_DIR: the counter-accuracy layer (DEBUG
+# builds; COUNTER_CHECK=0 or a release build SKIPs it). Statuses go to RESULTS; returns 0.
+run_counter_accuracy() {
+  local caps="$1" shm_dir="$2" py="$3" results="$4" report_dir="$5" debug reason=""
+  local lib="${SCRIPT_DIR}/lib/counter_accuracy.py"
+
+  if ! env_flag_on "${COUNTER_CHECK:-1}"; then
+    reason="COUNTER_CHECK=0"
+  else
+    debug="$("${py}" -c "import json,sys; print(int(bool(json.load(open(sys.argv[1])).get('configure', {}).get('debug'))))" "${caps}")"
+    test "${debug}" = "1" || reason="release build: no DEBUG /dev/shm mirror"
+  fi
+  if test -n "${reason}"; then
+    echo "SKIP: counter accuracy (${reason})"
+    "${py}" "${lib}" record --results "${results}" --status SKIP --reason "${reason}" --all
+    return 0
+  fi
+  echo "Counter accuracy: daemon counters vs known loads (COUNTER_CHECK=0 to skip) ..."
+  # --foreground keeps the check in this process group, so Ctrl-C reaches its INT trap; its
+  # exit 130 then stops the whole run (bash would otherwise carry on with the next check).
+  CANARY_SHM="${shm_dir}" CANARY_PY="${py}" CANARY_LOG_DIR="${report_dir}" \
+    timeout --foreground "${COUNTER_CHECK_TIMEOUT:-3600}" "${SCRIPT_DIR}/canary_counter_check.sh" \
+    --accuracy --results "${results}" --seconds "${COUNTER_CHECK_SECONDS:-20}" || {
+    test $? != 130 || exit 130
+  }
+}
+
+# run_extra_check RESULTS NAME ENVVAR APPLIES WHY -- CMD...: one wired check, bounded. ENVVAR=0
+# SKIPs it; APPLIES other than 1 is NOT_RUN with WHY. Exit 0 PASS, 2 or 77 NOT_RUN (missing
+# prerequisite; last output line as reason), anything else FAIL.
+run_extra_check() {
+  local results="$1" name="$2" var="$3" applies="$4" why="$5" out rc status reason
+  shift 6
+  if ! env_flag_on "${!var:-1}"; then
+    echo "SKIP: ${name} (${var}=0)"
+    record_check "${results}" "${name}" SKIP - "${var}=0"
+    return 0
+  fi
+  if test "${applies}" != 1; then
+    echo "NOT_RUN: ${name} (${why})"
+    record_check "${results}" "${name}" NOT_RUN - "${why}"
+    return 0
+  fi
+  out="$(mktemp)"
+  echo "Running ${name} (${var}=0 to skip) ..."
+  if timeout --foreground "${EXTRA_CHECK_TIMEOUT:-1800}" "$@" 2>&1 | tee "${out}"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  reason="$(grep -v '^[[:space:]]*$' "${out}" | tail -n 1 | cut -c1-300)"
+  rm -f "${out}"
+  test "${rc}" != 130 || exit 130
+  case "${rc}" in
+  0) status=PASS ;;
+  2 | 77) status=NOT_RUN ;;
+  124) status=FAIL reason="timed out after ${EXTRA_CHECK_TIMEOUT:-1800}s" ;;
+  *) status=FAIL ;;
+  esac
+  record_check "${results}" "${name}" "${status}" - "exit ${rc}: ${reason}"
+}
+
+# run_canary_checks PY RESULTS: the standalone counter checks that run unattended as root in
+# bounded time (README "Correctness check inventory").
+run_canary_checks() {
+  local py="$1" results="$2" class grace=0 scf=0
+  class="$("${py}" "${SCRIPT_DIR}/lib/counter_accuracy.py" arch --field class)" || class=other
+  test "${class}" != grace || grace=1
+  if test "${grace}" = 1 && ls -d /sys/bus/event_source/devices/nvidia_scf_pmu_* >/dev/null 2>&1; then
+    scf=1
+  fi
+  run_extra_check "${results}" perf_raw_flops PERF_RAW_FLOPS_CHECK \
+    "$(test "${class}" = intel || test "${class}" = amd && echo 1)" \
+    "x86 perf FLOP events only (arch ${class})" -- "${SCRIPT_DIR}/perf_raw_flops_check.sh"
+  run_extra_check "${results}" scf_perf SCF_PERF_CHECK "${scf}" \
+    "needs Grace nvidia_scf_pmu_* PMUs (arch ${class})" -- \
+    "${SCRIPT_DIR}/canary_counter_check.sh" --scf --warm 30 --window 60
+  run_extra_check "${results}" pmu_sharing PMU_SHARING_CHECK 1 - -- \
+    "${SCRIPT_DIR}/canary_counter_check.sh" --sharing-only --window 60
+  run_extra_check "${results}" fp_slices FP_SLICES_CHECK "${grace}" \
+    "Grace arm_fp_*_spec keys only (arch ${class})" -- \
+    "${SCRIPT_DIR}/canary_counter_check.sh" --precisions "dp sp hp" --warm 30 --window 60
+}
+
+# write_correctness_summary PY RESULTS REPORT_DIR CAPS VALIDATE_REPORT VALIDATE_RC: the per-node
+# campaign JSON next to the text reports; returns 1 when any check FAILed.
+write_correctness_summary() {
+  local py="$1" results="$2" report_dir="$3" caps="$4" vreport="$5" vrc="$6" slug args=()
+  slug="$("${py}" -c "import json,sys; print(json.load(open(sys.argv[1]))['capability_slug'])" \
+    "${caps}" 2>/dev/null)" || slug=unknown
+  args=(--results "${results}" --caps "${caps}"
+    --rpm-build "$(timeout 30 rpm -q hpcperfstatsd 2>/dev/null || echo unknown)"
+    --out "${report_dir}/correctness_$(hostname -s)_${slug}_$(date -u +%Y%m%dT%H%M%SZ).json")
+  test -z "${vreport}" || args+=(--validate-report "${vreport}")
+  test -z "${vrc}" || args+=(--validate-rc "${vrc}")
+  env_flag_on "${CROSS_SAMPLE_CHECK:-1}" || args+=(--skip "cross_sample=CROSS_SAMPLE_CHECK=0")
+  env_flag_on "${INDEPENDENT_READ_CHECK:-1}" ||
+    args+=(--skip "independent_read=INDEPENDENT_READ_CHECK=0")
+  env_flag_on "${CONSUMER_PARSE_CHECK:-1}" || args+=(--skip "consumer_parse=CONSUMER_PARSE_CHECK=0")
+  test "${GOLDEN_CHECK:-0}" = "1" || test -n "${GOLDEN_DIR:-}" ||
+    args+=(--skip "golden=opt-in (GOLDEN_CHECK=1 or GOLDEN_DIR)")
+  "${py}" "${SCRIPT_DIR}/lib/correctness_summary.py" write "${args[@]}"
+}
+
 main() {
   if test "${1:-}" = "-h" || test "${1:-}" = "--help"; then
     usage
     return 0
   fi
+  local work rc=0 vrc=""
 
+  VERIFY_MONITOR_DIR="$(cd "${MONITOR_DIR}" && pwd)"
+  VERIFY_WS="${WORKSPACE_ROOT:-$(resolve_workspace_root "${VERIFY_MONITOR_DIR}")}"
+  VERIFY_PY="$(resolve_python "${VERIFY_WS}")"
+  VERIFY_REPORT_DIR="${REPORT_DIR:-${VERIFY_WS}/test_runs/monitor}"
+  mkdir -p "${VERIFY_REPORT_DIR}"
+  work="$(mktemp -d)"
+  VERIFY_WORK="${work}"
+  : >"${work}/results.tsv"
+  # The node run is a subshell with its own errexit, so every outcome (including an early
+  # failure) still reaches the campaign summary below.
+  set +e
+  (
+    set -e
+    verify_node
+  )
+  rc=$?
+  set -e
+  test ! -f "${work}/validate_rc" || vrc="$(cat "${work}/validate_rc")"
+  write_correctness_summary "${VERIFY_PY}" "${work}/results.tsv" "${VERIFY_REPORT_DIR}" \
+    "$(cat "${work}/caps" 2>/dev/null || true)" "$(cat "${work}/validate_report" 2>/dev/null || true)" \
+    "${vrc}" || rc=1
+  rm -rf "${work}"
+  return "${rc}"
+}
+
+verify_node() {
   local monitor_dir rpm_topdir dist_top ws py caps shm_dir tier enable_slow
-  local slug expectations report_dir verify_dir
-  local post_install_sleep
+  local slug expectations report_dir verify_dir results validate_report
+  local post_install_sleep fi_out fi_rc
 
-  monitor_dir="$(cd "${MONITOR_DIR}" && pwd)"
+  monitor_dir="${VERIFY_MONITOR_DIR}"
+  ws="${VERIFY_WS}"
+  py="${VERIFY_PY}"
+  report_dir="${VERIFY_REPORT_DIR}"
+  results="${VERIFY_WORK}/results.tsv"
   rpm_topdir="${RPM_TOPDIR:-${monitor_dir}/rpmbuild}"
   dist_top="${DIST_TOP:-$(resolve_dist_top "${monitor_dir}")}"
-  ws="${WORKSPACE_ROOT:-$(resolve_workspace_root "${monitor_dir}")}"
-  py="$(resolve_python "${ws}")"
   verify_dir="${rpm_topdir}/debug-verify"
 
   shm_dir="${HPCPERFSTATS_DEBUG_SHM_DIR:-/dev/shm/hpcperfstatsd-debug}"
@@ -267,6 +421,7 @@ main() {
     echo "ERROR: capabilities not found at ${caps}" >&2
     return 1
   }
+  printf '%s' "${caps}" >"${VERIFY_WORK}/caps"
 
   if test "${SKIP_INSTALL:-0}" != "1"; then
     install_main_daemon_rpm "${rpm_topdir}"
@@ -305,14 +460,15 @@ main() {
 
   slug="$("${py}" -c "import json; print(json.load(open('${caps}'))['capability_slug'])")"
   echo "capability_slug=${slug}"
+  record_check "${results}" preflight PASS - "installed, service active, full payload, slug ${slug}"
 
   if test "${SKIP_SHM_LS:-0}" != "1"; then
     ls -la "${shm_dir}"/{schema,fast,full}
   fi
 
   expectations="${verify_dir}/expectations_${slug}.json"
-  report_dir="${ws}/test_runs/monitor"
-  mkdir -p "${report_dir}" "${verify_dir}"
+  validate_report="${report_dir}/validate_rpm_debug_${slug}_$(date +%F).txt"
+  mkdir -p "${verify_dir}"
 
   echo "Building expectations ..."
   "${py}" "${monitor_dir}/scripts/build_message_expectations.py" \
@@ -327,7 +483,7 @@ main() {
     --manifest "${expectations}"
     --shm-dir "${shm_dir}"
     --live-spot-check
-    --report "${report_dir}/validate_rpm_debug_${slug}_$(date +%F).txt"
+    --report "${validate_report}"
   )
   if test -n "${WAIT_SHM_SECONDS:-}"; then
     validate_args+=(--wait-shm-seconds "${WAIT_SHM_SECONDS}")
@@ -394,8 +550,12 @@ PY
     fi
   fi
   validate_out="$(mktemp)"
+  # An early validate exit writes no report; never let the summary read an older one.
+  rm -f "${validate_report}"
+  printf '%s' "${validate_report}" >"${VERIFY_WORK}/validate_report"
   if ! "${py}" "${monitor_dir}/scripts/validate_shm_messages.py" "${validate_args[@]}" 2>&1 \
     | tee "${validate_out}"; then
+    echo 1 >"${VERIFY_WORK}/validate_rc"
     # GPU hint only for the no-rows failure (cross-sample nvidia_gpu WARNs are not it).
     grep -qF "type 'nvidia_gpu': no rows" "${validate_out}" || {
       rm -f "${validate_out}"
@@ -414,13 +574,32 @@ PY
   fi
 
   rm -f "${validate_out}"
+  echo 0 >"${VERIFY_WORK}/validate_rc"
   echo "PASS: validate_shm_messages (slug=${slug})"
 
-  # Live fault injection (DEBUG RPMs; SKIP line otherwise): restarts the daemon twice.
-  CAPS="${caps}" MANIFEST="${expectations}" SHM_DIR="${shm_dir}" PY="${py}" \
+  run_counter_accuracy "${caps}" "${shm_dir}" "${py}" "${results}" "${report_dir}"
+  run_canary_checks "${py}" "${results}"
+
+  # Live fault injection (DEBUG RPMs; SKIP line otherwise): restarts the daemon twice, so it
+  # runs after every check that reads the running daemon.
+  fi_out="$(mktemp)"
+  if CAPS="${caps}" MANIFEST="${expectations}" SHM_DIR="${shm_dir}" PY="${py}" \
     FAULT_INJECT_SAMPLE_FREQ="${FULL}" \
     FAULT_INJECT_REPORT="${report_dir}/fault_inject_rpm_debug_${slug}_$(date +%F).txt" \
-    "${monitor_dir}/scripts/fault_inject_verify.sh"
+    "${monitor_dir}/scripts/fault_inject_verify.sh" 2>&1 | tee "${fi_out}"; then
+    fi_rc=0
+  else
+    fi_rc=$?
+  fi
+  if grep -q '^SKIP:' "${fi_out}"; then
+    record_check "${results}" fault_inject SKIP - "$(grep -m1 '^SKIP:' "${fi_out}")"
+  elif test "${fi_rc}" = 0; then
+    record_check "${results}" fault_inject PASS - "fault_inject_verify.sh exit 0"
+  else
+    record_check "${results}" fault_inject FAIL - \
+      "exit ${fi_rc}: $(grep -v '^[[:space:]]*$' "${fi_out}" | tail -n 1 | cut -c1-300)"
+  fi
+  rm -f "${fi_out}"
 }
 
 if test "$(basename "$0")" = "rpm_debug_shm_verify.sh"; then

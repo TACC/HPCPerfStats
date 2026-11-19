@@ -12,22 +12,24 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-# aarch64 CPU backend ``arm`` (round 2, D10: /proc/stat util, cpufreq clock, LIKWID overlay;
-# no DCGM) and the DCGM/NVML GPU collector are separate groups, so one SOLO leg never mixes
-# their costs. ``hwmon_power`` is host_power_socket (per-socket ACPI power meters, D31): its
-# own fds, independent of host_cpu_hw, so it gets its own SOLO leg.
-DRIVER_GROUPS = ("filesystem", "likwid", "arm_cpu", "dcgm_gpu", "hwmon_power", "perf_event",
+# aarch64 CPU backend ``arm`` (/proc/stat util, cpufreq clock, direct perf; no DCGM) and the
+# DCGM/NVML GPU collector are separate groups, so one SOLO leg never mixes their costs. x86
+# core, uncore and RAPL counters are one ``x86_perf`` group (direct perf_event_open).
+# ``hwmon_power`` is host_power_socket (per-socket ACPI power meters): its own fds,
+# independent of host_cpu_hw, so it gets its own SOLO leg.
+DRIVER_GROUPS = ("filesystem", "x86_perf", "arm_cpu", "dcgm_gpu", "hwmon_power", "perf_event",
                  "ib_mad", "amd_gpu", "intel_gpu")
-# Build-info ``cpu_backend`` values: ``arm`` from round 2 on; ``dcgm`` is the same aarch64
-# backend in older RPMs (e.g. the 3.0-8 round-1 baseline, D24), so both resolve to arm_cpu.
+# Build-info ``cpu_backend`` values. ``dcgm`` is the aarch64 backend and ``likwid`` the x86
+# backend of older RPMs (3.0-x baselines), so a baseline and a candidate get the same groups.
 ARM_BACKENDS = ("arm", "dcgm")
+X86_BACKENDS = ("x86", "likwid")
 
 _FILESYSTEM = (
     "host_cpu", "host_mem", "host_mem_job", "host_vm", "host_numa", "host_block", "host_net",
     "host_nfs", "host_proc", "host_ps", "host_sysv_shm", "host_tmpfs", "host_vfs", "host_lnet",
     "lustre_llite", "lustre_mdc", "lustre_osc", "beegfs_client", "host_roofline_peak",
 )
-_LIKWID = (
+_X86_PERF = (
     "intel_x86_rapl", "amd_x86_rapl",
     "intel_x86_uncore_imc_skx", "intel_x86_uncore_imc_icx", "intel_x86_uncore_imc_spr",
     "intel_x86_uncore_imc_emr", "intel_x86_uncore_imc_gnr", "intel_x86_uncore_imc_srf",
@@ -37,7 +39,7 @@ _LIKWID = (
 
 STATIC_GROUP: dict[str, str] = {
     **dict.fromkeys(_FILESYSTEM, "filesystem"),
-    **dict.fromkeys(_LIKWID, "likwid"),
+    **dict.fromkeys(_X86_PERF, "x86_perf"),
     "nvidia_gpu": "dcgm_gpu",
     "host_opa": "ib_mad",
     "host_power_socket": "hwmon_power",
@@ -50,16 +52,18 @@ BACKEND_TYPES = ("host_cpu_hw", "host_ib", "arm_aarch64_imc")
 # not against NONE). Grace overlay builds (3.0 and earlier; 3.1 removed the overlay, reads SCF
 # through arm_aarch64_imc's own perf fds and gets no variant): the overlay programs the SCF
 # counters inside host_cpu_hw's group whether or not arm_aarch64_imc is enabled, so SCF cost is
-# only visible as arm_cpu (SCF on + arm_aarch64_imc) minus arm_cpu with
-# HPCPERFSTATS_LIKWID_GRACE_SCF=0.
+# only visible as arm_cpu (SCF on + arm_aarch64_imc) minus arm_cpu with NOSCF_ENV=0.
+# GRACE_OVERLAY_FLAGS are the build-info ``configure`` keys that mark such a build.
 # ``marker`` must appear in the leg's journal or the pair is NOT_MEASURED (a daemon without
 # the knob would run two identical legs and report a false zero).
+NOSCF_ENV = "HPCPERFSTATS_LIKWID_GRACE_SCF"
+GRACE_OVERLAY_FLAGS = ("likwid_overlay", "papi_hybrid")
 VARIANTS: dict[str, dict[str, Any]] = {
     "arm_cpu_noscf": {
         "base": "arm_cpu",
         "drop": ("arm_aarch64_imc",),
-        "env": {"HPCPERFSTATS_LIKWID_GRACE_SCF": "0"},
-        "marker": "SCF uncore events off (HPCPERFSTATS_LIKWID_GRACE_SCF=0)",
+        "env": {NOSCF_ENV: "0"},
+        "marker": f"SCF uncore events off ({NOSCF_ENV}=0)",
         "label": "Grace SCF counters + arm_aarch64_imc",
     },
 }
@@ -67,8 +71,9 @@ KNOWN_TYPES = tuple(sorted({*STATIC_GROUP, *BACKEND_TYPES}))
 
 # Every build shape the map must resolve (CPU backend x IB MAD), used by the drift test.
 CAPABILITY_VARIANTS = (
+    {"arch": "x86_64", "configure": {"cpu_backend": "x86", "ib_mad_dlopen": True, "infiniband": True}},
+    {"arch": "x86_64", "configure": {"cpu_backend": "x86", "ib_mad_dlopen": False, "infiniband": False}},
     {"arch": "x86_64", "configure": {"cpu_backend": "likwid", "ib_mad_dlopen": True, "infiniband": True}},
-    {"arch": "x86_64", "configure": {"cpu_backend": "likwid", "ib_mad_dlopen": False, "infiniband": False}},
     {"arch": "aarch64", "configure": {"cpu_backend": "arm", "ib_mad_dlopen": True, "infiniband": True}},
     {"arch": "aarch64", "configure": {"cpu_backend": "arm", "likwid_overlay": True,
                                       "ib_mad_dlopen": True, "infiniband": True}},
@@ -83,13 +88,14 @@ class UnmappedTypeError(ValueError):
 
 
 def _cpu_backend(caps: dict[str, Any] | None) -> str:
+    """``arm`` or ``x86``; an absent or unknown backend follows the build arch."""
     cfg = (caps or {}).get("configure") or {}
     backend = (cfg.get("cpu_backend") or "").lower()
     if backend in ARM_BACKENDS:
         return "arm"
-    if backend == "likwid":
-        return backend
-    return "arm" if (caps or {}).get("arch") == "aarch64" else "likwid"
+    if backend in X86_BACKENDS:
+        return "x86"
+    return "arm" if (caps or {}).get("arch") == "aarch64" else "x86"
 
 
 def _ib_mad(caps: dict[str, Any] | None) -> bool:
@@ -99,18 +105,19 @@ def _ib_mad(caps: dict[str, Any] | None) -> bool:
     return True
 
 
-def _likwid_overlay(caps: dict[str, Any] | None) -> bool:
+def _grace_overlay(caps: dict[str, Any] | None) -> bool:
+    """Pre-3.1 Grace build whose LIKWID overlay read SCF inside host_cpu_hw's group."""
     cfg = (caps or {}).get("configure") or {}
-    return bool(cfg.get("likwid_overlay") or cfg.get("papi_hybrid"))
+    return any(cfg.get(flag) for flag in GRACE_OVERLAY_FLAGS)
 
 
 def group_for_type(name: str, caps: dict[str, Any] | None) -> str:
     """Driver group for one collector type under a given build."""
     if name == "arm_aarch64_imc":
-        # Overlay builds read SCF through host_cpu_hw's LIKWID group; alone it only waits.
-        return "arm_cpu" if _likwid_overlay(caps) and _cpu_backend(caps) == "arm" else "perf_event"
+        # Overlay builds read SCF through host_cpu_hw's group; alone it only waits.
+        return "arm_cpu" if _grace_overlay(caps) and _cpu_backend(caps) == "arm" else "perf_event"
     if name == "host_cpu_hw":
-        return "arm_cpu" if _cpu_backend(caps) == "arm" else "likwid"
+        return "arm_cpu" if _cpu_backend(caps) == "arm" else "x86_perf"
     if name == "host_ib":
         return "ib_mad" if _ib_mad(caps) else "filesystem"
     try:
@@ -131,7 +138,7 @@ def groups_for_enabled(types: Iterable[str], caps: dict[str, Any] | None) -> dic
 def variants_for(groups: dict[str, list[str]], caps: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     """Variant legs this build can run: ``{name: {base, types, env, marker, label}}``."""
     out: dict[str, dict[str, Any]] = {}
-    if not _likwid_overlay(caps):
+    if not _grace_overlay(caps):
         return out
     for name, spec in VARIANTS.items():
         base = groups.get(spec["base"], [])

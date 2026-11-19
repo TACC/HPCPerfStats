@@ -22,6 +22,7 @@ from lib.listend_contract import (  # noqa: E402
     listend_host_from_schema,
     validate_schema_listend_contract,
 )
+from lib.message_parse import schema_key_name  # noqa: E402
 from lib.row_validate import (  # noqa: E402
     st_name_looks_like_driver,
     token_is_uint,
@@ -420,79 +421,34 @@ class HostLiveProbeTests(unittest.TestCase):
         self.assertIn("host_net", observed)
         self.assertEqual(observed["host_net"], ["eth0"])
 
-    def _install_edac_dimm(self, root: Path, mc: str, dimm: str, speed: str, mem_type: str) -> None:
-        dimm_dir = root / mc / dimm
-        dimm_dir.mkdir(parents=True, exist_ok=True)
-        (dimm_dir / "dimm_mem_speed").write_text(speed, encoding="utf-8")
-        (dimm_dir / "dimm_mem_type").write_text(mem_type, encoding="utf-8")
-
-    def test_probe_edac_mem_classes_ddr_only(self) -> None:
+    def _uncore_devices(self, names: list[str], type_name: str) -> list[str] | None:
         import os
-        import tempfile
 
-        from lib.host_live_probes import probe_edac_mem_classes, probe_spr_imc_devices
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            self._install_edac_dimm(root, "mc0", "dimm0", "4800\n", "DDR5\n")
-            os.environ["HPCPERFSTATS_EDAC_MC_ROOT"] = str(root)
-            try:
-                has_ddr, has_hbm = probe_edac_mem_classes()
-                self.assertTrue(has_ddr)
-                self.assertFalse(has_hbm)
-                devs = probe_spr_imc_devices(has_ddr, has_hbm)
-                self.assertEqual(len(devs), 16)
-                self.assertEqual(devs[0], "mbox0")
-                self.assertNotIn("hbm0", devs)
-            finally:
-                os.environ.pop("HPCPERFSTATS_EDAC_MC_ROOT", None)
-
-    def test_probe_edac_mem_classes_hbm_only(self) -> None:
-        import os
-        import tempfile
-
-        from lib.host_live_probes import probe_edac_mem_classes, probe_spr_imc_devices
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            self._install_edac_dimm(root, "mc0", "dimm0", "6400\n", "HBM2e\n")
-            os.environ["HPCPERFSTATS_EDAC_MC_ROOT"] = str(root)
-            try:
-                has_ddr, has_hbm = probe_edac_mem_classes()
-                self.assertFalse(has_ddr)
-                self.assertTrue(has_hbm)
-                devs = probe_spr_imc_devices(has_ddr, has_hbm)
-                self.assertEqual(len(devs), 16)
-                self.assertEqual(devs[0], "hbm0")
-                self.assertNotIn("mbox0", devs)
-            finally:
-                os.environ.pop("HPCPERFSTATS_EDAC_MC_ROOT", None)
-
-    def test_probe_edac_mem_classes_mixed(self) -> None:
-        import os
-        import tempfile
-
-        from lib.host_live_probes import probe_edac_mem_classes, probe_spr_imc_devices
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            self._install_edac_dimm(root, "mc0", "dimm0", "4800\n", "DDR5\n")
-            self._install_edac_dimm(root, "mc0", "dimm1", "6400\n", "HBM3\n")
-            os.environ["HPCPERFSTATS_EDAC_MC_ROOT"] = str(root)
-            try:
-                has_ddr, has_hbm = probe_edac_mem_classes()
-                self.assertTrue(has_ddr)
-                self.assertTrue(has_hbm)
-                devs = probe_spr_imc_devices(has_ddr, has_hbm)
-                self.assertEqual(len(devs), 32)
-            finally:
-                os.environ.pop("HPCPERFSTATS_EDAC_MC_ROOT", None)
-
-    def test_default_devices_spr_imc_hbm_only(self) -> None:
         from lib.host_live_probes import default_devices_for_type
 
-        with patch("lib.host_live_probes.probe_spr_imc_devices", return_value=["hbm0", "hbm1"]):
-            self.assertEqual(default_devices_for_type("intel_x86_uncore_imc_spr"), ["hbm0", "hbm1"])
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in names:
+                (Path(tmp) / name).mkdir()
+            with patch.dict(os.environ, {"HPCPERFSTATS_PERF_DEVICES_DIR": tmp}):
+                return default_devices_for_type(type_name)
+
+    def test_spr_uncore_rows_follow_sysfs_pmus(self) -> None:
+        # Regression: the probe hard-coded mbox0..15 / hbm0..15 from EDAC, while x86_uncore_perf.c
+        # emits one row per uncore_imc_<N> / uncore_hbm_<N> PMU (an SPR HBM part has 32 HBM PMUs).
+        names = [f"uncore_imc_{i}" for i in (0, 2, 10)] + [f"uncore_hbm_{i}" for i in range(32)]
+        names += ["uncore_imc_free_running_0", "uncore_hbmx", "cpu", "power"]
+        devs = self._uncore_devices(names, "intel_x86_uncore_imc_spr")
+        self.assertEqual(devs[:3], ["mbox0", "mbox2", "mbox10"])
+        self.assertEqual(devs[3:], [f"hbm{i}" for i in range(32)])
+        self.assertEqual(self._uncore_devices(names, "intel_x86_uncore_imc_emr"), devs)
+
+    def test_uncore_rows_per_class_and_df(self) -> None:
+        names = ["uncore_imc_1", "uncore_imc_0", "uncore_hbm_0", "amd_df"]
+        self.assertEqual(self._uncore_devices(names, "intel_x86_uncore_imc_gnr"), ["mbox0", "mbox1"])
+        self.assertEqual(self._uncore_devices(names, "intel_x86_uncore_imc_icx"), ["mdev0", "mdev1"])
+        self.assertEqual(self._uncore_devices(names, "amd_x86_uncore_df_turin"), ["df"])
+        self.assertIsNone(self._uncore_devices(["cpu"], "intel_x86_uncore_imc_skx"))
+        self.assertIsNone(self._uncore_devices(["cpu"], "amd_x86_uncore_df_milan"))
 
     def test_spr_imc_device_validate_hbm_only_manifest(self) -> None:
         schema_keys = [
@@ -1259,6 +1215,45 @@ class Round2ShmChecksTests(unittest.TestCase):
                                                        "gpu_mem_used_mb": 9000, "temperature": 300})
         self.assertEqual(len(bad), 3, bad)
 
+    def test_nvidia_gpu_pipe_split_keys_capped_at_100(self) -> None:
+        from lib.value_plausibility import check_row_invariants
+
+        ok = {"integer_active": 100, "tensor_dmma_active": 37}
+        self.assertEqual(check_row_invariants("nvidia_gpu", "0", ok), [])
+        bad = check_row_invariants("nvidia_gpu", "0", {"integer_active": 101,
+                                                       "tensor_dmma_active": 5000})
+        self.assertEqual(sorted(bad), ["nvidia_gpu/0: integer_active=101 > 100 %",
+                                       "nvidia_gpu/0: tensor_dmma_active=5000 > 100 %"])
+
+    def test_nvidia_gpu_percent_keys_cover_every_pipe_duty_cycle(self) -> None:
+        """Every `*_active` key nvidia_gpu.h emits is a 0-100 duty cycle."""
+        import re
+
+        from lib.value_plausibility import NVIDIA_GPU_PERCENT_KEYS
+
+        header = (MONITOR / "src" / "nvidia_gpu.h").read_text(encoding="utf-8")
+        active = set(re.findall(r"\bX\((\w+_active),", header))
+        self.assertIn("integer_active", active)
+        self.assertIn("tensor_dmma_active", active)
+        self.assertEqual(active - set(NVIDIA_GPU_PERCENT_KEYS), set())
+
+    def test_intel_gpu_compute_engine_util_capped_at_100(self) -> None:
+        from lib.value_plausibility import check_row_invariants
+
+        self.assertEqual(check_row_invariants("intel_gpu", "0", {"compute_engine_util": 100}), [])
+        self.assertEqual(check_row_invariants("intel_gpu", "0", {}), [])
+        self.assertEqual(check_row_invariants("intel_gpu", "3", {"compute_engine_util": 101}),
+                         ["intel_gpu/3: compute_engine_util=101 > 100 %"])
+
+    def test_check_plausibility_flags_intel_gpu_compute_engine_util(self) -> None:
+        schema = {"intel_gpu": ["gpu_util", "power_usage,U=W", "compute_engine_util"]}
+        body = "1234567890.0 0 h\nintel_gpu 0 @full 50 400 250\n"
+        _, warnings, errors = check_plausibility(
+            _round2_manifest(schema), schema, full_body=body, fast_body=None,
+            schema_body=None, no_freshness=True, strict=False)
+        self.assertEqual(errors, [])
+        self.assertTrue(any("compute_engine_util=250 > 100 %" in w for w in warnings), warnings)
+
     def test_check_plausibility_wires_round2_checks(self) -> None:
         schema = {"host_power_socket": PSOCK_KEYS, "host_cpu_hw": ["dcgm_cpu_power_util_w,U=W"]}
         body = ("1234567890.0 0 h\nhost_power_socket 0 @full 95 88 6 0\n"
@@ -1559,10 +1554,14 @@ class PapiShmValidateTests(unittest.TestCase):
             "arm_est_flops",
             "arm_int8_ops",
             "arm_int16_ops",
+            "fp_ops_retired",
+            "amd_fp_dp_ops",
+            "pmu_enabled_time",
+            "pmu_running_time",
+            "pmu_solo_running_time",
         ]
         if hybrid:
             required += ["arm_fp_dp_spec", "arm_fp_sp_spec", "arm_fp_hp_spec"]
-            required += ["pmu_enabled_time", "pmu_running_time", "pmu_solo_running_time"]
         names = keys if keys is not None else required
         doc: dict = {
             "capability_slug": "test",
@@ -1606,7 +1605,7 @@ class PapiShmValidateTests(unittest.TestCase):
 
         man = {
             "types": {},
-            "compile_capabilities": {"configure": {"likwid_overlay": True}},
+            "compile_capabilities": {"configure": {"cpu_backend": "arm"}},
         }
         _, errors = check_papi_schema_contract(man)
         self.assertTrue(any("missing type" in e for e in errors))
@@ -1621,16 +1620,19 @@ class PapiShmValidateTests(unittest.TestCase):
         _, errors = check_papi_schema_contract(man)
         self.assertTrue(any("arm_fp_dp_spec" in e for e in errors))
 
-    def test_arm_backend_requires_pmu_sharing_keys(self) -> None:
-        """Phase 1b (D6): an arm-backend schema without the PMU sharing time keys fails."""
+    def test_every_backend_requires_sharing_and_flop_keys(self) -> None:
+        """D6 sharing times and the x86 FLOP lifetimes are in every host_cpu_hw schema (arm and
+        x86 direct perf); dropping one fails either way."""
         from lib.papi_shm_validate import check_papi_schema_contract
 
-        for missing in ("pmu_enabled_time", "pmu_running_time", "pmu_solo_running_time"):
-            man = self._papi_manifest()
-            names = [k for k in man["types"]["host_cpu_hw"]["schema_key_names"] if k != missing]
-            man["types"]["host_cpu_hw"]["schema_key_names"] = names
-            _, errors = check_papi_schema_contract(man)
-            self.assertTrue(any(missing in e for e in errors), missing)
+        for hybrid in (True, False):
+            for missing in ("pmu_enabled_time", "pmu_running_time", "pmu_solo_running_time",
+                            "fp_ops_retired", "amd_fp_dp_ops"):
+                man = self._papi_manifest(hybrid=hybrid)
+                names = [k for k in man["types"]["host_cpu_hw"]["schema_key_names"] if k != missing]
+                man["types"]["host_cpu_hw"]["schema_key_names"] = names
+                _, errors = check_papi_schema_contract(man)
+                self.assertTrue(any(missing in e for e in errors), (hybrid, missing))
 
     def test_pmu_running_above_enabled_warns(self) -> None:
         """D6: running or solo time above enabled time is impossible; equal is fine."""
@@ -1640,12 +1642,14 @@ class PapiShmValidateTests(unittest.TestCase):
             {"pmu_enabled_time": 9000, "pmu_running_time": 9000, "pmu_solo_running_time": 7000},
             type_name="host_cpu_hw",
             dev="0",
+            arm=False,
         )
         self.assertFalse(any("pmu_" in w for w in ok))
         bad = check_papi_row_invariants(
             {"pmu_enabled_time": 9000, "pmu_running_time": 9001, "pmu_solo_running_time": 9500},
             type_name="host_cpu_hw",
             dev="0",
+            arm=False,
         )
         self.assertTrue(any("pmu_running_time=9001" in w for w in bad))
         self.assertTrue(any("pmu_solo_running_time=9500" in w for w in bad))
@@ -1654,26 +1658,19 @@ class PapiShmValidateTests(unittest.TestCase):
         from lib.papi_shm_validate import check_papi_schema_contract
 
         man = self._papi_manifest(hybrid=False)
-        man["compile_capabilities"] = {"configure": {"cpu_backend": "likwid"}}
         notes, errors = check_papi_schema_contract(man)
         self.assertEqual(errors, [])
         self.assertTrue(any("PASS papi schema" in n for n in notes))
 
-    def test_legacy_overlay_flag_still_means_arm(self) -> None:
-        from lib.papi_shm_validate import caps_indicate_papi_hybrid
+    def test_only_cpu_backend_arm_means_arm(self) -> None:
+        """The pre-3.1 overlay alias flags no longer select the arm key set."""
+        from lib.papi_shm_validate import caps_indicate_arm_backend
 
-        self.assertTrue(caps_indicate_papi_hybrid({"configure": {"likwid_overlay": True}}))
-        self.assertTrue(caps_indicate_papi_hybrid({"configure": {"cpu_backend": "arm"}}))
-        self.assertFalse(caps_indicate_papi_hybrid({"configure": {"cpu_backend": "likwid"}}))
-
-    def test_legacy_papi_hybrid_alias_still_accepted(self) -> None:
-        from lib.papi_shm_validate import check_papi_schema_contract
-
-        man = self._papi_manifest()
-        man["compile_capabilities"] = {"configure": {"papi_hybrid": True}}
-        notes, errors = check_papi_schema_contract(man)
-        self.assertEqual(errors, [])
-        self.assertTrue(any("PASS papi schema" in n for n in notes))
+        self.assertTrue(caps_indicate_arm_backend({"configure": {"cpu_backend": "arm"}}))
+        self.assertTrue(caps_indicate_arm_backend({"compile_capabilities": {"configure": {"cpu_backend": "arm"}}}))
+        self.assertFalse(caps_indicate_arm_backend({"configure": {"papi_hybrid": True}}))
+        self.assertFalse(caps_indicate_arm_backend({"configure": {"cpu_backend": "none"}}))
+        self.assertFalse(caps_indicate_arm_backend(None))
 
     def test_flops_not_checked_against_scalar_keys(self) -> None:
         """arm_est_flops is measured FIXED+SCALE FLOPs since 3.1, not scalar SP+DP (O15/D1)."""
@@ -1687,6 +1684,7 @@ class PapiShmValidateTests(unittest.TestCase):
             },
             type_name="host_cpu_hw",
             dev="0",
+            arm=True,
         )
         self.assertFalse(any("arm_est_flops" in w for w in warns))
 
@@ -1694,7 +1692,7 @@ class PapiShmValidateTests(unittest.TestCase):
         from lib.papi_shm_validate import check_papi_row_invariants
 
         warns = check_papi_row_invariants(
-            {"arm_fp_dp_spec": -1}, type_name="host_cpu_hw", dev="0"
+            {"arm_fp_dp_spec": -1}, type_name="host_cpu_hw", dev="0", arm=True
         )
         self.assertTrue(any("arm_fp_dp_spec" in w for w in warns))
 
@@ -1707,10 +1705,11 @@ class PapiShmValidateTests(unittest.TestCase):
             {"aperf": 77, "mperf": 77, "cpu_clock_est_cycles": cycles},
             type_name="host_cpu_hw",
             dev="0",
+            arm=True,
         )
         self.assertFalse(any("cpu_clock_est_cycles" in w for w in ok), ok)
         bad = check_papi_row_invariants(
-            {"aperf": 78, "cpu_clock_est_cycles": cycles}, type_name="host_cpu_hw", dev="0"
+            {"aperf": 78, "cpu_clock_est_cycles": cycles}, type_name="host_cpu_hw", dev="0", arm=True
         )
         self.assertTrue(any("cpu_clock_est_cycles" in w for w in bad), bad)
 
@@ -1730,6 +1729,7 @@ class PapiShmValidateTests(unittest.TestCase):
             },
             type_name="host_cpu_hw",
             dev="0",
+            arm=True,
         )
         self.assertEqual(warns, [])
 
@@ -1744,8 +1744,9 @@ class PapiShmValidateTests(unittest.TestCase):
     def test_plausibility_accepts_measured_flops_without_scalar_keys(self) -> None:
         man = self._papi_manifest()
         schema = {"host_cpu_hw": man["types"]["host_cpu_hw"]["schema_keys"]}
-        # ... arm_fp_{dp,sp,hp}_spec, then pmu_enabled / running / solo time (D6).
-        vals = ["5", "5", "5", "0", "0", "99", "1", "2", "7", "8", "9", "9000", "7000", "7000"]
+        # ... fp_ops_retired / amd_fp_dp_ops (not built on Grace), pmu_enabled / running / solo
+        # time (D6), then arm_fp_{dp,sp,hp}_spec.
+        vals = ["5", "5", "5", "0", "0", "99", "1", "2", "-2", "-2", "9000", "7000", "7000", "7", "8", "9"]
         body = (
             "1234567890.0 0 golden_host\n"
             f"host_cpu_hw 0 @full {' '.join(vals)}\n"
@@ -1779,7 +1780,7 @@ class CrossSampleSentinelTests(unittest.TestCase):
     def _body(ts: float, rx: str, instr: str = "5") -> str:
         return f"{ts:.6f} job1 h1\nhost_net eth0 {rx} 7\nhost_cpu_hw 0 {instr}\n"
 
-    def _run(self, series, *, slug="x86_64-ver3.1-hw-likwid-sent1-slowtier0", banner=1, cpu=False):
+    def _run(self, series, *, slug="x86_64-ver3.1-hw-x86perf-sent1-slowtier0", banner=1, cpu=False):
         from lib.cross_sample_validate import run_cross_sample_checks
         from lib.daemon_conf import DaemonTiming
         from lib.shm_snapshot import SnapshotPair
@@ -1831,12 +1832,13 @@ class CrossSampleSentinelTests(unittest.TestCase):
         self.assertFalse(errors)
         self.assertTrue(any("decreased 100 -> 90" in w for w in warnings), warnings)
 
-    def test_likwid_host_cpu_hw_bridge_is_informational(self) -> None:
-        notes, _, errors = self._run(["100", "-3", "90"], cpu=True)
-        self.assertFalse(errors)
-        self.assertTrue(any("bridge unproven" in n for n in notes), notes)
-        _, _, errors = self._run(["100", "-3", "90"], cpu=True, slug="x86_64-ver3.2-hw-x86perf-sent1")
-        self.assertTrue(any("host_cpu_hw/0 instr_retired" in e for e in errors), errors)
+    def test_host_cpu_hw_bridge_violation_fails_on_every_backend(self) -> None:
+        # Both CPU backends keep software lifetimes that bridge a gap, so no build downgrades a
+        # host_cpu_hw bridge violation to a note (a slug-less manifest included).
+        for slug in ("x86_64-ver3.1-hw-x86perf-sent1", "aarch64-ver3.1-hw-arm-sent1", ""):
+            notes, _, errors = self._run(["100", "-3", "90"], cpu=True, slug=slug)
+            self.assertTrue(any("host_cpu_hw/0 instr_retired" in e for e in errors), (slug, errors))
+            self.assertFalse(any("informational" in n for n in notes), notes)
 
     def test_knob0_reports_skip_and_tokens_fail(self) -> None:
         notes, _, errors = self._run(["100", "150"], banner=None)
@@ -1877,7 +1879,7 @@ class SentinelManifestLayerTests(unittest.TestCase):
         allowed, expect = allowed_sentinels(slug, self._SCHEMA)
         return {"allowed_sentinels": allowed, "expect_not_built": expect}
 
-    def _allow(self, body: str, slug="x86_64-ver3.1-hw-likwid-sent1", strict=True, manifest=None):
+    def _allow(self, body: str, slug="x86_64-ver3.1-hw-x86perf-sent1", strict=True, manifest=None):
         from lib.sentinel_validate import check_allowed_sentinels
 
         return check_allowed_sentinels(
@@ -1890,13 +1892,23 @@ class SentinelManifestLayerTests(unittest.TestCase):
     def test_allowed_sentinels_follow_the_build(self) -> None:
         from lib.sentinel_validate import allowed_sentinels
 
-        allowed, expect = allowed_sentinels("x86_64-ver3.1-hw-likwid-sent1", ["host_ib", "amd_gpu", "host_net"])
+        allowed, expect = allowed_sentinels("x86_64-ver3.1-hw-x86perf-sent1", ["host_ib", "amd_gpu", "host_net"])
         self.assertIn(10, allowed["host_ib"]["*"])
         self.assertEqual(expect, {"host_ib": ["sw_*"], "amd_gpu": ["*"]})
         self.assertEqual(allowed["host_net"]["*"], [1, 2])
-        allowed, expect = allowed_sentinels("x86_64-ver3.1-hw-ibdyn-likwid-sent1", ["host_ib"])
+        allowed, expect = allowed_sentinels("x86_64-ver3.1-hw-ibdyn-x86perf-sent1", ["host_ib"])
         self.assertNotIn(10, allowed["host_ib"]["*"])
         self.assertEqual(expect, {})
+
+    def test_x86perf_host_cpu_hw_disallows_not_built(self) -> None:
+        from lib.sentinel_validate import allowed_sentinels
+
+        types = ["host_cpu_hw", "intel_x86_uncore_imc_skx"]
+        allowed, _ = allowed_sentinels("x86_64-ver3.1-hw-x86perf-sent1", types)
+        self.assertEqual(allowed["host_cpu_hw"]["*"], [1, 2])
+        self.assertIn(10, allowed["intel_x86_uncore_imc_skx"]["*"])
+        allowed, _ = allowed_sentinels("aarch64-ver3.1-hw-arm-sent1", types)
+        self.assertIn(10, allowed["host_cpu_hw"]["*"])
 
     def test_unexpected_code_fails_strict_and_warns_otherwise(self) -> None:
         body = self._body("host_net eth0 -3 -2", "host_ib mlx5_0.1 -1 -10")
@@ -1909,7 +1921,7 @@ class SentinelManifestLayerTests(unittest.TestCase):
 
     def test_not_built_with_mad_in_slug_fails(self) -> None:
         body = self._body("host_ib mlx5_0.1 7 -10")
-        _, _, errors = self._allow(body, slug="x86_64-ver3.1-hw-ibdyn-likwid-sent1")
+        _, _, errors = self._allow(body, slug="x86_64-ver3.1-hw-ibdyn-x86perf-sent1")
         self.assertTrue(any("sw_rx_bytes: NOT_BUILT" in e for e in errors), errors)
 
     def test_expected_not_built_key_emitting_a_value_fails(self) -> None:
@@ -2157,6 +2169,326 @@ class IndependentReadTests(unittest.TestCase):
         self.assertEqual(pair.ts_b, 1060.0)
 
 
+class IndependentReadIbMadTests(unittest.TestCase):
+    """c317-016 (MAD build): emitted host_ib port_rcv_data is the 64-bit PortCountersExtended,
+    a separate counter ~36.4 M behind sysfs counters/port_rcv_data while both advance at the
+    same rate; the sysfs bracket must not FAIL that monitor, and must still FAIL on a non-MAD
+    build or a MAD build whose MAD query failed (sysfs fed the key)."""
+
+    _SCHEMA = {"host_ib": ["port_rcv_data,E,W=64,U=4B", "symbol_error,E,W=32", "port_select,c",
+                           "port_xmit_pkts,E"]}
+    _OFFSET = 36_430_379
+    _MAD_SLUG = "x86_64-ver3.1-debug-hw-ib-ibdyn-x86perf-sent1-slowtier1"
+    _SYSFS_SLUG = "x86_64-ver3.1-debug-hw-x86perf-sent1-slowtier1"
+
+    @staticmethod
+    def _body(ts: float, rcv: int, sym: int, mad: tuple[str, str]) -> str:
+        return f"{ts:.6f} j h\nhost_ib mlx5_0.1 {rcv} {sym} {mad[0]} {mad[1]}\n"
+
+    def _check(self, slug, *, live_rcv, live_sym=5, mad_a=("1", "900"), mad_b=("1", "950"), schema=None):
+        from lib.independent_read import check_independent_reads
+
+        schema = schema or self._SCHEMA
+        live = {("host_ib", "mlx5_0.1", "port_rcv_data"): live_rcv,
+                ("host_ib", "mlx5_0.1", "symbol_error"): live_sym}
+        return check_independent_reads(
+            schema, self._body(1000.0, 81_653_661_045, 4, mad_a),
+            self._body(1030.0, 81_653_967_045, 6, mad_b), 1030.0, 1010.0, live,
+            require_tier=False, allowed_tier=None, capability_slug=slug,
+        )
+
+    def test_mad_build_constant_offset_is_a_note_not_a_failure(self) -> None:
+        notes, errors = self._check(self._MAD_SLUG, live_rcv=81_653_800_000 + self._OFFSET)
+        self.assertEqual(errors, [])
+        self.assertTrue(any(n.startswith("NOTE independent_read host_ib MAD PortCountersExtended")
+                            and "mlx5_0.1 port_rcv_data" in n for n in notes), notes)
+        self.assertIn("PASS independent_read (1 keys)", notes)
+
+    def test_mad_build_still_brackets_sysfs_only_keys(self) -> None:
+        _, errors = self._check(self._MAD_SLUG, live_rcv=81_653_800_000 + self._OFFSET, live_sym=9)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("host_ib/mlx5_0.1 symbol_error: live 9 outside emitted [4, 6]", errors[0])
+
+    def test_non_mad_build_offset_still_fails(self) -> None:
+        _, errors = self._check(self._SYSFS_SLUG, live_rcv=81_653_800_000 + self._OFFSET,
+                                mad_a=("-10", "-10"), mad_b=("-10", "-10"))
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("host_ib/mlx5_0.1 port_rcv_data: live", errors[0])
+        notes, errors = self._check(self._SYSFS_SLUG, live_rcv=81_653_800_000,
+                                    mad_a=("-10", "-10"), mad_b=("-10", "-10"))
+        self.assertEqual(errors, [])
+        self.assertIn("PASS independent_read (2 keys)", notes)
+
+    def test_mad_build_with_failed_mad_query_brackets_sysfs_value(self) -> None:
+        """MAD BACKEND_ERROR in both captures: port_rcv_data came from sysfs, so bracket it."""
+        _, errors = self._check(self._MAD_SLUG, live_rcv=81_653_800_000 + self._OFFSET,
+                                mad_a=("-7", "-7"), mad_b=("-7", "-7"))
+        self.assertTrue(any("port_rcv_data: live" in e for e in errors), errors)
+
+    def test_mad_filled_in_one_capture_is_not_bracketed(self) -> None:
+        notes, errors = self._check(self._MAD_SLUG, live_rcv=81_653_800_000 + self._OFFSET,
+                                    mad_a=("-7", "-7"))
+        self.assertEqual(errors, [])
+        self.assertTrue(any("MAD PortCountersExtended" in n for n in notes), notes)
+
+    def test_without_slug_the_payload_decides(self) -> None:
+        notes, errors = self._check(None, live_rcv=81_653_800_000 + self._OFFSET)
+        self.assertEqual(errors, [])
+        self.assertTrue(any("MAD PortCountersExtended" in n for n in notes), notes)
+        _, errors = self._check(None, live_rcv=81_653_800_000 + self._OFFSET,
+                                mad_a=("-10", "-10"), mad_b=("-10", "-10"))
+        self.assertTrue(any("port_rcv_data: live" in e for e in errors), errors)
+
+    def test_mad_slug_without_extended_keys_in_schema_is_not_bracketed(self) -> None:
+        from lib.independent_read import check_independent_reads
+
+        schema = {"host_ib": ["port_rcv_data,E,W=64"]}
+        body = "{ts} j h\nhost_ib mlx5_0.1 {v}\n"
+        live = {("host_ib", "mlx5_0.1", "port_rcv_data"): 500 + self._OFFSET}
+        args = (schema, body.format(ts=1000.0, v=400), body.format(ts=1030.0, v=600), 1030.0, 1010.0, live)
+        notes, errors = check_independent_reads(*args, require_tier=False, allowed_tier=None,
+                                                capability_slug=self._MAD_SLUG)
+        self.assertEqual(errors, [])
+        self.assertTrue(any("MAD PortCountersExtended" in n for n in notes), notes)
+        _, errors = check_independent_reads(*args, require_tier=False, allowed_tier=None,
+                                            capability_slug=self._SYSFS_SLUG)
+        self.assertEqual(len(errors), 1, errors)
+
+
+def _x86_hw_schema() -> list[str]:
+    """host_cpu_hw keys in cpu_counter_metrics.h order with their x86 widths and units."""
+    w48 = ["instr_retired_any", "cycles_unhalted_core", "cycles_unhalted_ref",
+           "mem_load_uops_retired_l1_hit", "mem_load_uops_retired_l2_hit",
+           "mem_load_uops_retired_llc_hit", "l1d_replacement", "retired_instructions",
+           "retired_branch_instr", "retired_misp_branch_instr", "ls_dispatch", "instr_retired",
+           "aperf", "mperf"]
+    fp = [f"fp_arith_inst_retired_{w}_{p}" for p in ("double", "single")
+          for w in ("scalar", "128b_packed", "256b_packed", "512b_packed")]
+    return ([f"{k},E,W=48" for k in w48 + fp] + ["cpu_clock_est_cycles,E,W=64",
+            "arm_est_flops,E,W=64,U=FLOP", "arm_int8_ops,E,W=48", "arm_int16_ops,E,W=48",
+            "fp_ops_retired,E,W=64,U=FLOP", "amd_fp_dp_ops,E,W=64,U=FLOP",
+            "pmu_enabled_time,E,W=64,U=ns", "pmu_running_time,E,W=64,U=ns",
+            "pmu_solo_running_time,E,W=64,U=ns"])
+
+
+class X86DirectPerfValidationTests(unittest.TestCase):
+    """x86 host_cpu_hw on direct perf: Intel FP_ARITH measured, AMD instr_retired / aperf from
+    generic events, mperf NOT_PRESENT on AMD, W=48 lifetimes modulo 2^48, D6 sharing keys."""
+
+    NP = "-2"  # NOT_PRESENT
+    NB = "-10"  # NOT_BUILT
+    E9 = 10**9
+
+    def _row(self, **vals) -> list[str]:
+        names = [schema_key_name(k) for k in _x86_hw_schema()]
+        return [str(vals.get(n, self.NP)) for n in names]
+
+    def _intel(self, **over) -> dict:
+        base = {"instr_retired_any": 7000, "instr_retired": 7000, "cycles_unhalted_core": 9000,
+                "aperf": 9000, "cycles_unhalted_ref": 8000, "mperf": 8000, "l1d_replacement": 10,
+                "mem_load_uops_retired_l1_hit": 50, "mem_load_uops_retired_l2_hit": 5,
+                "mem_load_uops_retired_llc_hit": 1, "pmu_enabled_time": 2 * self.E9,
+                "pmu_running_time": self.E9, "pmu_solo_running_time": 2 * self.E9}
+        base.update({f"fp_arith_inst_retired_{w}_{p}": 3 for p in ("double", "single")
+                     for w in ("scalar", "128b_packed", "256b_packed", "512b_packed")})
+        base.update(over)
+        return base
+
+    def _amd(self, **over) -> dict:
+        base = {"retired_instructions": 7001, "retired_branch_instr": 900,
+                "retired_misp_branch_instr": 9, "ls_dispatch": 3000, "instr_retired": 7000,
+                "instr_retired_any": 7000, "aperf": 9000, "cycles_unhalted_core": 9000,
+                "fp_ops_retired": 640, "amd_fp_dp_ops": 320,
+                "pmu_enabled_time": 2 * self.E9, "pmu_running_time": self.E9,
+                "pmu_solo_running_time": 2 * self.E9}
+        base.update(over)
+        return base
+
+    def _manifest(self) -> dict:
+        schema = _x86_hw_schema()
+        return {"capability_slug": "x86_64-ver3.1-hw-x86perf-sent1-slowtier1",
+                "enable_slow_tier": True,
+                "compile_capabilities": {"configure": {"cpu_backend": "x86"}},
+                "types": {"host_cpu_hw": {"schema_keys": schema,
+                                          "schema_key_names": [schema_key_name(k) for k in schema],
+                                          "devices": ["0"]}}}
+
+    def _plaus(self, full_vals: dict, fast_vals: dict | None = None, *, dt=30.0):
+        manifest = self._manifest()
+        schema = {"host_cpu_hw": manifest["types"]["host_cpu_hw"]["schema_keys"]}
+        full = f"1000.0 - h\nhost_cpu_hw 0 @full {' '.join(self._row(**full_vals))}\n"
+        fast = None
+        if fast_vals is not None:
+            fast = f"{1000.0 - dt} - h\nhost_cpu_hw 0 @fast {' '.join(self._row(**fast_vals))}\n"
+        return check_plausibility(manifest, schema, full_body=full, fast_body=fast, schema_body=None,
+                                  no_freshness=True, strict=True)
+
+    def test_x86_schema_contract_passes_with_new_keys(self) -> None:
+        from lib.papi_shm_validate import check_papi_schema_contract
+
+        notes, errors = check_papi_schema_contract(self._manifest())
+        self.assertEqual(errors, [])
+        self.assertTrue(any("PASS papi schema" in n for n in notes), notes)
+
+    def test_intel_and_amd_rows_are_plausible(self) -> None:
+        for vals in (self._intel(), self._amd()):
+            _, warnings, errors = self._plaus(vals)
+            self.assertEqual((warnings, errors), ([], []), vals)
+
+    def test_x86_aperf_mperf_differ_under_turbo(self) -> None:
+        """Grace equates aperf and mperf; x86 cycles vs ref-cycles legitimately differ."""
+        from lib.papi_shm_validate import check_papi_row_invariants
+
+        self.assertEqual(check_papi_row_invariants(self._intel(), type_name="host_cpu_hw", dev="0",
+                                                   arm=False), [])
+        warns = check_papi_row_invariants({"aperf": 9000, "mperf": 8000}, type_name="host_cpu_hw",
+                                          dev="0", arm=True)
+        self.assertTrue(any("aperf=9000 != mperf=8000" in w for w in warns), warns)
+
+    def test_same_event_keys_must_match(self) -> None:
+        from lib.papi_shm_validate import check_papi_row_invariants
+
+        for a, b in (("instr_retired", "instr_retired_any"), ("aperf", "cycles_unhalted_core"),
+                     ("mperf", "cycles_unhalted_ref")):
+            vals = self._intel(**{b: self._intel()[b] + 1})
+            warns = check_papi_row_invariants(vals, type_name="host_cpu_hw", dev="3", arm=False)
+            self.assertTrue(any(f"host_cpu_hw/3: {a}=" in w and f"!= {b}=" in w for w in warns), warns)
+
+    def test_enabled_time_bounds_catch_unit_errors(self) -> None:
+        from lib.papi_shm_validate import check_papi_row_invariants
+
+        # 3e9 cycles over 2 s of enabled time published in us (2e6 "ns"): 1500 per ns.
+        warns = check_papi_row_invariants(self._amd(aperf=3 * self.E9, pmu_enabled_time=2 * 10**6,
+                                                    pmu_running_time=10**6, pmu_solo_running_time=10**6),
+                                          type_name="host_cpu_hw", dev="0", arm=False)
+        self.assertTrue(any("aperf=3000000000 > 10 per ns" in w for w in warns), warns)
+        warns = check_papi_row_invariants(self._amd(fp_ops_retired=641 * 2 * self.E9),
+                                          type_name="host_cpu_hw", dev="0", arm=False)
+        self.assertTrue(any("fp_ops_retired=" in w and "640 per ns" in w for w in warns), warns)
+        self.assertEqual(check_papi_row_invariants(self._amd(fp_ops_retired=640 * 2 * self.E9),
+                                                   type_name="host_cpu_hw", dev="0", arm=False), [])
+
+    def test_w48_key_above_2_48_warns_on_x86_only(self) -> None:
+        _, _, errors = self._plaus(self._intel(l1d_replacement=1 << 48))
+        self.assertTrue(any("l1d_replacement=281474976710656 >= 2^48" in e for e in errors), errors)
+        _, _, errors = self._plaus(self._amd(fp_ops_retired=1 << 50))  # W=64 key: no range check
+        self.assertFalse(any(">= 2^" in e for e in errors), errors)
+
+    def test_uncore_rows_may_carry_pmu_times(self) -> None:
+        from lib.papi_shm_validate import check_papi_row_invariants
+
+        for t in ("intel_x86_uncore_imc_spr", "amd_x86_uncore_df_turin"):
+            ok = {"cas_count_read": 5, "pmu_enabled_time": 100, "pmu_running_time": 100}
+            self.assertEqual(check_papi_row_invariants(ok, type_name=t, dev="mbox0", arm=False), [])
+            bad = dict(ok, pmu_running_time=101)
+            warns = check_papi_row_invariants(bad, type_name=t, dev="mbox0", arm=False)
+            self.assertEqual(warns, [f"{t}/mbox0: pmu_running_time=101 > pmu_enabled_time=100"])
+        schema = {"intel_x86_uncore_imc_spr": ["cas_count_read,E,W=48", "pmu_enabled_time,E,W=64,U=ns",
+                                               "pmu_running_time,E,W=64,U=ns"]}
+        _, warnings, _ = check_plausibility(
+            {"enable_slow_tier": False, "types": {}}, schema,
+            full_body="1000.0 - h\nintel_x86_uncore_imc_spr mbox0 5 100 90\n", fast_body=None,
+            schema_body=None, no_freshness=True, strict=False)
+        self.assertEqual(warnings, [])
+
+    def test_pair_rates_handle_w48_wrap(self) -> None:
+        top = (1 << 48) - 1000
+        old = self._intel(aperf=top, cycles_unhalted_core=top)
+        # +3e9 cycles over 1 s (3 GHz) across the 2^48 wrap: plausible.
+        wrapped = (top + 3 * self.E9) % (1 << 48)
+        new = self._intel(aperf=wrapped, cycles_unhalted_core=wrapped,
+                          pmu_enabled_time=4 * self.E9, pmu_running_time=2 * self.E9,
+                          pmu_solo_running_time=4 * self.E9)
+        _, warnings, errors = self._plaus(new, old, dt=1.0)
+        self.assertEqual((warnings, errors), ([], []))
+        # +12e9 cycles in 1 s: 12 GHz is above the ceiling.
+        fast = (top + 12 * self.E9) % (1 << 48)
+        new = dict(new, aperf=fast, cycles_unhalted_core=fast)
+        _, _, errors = self._plaus(new, old, dt=1.0)
+        self.assertTrue(any("aperf rate 1.2e+10/s > 1e+10/s" in e for e in errors), errors)
+
+    def test_pair_rates_skip_grace_cycle_keys(self) -> None:
+        """Grace aperf flips between measured CPU_CYCLES and the util x freq estimate, so only its
+        FLOP and sharing-time rates are bounded."""
+        from lib.papi_shm_validate import check_host_cpu_hw_rates
+
+        old = {"aperf": 0, "arm_est_flops": 0, "pmu_enabled_time": 0, "pmu_running_time": 0}
+        new = {"aperf": 10**12, "arm_est_flops": 10**15, "pmu_enabled_time": 5, "pmu_running_time": 6}
+        warns = check_host_cpu_hw_rates(old, new, 1.0, {"aperf": 48}, dev="0", arm=True)
+        self.assertFalse(any("aperf" in w for w in warns), warns)
+        self.assertTrue(any("arm_est_flops rate" in w for w in warns), warns)
+        self.assertTrue(any("pmu_running_time advanced 6 ns > pmu_enabled_time 5 ns" in w for w in warns), warns)
+        warns = check_host_cpu_hw_rates(old, new, 1.0, {"aperf": 48}, dev="0", arm=False)
+        self.assertTrue(any("aperf rate" in w for w in warns), warns)
+
+    def test_pair_rates_running_cannot_outpace_enabled(self) -> None:
+        old = self._amd()
+        new = self._amd(pmu_enabled_time=3 * self.E9, pmu_running_time=3 * self.E9,
+                        pmu_solo_running_time=3 * self.E9)
+        _, _, errors = self._plaus(new, old, dt=30.0)
+        self.assertTrue(any("pmu_running_time advanced 2000000000 ns > pmu_enabled_time 1000000000 ns"
+                            in e for e in errors), errors)
+
+    def test_pair_rates_skip_decrease_and_close_timestamps(self) -> None:
+        old = self._amd(aperf=10_000)
+        new = self._amd(aperf=9_000)  # a decrease is the cross-sample layer's finding
+        _, warnings, errors = self._plaus(new, old, dt=30.0)
+        self.assertEqual((warnings, errors), ([], []))
+        _, warnings, errors = self._plaus(self._amd(aperf=10**12), old, dt=0.5)
+        self.assertFalse(any("rate" in e for e in errors), errors)
+
+    def test_vendor_key_sets(self) -> None:
+        from lib.papi_shm_validate import check_x86_host_cpu_hw_key_sets as ks
+
+        names = [schema_key_name(k) for k in _x86_hw_schema()]
+        self.assertEqual(ks("intel", self._row(**self._intel()), names, dev="0"), [])
+        self.assertEqual(ks("amd", self._row(**self._amd()), names, dev="0"), [])
+        bad = ks("amd", self._row(**self._amd(mperf=5)), names, dev="0")
+        self.assertEqual(bad, ["host_cpu_hw/0 mperf=5 on an AMD CPU (no such event)"])
+        bad = ks("intel", self._row(**self._intel(fp_ops_retired=8)), names, dev="0")
+        self.assertEqual(bad, ["host_cpu_hw/0 fp_ops_retired=8 on an INTEL CPU (no such event)"])
+        # Intel FP_ARITH is programmed now: NOT_BUILT there is an old-reader leftover.
+        bad = ks("intel", self._row(**self._intel(fp_arith_inst_retired_scalar_double=self.NB)), names, dev="0")
+        self.assertEqual(bad, ["host_cpu_hw/0 fp_arith_inst_retired_scalar_double is NOT_BUILT on an "
+                               "INTEL CPU (direct perf reads it)"])
+        # AMD reads instr_retired / aperf from generic events.
+        bad = ks("amd", self._row(**self._amd(instr_retired=self.NB, aperf=self.NB)), names, dev="0")
+        self.assertEqual(len(bad), 2, bad)
+        # NOT_PRESENT (unknown model) is fine; non-x86 vendors are skipped.
+        self.assertEqual(ks("intel", self._row(), names, dev="0"), [])
+        self.assertEqual(ks(None, self._row(mperf=1, fp_ops_retired=1), names, dev="0"), [])
+
+    def test_live_spot_runs_vendor_key_sets(self) -> None:
+        import time as _time
+
+        from lib import live_spot_check as lsc
+
+        manifest = self._manifest()
+        schema = {"host_cpu_hw": manifest["types"]["host_cpu_hw"]["schema_keys"]}
+        body = f"{_time.time():.1f} - h\nhost_cpu_hw 0 @full {' '.join(self._row(**self._amd(mperf=5)))}\n"
+        with patch.object(lsc, "probe_x86_cpu_vendor", return_value="amd"), \
+                patch.object(lsc, "probe_power_socket_devices", return_value=[]), \
+                patch.object(lsc, "probe_nvidia_gpu_devices", return_value=[]), \
+                patch.object(lsc, "probe_cpu_devices", return_value=[]), \
+                patch.object(lsc, "probe_loadavg_scaled", return_value={}), \
+                patch.object(lsc, "probe_host_fqdn", return_value=""):
+            _, _, errors = lsc.run_live_spot_checks(manifest, schema, full_body=body, max_age_sec=300,
+                                                    strict=True)
+        self.assertEqual(errors, ["WARN live_spot host_cpu_hw/0 mperf=5 on an AMD CPU (no such event)"])
+
+    def test_probe_x86_cpu_vendor(self) -> None:
+        from lib.host_live_probes import probe_x86_cpu_vendor
+
+        with tempfile.TemporaryDirectory() as td:
+            info = Path(td) / "cpuinfo"
+            for text, want in (("processor\t: 0\nvendor_id\t: GenuineIntel\n", "intel"),
+                               ("vendor_id\t: AuthenticAMD\ncpu family\t: 26\n", "amd"),
+                               ("processor\t: 0\nCPU implementer\t: 0x41\n", None)):
+                info.write_text(text, encoding="utf-8")
+                self.assertEqual(probe_x86_cpu_vendor(str(info)), want)
+            self.assertIsNone(probe_x86_cpu_vendor(str(Path(td) / "missing")))
+
+
 class FaultInjectSitesTests(unittest.TestCase):
     def _sites(self, lines, types, ci):
         import fault_inject_check as fic
@@ -2187,6 +2519,34 @@ class FaultInjectSitesTests(unittest.TestCase):
         _, errors = fic.check_sites(Path("/nonexistent/sentinel_sites"), {"types": {}})
         self.assertTrue(errors[0].startswith("FAIL fault_inject: no sentinel_sites"))
 
+    def test_plan_forces_a_core_open_on_each_backend(self) -> None:
+        import fault_inject_check as fic
+
+        manifest = {"types": {"host_cpu_hw": {"schema_keys": ["instr_retired,E,W=48"]}}}
+        with tempfile.TemporaryDirectory() as td:
+            for backend, spec, keys in (
+                ("x86", "perf_open:instructions!16", ["instr_retired", "instr_retired_any"]),
+                ("arm", "perf_open:fp_dp_spec!16", ["arm_fp_dp_spec"]),
+            ):
+                plan = fic.build_plan({"configure": {"cpu_backend": backend}}, manifest, ticks=3,
+                                      sys_root=Path(td))
+                self.assertEqual([(e["spec"], e["keys"], e["resume"]) for e in plan],
+                                 [(spec, keys, False)])
+                self.assertEqual(plan[0]["codes"], [fic.PMU_BUSY])
+
+    def test_validator_passes_the_slug_to_independent_reads(self) -> None:
+        # Regression: validate_shm_messages.py left capability_slug unset, so host_ib MAD sourcing
+        # was guessed from the payload instead of the build's ib / ibdyn tokens.
+        import ast
+
+        tree = ast.parse((Path(__file__).resolve().parents[1] / "scripts" / "validate_shm_messages.py")
+                         .read_text(encoding="utf-8"))
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                 and getattr(n.func, "id", None) == "check_independent_reads"]
+        self.assertTrue(calls)
+        for call in calls:
+            self.assertIn("capability_slug", [k.arg for k in call.keywords])
+
     def test_ci_list_matches_makefile(self) -> None:
         import io
         from contextlib import redirect_stdout
@@ -2205,7 +2565,7 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
             version="1.0",
             debug=True,
             features=features,
-            cpu_backend="likwid",
+            cpu_backend="x86",
             tier="slowtier1",
             ib_mad_dlopen=True,
             opa_mad_dlopen=True,
@@ -2225,11 +2585,11 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
             version="1.0",
             debug=False,
             features={"HARDWARE"},
-            cpu_backend="likwid",
+            cpu_backend="x86",
             tier="slowtier1",
             sentinel_version=version,
         )
-        self.assertTrue(slug.endswith(f"-likwid-sent{version}-slowtier1"), slug)
+        self.assertTrue(slug.endswith(f"-x86perf-sent{version}-slowtier1"), slug)
         with tempfile.TemporaryDirectory() as td:
             with self.assertRaises(SystemExit):
                 ebc.sentinel_catalog_version(Path(td))
@@ -2368,33 +2728,39 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
             (src / "Makefile").write_text(
                 "DEFS = -DMONITOR_WITH_INFINIBAND -DMONITOR_WITH_OPA "
                 "-DMONITOR_WITH_INTEL_GPU -DMONITOR_IB_MAD_DLOPEN "
-                "-DMONITOR_OPA_MAD_DLOPEN -DMONITOR_CPU_BACKEND_LIKWID -DDEBUG\n",
+                "-DMONITOR_OPA_MAD_DLOPEN -DMONITOR_CPU_BACKEND_ARM -DDEBUG\n",
                 encoding="utf-8",
             )
-            features, cpu, debug, ibdyn, opadyn, overlay, shared = ebc._parse_src_makefile(
+            features, cpu, debug, ibdyn, opadyn, shared = ebc._parse_src_makefile(
                 td
             )
             self.assertIn("INTEL_GPU", features)
             self.assertTrue(ibdyn)
             self.assertTrue(opadyn)
             self.assertTrue(debug)
-            self.assertEqual(cpu, "likwid")
-            self.assertFalse(overlay)
+            self.assertEqual(cpu, "arm")
             self.assertFalse(shared)
 
-    def test_parse_makefile_likwid_overlay(self) -> None:
+    def test_parse_makefile_x86_backend_slug_token(self) -> None:
+        """The x86 backend macro carries a digit: it must parse whole (configure.cpu_backend "x86")
+        and the slug names it x86perf."""
         with tempfile.TemporaryDirectory() as tmp:
             td = Path(tmp)
             src = td / "src"
             src.mkdir()
             (src / "Makefile").write_text(
-                "DEFS = -DMONITOR_CPU_BACKEND_ARM -DMONITOR_CPU_LIKWID_OVERLAY\n",
+                "DEFS = -DMONITOR_WITH_HARDWARE -DMONITOR_CPU_BACKEND_X86\n",
                 encoding="utf-8",
             )
-            _f, cpu, _d, _i, _o, overlay, shared = ebc._parse_src_makefile(td)
-            self.assertEqual(cpu, "arm")
-            self.assertTrue(overlay)
+            features, cpu, _d, _i, _o, shared = ebc._parse_src_makefile(td)
+            self.assertEqual(cpu, "x86")
             self.assertFalse(shared)
+        slug = ebc.build_capability_slug(
+            arch="x86_64", version="3.1", debug=False, features=features, cpu_backend=cpu,
+            tier="slowtier1",
+        )
+        self.assertIn("-hw-x86perf-", slug)
+        self.assertNotIn("-x86-", f"-{slug}-")
 
     def test_parse_makefile_shared_node(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2406,7 +2772,7 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
                 "-DMONITOR_SHARED_NODE_MULTI_JID\n",
                 encoding="utf-8",
             )
-            _f, _c, _d, ibdyn, opadyn, _o, shared = ebc._parse_src_makefile(td)
+            _f, _c, _d, ibdyn, opadyn, shared = ebc._parse_src_makefile(td)
             self.assertTrue(ibdyn)
             self.assertFalse(opadyn)
             self.assertTrue(shared)
@@ -2424,15 +2790,15 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
                 "#\t-DDEBUG\n"
                 "#am__append_3 = -DMONITOR_SHARED_NODE_MULTI_JID\n"
                 "#am__append_5 = -DMONITOR_WITH_OPA -DMONITOR_IB_MAD_DLOPEN\n"
-                "am__append_4 = -DMONITOR_WITH_GPU -DMONITOR_CPU_BACKEND_LIKWID\n",
+                "am__append_4 = -DMONITOR_WITH_GPU -DMONITOR_CPU_BACKEND_ARM\n",
                 encoding="utf-8",
             )
-            features, cpu, debug, ibdyn, _o, _ov, shared = ebc._parse_src_makefile(td)
+            features, cpu, debug, ibdyn, _o, shared = ebc._parse_src_makefile(td)
             self.assertFalse(debug)
             self.assertFalse(shared)
             self.assertFalse(ibdyn)
             self.assertEqual(features, {"GPU"})
-            self.assertEqual(cpu, "likwid")
+            self.assertEqual(cpu, "arm")
 
 
 if __name__ == "__main__":

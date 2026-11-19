@@ -26,14 +26,30 @@
 # 2026-11-14); a clearly higher outside share is another PMU user (nvidia-powerd: 73.6% on
 # Horizon GB200, a profiler). FAILs when the daemon has no Phase 1b keys.
 #
+# --accuracy is the counter-accuracy layer of rpm_debug_shm_verify.sh on every architecture
+# (Intel, AMD, Grace): the daemon's own counter deltas against loads with exact totals, each in
+# one window between two fast samples (scripts/lib/counter_accuracy.py holds the parsing, the
+# tolerance table and the verdicts). Memory: the read and write kernels pinned (taskset) to the
+# socket-0 CPUs vs dram_cas_* / hbm_cas_* / DF beats summed over every memory-controller row
+# (Grace: plus the scf0 share). FLOPs: dp and sp GEMMs with exact FLOP totals vs Intel
+# fp_arith_inst_retired_* lane-weighted, AMD fp_ops_retired (Zen5 amd_fp_dp_ops split) or the
+# Grace arm_fp_*_spec flops-per-op ceiling above. Instructions: instr_retired vs `perf stat -a
+# instructions` over the dp window. Energy (x86): pkg_energy / dram_energy vs powercap
+# energy_uj (package-N and dram zones) over the dp window. A missing source is NOT_RUN, never
+# PASS; RESULT: FAIL only on a measured mismatch or a daemon that stopped publishing.
+#
 # Usage:
 #   ./scripts/canary_counter_check.sh [--precisions "dp sp hp idle"] [--window S] [--warm S]
 #   ./scripts/canary_counter_check.sh --scf [--window S] [--warm S]
 #   ./scripts/canary_counter_check.sh --sharing-only [--window S]
+#   ./scripts/canary_counter_check.sh --accuracy [--seconds S] [--results FILE]
 #
-# Output goes to the terminal and to $HOME/hpcperfstats-counter-check/<host>-<epoch>.log.
+# Output goes to the terminal and to $HOME/hpcperfstats-counter-check/<host>-<epoch>.log; the
+# --accuracy results TSV defaults to the same name with .accuracy.tsv.
 # Test overrides (env): CANARY_SHM, CANARY_PERF, CANARY_LOAD, CANARY_WAIT_MAX, CANARY_LOG_DIR,
-# CANARY_GEMM_LOG, CANARY_PMU_DIR, CANARY_SCF_SIZE.
+# CANARY_GEMM_LOG, CANARY_PMU_DIR, CANARY_SCF_SIZE; --accuracy: CANARY_PY, CANARY_SYS_CPU,
+# CANARY_POWERCAP, CANARY_CPUINFO, CANARY_PMU_NAME, CANARY_LOAD_GRACE (load start-up allowance,
+# default 600 s for the first build of the load binaries), CANARY_ACC_MIB, CANARY_ACC_SIZE.
 set -uo pipefail
 exec </dev/null
 
@@ -55,6 +71,12 @@ SCF=0
 SHARING_ONLY=0
 PMU_DIR="${CANARY_PMU_DIR:-/sys/bus/event_source/devices}"
 SCF_SIZE="${CANARY_SCF_SIZE:-4096}"
+ACCURACY=0
+ACC_SECONDS=20
+RESULTS=""
+ACC_PY="${CANARY_PY:-python3}"
+ACC_LIB="${HERE}/lib/counter_accuracy.py"
+ACC_PID=""
 IMC_KEYS="dram_cas_reads dram_cas_writes"
 SHARE_KEYS="pmu_enabled_time pmu_running_time pmu_solo_running_time"
 
@@ -73,12 +95,18 @@ while [ $# -gt 0 ]; do
   --warm) WARM="${2:-}"; shift 2 ;;
   --scf) SCF=1; shift ;;
   --sharing-only) SHARING_ONLY=1; shift ;;
+  --accuracy) ACCURACY=1; shift ;;
+  --seconds) ACC_SECONDS="${2:-}"; shift 2 ;;
+  --results) RESULTS="${2:-}"; shift 2 ;;
   -h | --help) awk 'NR>2 && /^#/ { sub(/^# ?/, ""); print; next } NR>2 { exit }' "$0"; exit 0 ;;
   *) die "unknown option '$1'" ;;
   esac
 done
 if ! is_uint "${WINDOW}" || [ "${WINDOW}" -eq 0 ]; then
   die "--window must be a positive integer"
+fi
+if ! is_uint "${ACC_SECONDS}" || [ "${ACC_SECONDS}" -eq 0 ]; then
+  die "--seconds must be a positive integer"
 fi
 is_uint "${WARM}" || die "--warm must be a non-negative integer"
 for p in ${PRECISIONS}; do
@@ -99,6 +127,12 @@ exec > >(trap '' INT TERM; exec tee -a "${LOG}") 2>&1
 
 stop_load() { timeout 60 "${LOAD}" stop >/dev/null 2>&1 || true; }
 cleanup() {
+  # An --accuracy window runs in the background under timeout(1) (its own process group, so a
+  # terminal Ctrl-C does not reach it): TERM makes counter_accuracy.py kill the load and perf.
+  if [ -n "${ACC_PID}" ]; then
+    kill -TERM "${ACC_PID}" 2>/dev/null
+    for _ in $(seq 40); do kill -0 "${ACC_PID}" 2>/dev/null || break; sleep 0.25; done
+  fi
   stop_load
   rm -rf "${WORK}"
 }
@@ -236,6 +270,64 @@ scf_check() {
       print "RESULT: FAIL"; exit 1 }
   ' "${WORK}/m" "${WORK}/p"
 }
+acc() { timeout 60 "${ACC_PY}" "${ACC_LIB}" "$@"; }
+
+# acc_window KIND [--perf] -- CMD...: one daemon window around CMD (in the background, so a
+# signal reaches the traps at once), then the checks of KIND appended to RESULTS.
+acc_window() {
+  local kind="$1" perf_args=()
+  shift
+  if [ "$1" = --perf ]; then
+    perf_args=(--perf "${PERF}")
+    shift
+  fi
+  shift
+  say "===== accuracy ${kind}"
+  timeout $((2 * WAIT_MAX + ACC_SECONDS + ACC_GRACE + 60)) "${ACC_PY}" "${ACC_LIB}" window \
+    --shm "${SHM}" --out "${WORK}/${kind}.json" --wait-max "${WAIT_MAX}" \
+    --load-timeout $((ACC_SECONDS + ACC_GRACE)) --powercap "${POWERCAP}" \
+    --log "${WORK}/${kind}.log" ${perf_args[@]+"${perf_args[@]}"} -- "$@" &
+  ACC_PID=$!
+  wait "${ACC_PID}"
+  ACC_PID=""
+  acc evaluate --window "${WORK}/${kind}.json" --kind "${kind}" --arch "${ACC_CLASS}" \
+    --results "${RESULTS}"
+}
+
+accuracy_check() {
+  local cpus n0 k
+  ACC_GRACE="${CANARY_LOAD_GRACE:-600}"
+  POWERCAP="${CANARY_POWERCAP:-/sys/class/powercap}"
+  ACC_CLASS="$(acc arch --cpuinfo "${CANARY_CPUINFO:-/proc/cpuinfo}" \
+    --pmu-name "${CANARY_PMU_NAME:-/sys/bus/event_source/devices/cpu/caps/pmu_name}" \
+    --field class)" || ACC_CLASS=other
+  read -r cpus n0 <<<"$(acc socket0-cpus --sys-cpu "${CANARY_SYS_CPU:-/sys/devices/system/cpu}")"
+  say "accuracy: arch ${ACC_CLASS}, socket-0 CPUs ${cpus:-none} (${n0:-0}), ${ACC_SECONDS} s" \
+    "loads, results ${RESULTS}"
+  if [ -n "${cpus}" ] && command -v taskset >/dev/null 2>&1; then
+    for k in read write; do
+      acc_window "memory-${k}" -- taskset -c "${cpus}" "${LOAD}" run --kernel "${k}" \
+        --mib "${CANARY_ACC_MIB:-8192}" --threads "${n0}" --seconds "${ACC_SECONDS}"
+    done
+  else
+    acc record --results "${RESULTS}" --status NOT_RUN --reason \
+      "no socket-0 CPU list or no taskset to pin the memory load" mem_read mem_socket0 mem_write
+  fi
+  acc_window gemm-dp --perf -- "${LOAD}" run --precision dp --size "${CANARY_ACC_SIZE:-1024}" \
+    --seconds "${ACC_SECONDS}"
+  acc_window gemm-sp -- "${LOAD}" run --precision sp --size "${CANARY_ACC_SIZE:-1024}" \
+    --seconds "${ACC_SECONDS}"
+  say "===== accuracy summary"
+  acc summarize --results "${RESULTS}"
+}
+if [ "${ACCURACY}" -eq 1 ]; then
+  RESULTS="${RESULTS:-${LOG%.log}.accuracy.tsv}"
+  accuracy_check
+  rc=$?
+  say "done; log ${LOG}"
+  exit "${rc}"
+fi
+
 if [ "${SCF}" -eq 1 ]; then
   scf_check
   rc=$?

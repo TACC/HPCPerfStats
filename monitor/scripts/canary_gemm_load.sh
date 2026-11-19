@@ -17,7 +17,7 @@
 #   ./scripts/canary_gemm_load.sh status  [--prefix DIR]
 #   ./scripts/canary_gemm_load.sh stop    [--prefix DIR]
 #   ./scripts/canary_gemm_load.sh run     [same options as start]   (foreground, e.g. in sbatch)
-#   ./scripts/canary_gemm_load.sh run     --kernel read [--mib N] [--threads N] [--seconds S]
+#   ./scripts/canary_gemm_load.sh run     --kernel read|write [--mib N] [--threads N] [--seconds S]
 #
 # Defaults: --prefix ${HPCPERFSTATS_GEMM_PREFIX:-$HOME/hpcperfstats-gemm-load}, --precision dp,
 # --threads = online CPUs, --seconds 0 (until stopped), --size 1024, --cc ${CC:-cc}.
@@ -26,6 +26,13 @@
 # each pass reads the whole array from DRAM, and a bounded run ends with the exact bytes read
 # ("done total_bytes_read="), the oracle for DRAM read counters. --precision and --size are
 # ignored for it.
+# --kernel write overwrites every cache line of the --mib MiB array on every pass (plain stores,
+# pass p stores the value p) and a bounded run ends with "write_load done total_bytes_written=N
+# passes=P elapsed=Ss", N = P x array bytes, the oracle for DRAM write counters. Write-allocate
+# (RFO) fills add DRAM read traffic equal to the bytes written, so a write check compares CAS
+# writes only; CAS writes equal the bytes written because the array is far larger than the LLC
+# and every dirty line is evicted. For both kernels the first touch of the array happens in
+# setup before the timed passes and is not counted (a process-wide counter still sees it).
 # On TACC, `module load gcc` first if the system compiler lacks OpenMP (tacc-lmod-build-environment).
 # The website pie only attributes load that runs inside a Slurm job: use `run` in the job script.
 set -euo pipefail
@@ -41,7 +48,7 @@ KERNEL="gemm"
 MIB=4096
 
 usage() {
-  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 die() {
@@ -107,8 +114,8 @@ is_uint "${SECONDS_RUN}" || die "--seconds must be a non-negative integer"
   die "--size must be an integer in 16..8192"
 case "${KERNEL}" in
 gemm) LOAD_ARG="${SIZE}" ;;
-read) LOAD_ARG="${MIB}" ;;
-*) die "--kernel must be gemm or read (got '${KERNEL}')" ;;
+read | write) LOAD_ARG="${MIB}" ;;
+*) die "--kernel must be gemm, read or write (got '${KERNEL}')" ;;
 esac
 { is_uint "${MIB}" && [ "${MIB}" -ge 64 ] && [ "${MIB}" -le 65536 ]; } ||
   die "--mib must be an integer in 64..65536"
@@ -262,6 +269,76 @@ int main(int argc, char **argv)
   return 0;
 }
 EOF
+  cat >"${PREFIX}/src/write_load.c" <<'EOF'
+/* write_load: overwrites every element of an argv[1] MiB double array on argv[2] threads (OpenMP)
+ * with plain stores; pass p stores the value p, so no pass is a dead store. The array is far
+ * larger than the caches, so every dirty line is evicted to DRAM. Prints GB/s every ~5 s with
+ * check = the sum of one double per 4 KiB (pass count x array MiB x 256 after a pass); runs for
+ * argv[3] seconds (0 = until killed), then prints the exact bytes the passes wrote. The first
+ * touch in setup is not counted. Write-allocate fills add read traffic, never write traffic. */
+#include <omp.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#define CHECK_STRIDE 512 /* doubles per 4 KiB */
+
+static double sampled_sum(const double *a, long n)
+{
+  double s = 0.0;
+  for (long i = 0; i < n; i += CHECK_STRIDE)
+    s += a[i];
+  return s;
+}
+
+int main(int argc, char **argv)
+{
+  long mib = argc > 1 ? atol(argv[1]) : 4096;
+  int threads = argc > 2 ? atoi(argv[2]) : omp_get_max_threads();
+  double seconds = argc > 3 ? atof(argv[3]) : 0.0;
+  if (mib < 64 || mib > 65536 || threads < 1 || seconds < 0) {
+    fprintf(stderr, "usage: %s MIB THREADS SECONDS\n", argv[0]);
+    return 2;
+  }
+  omp_set_num_threads(threads);
+  long n = mib * 1024L * 1024L / (long)sizeof(double);
+  double *a = malloc(sizeof(double) * (size_t)n);
+  if (!a) {
+    fprintf(stderr, "write_load: out of memory for %ld MiB\n", mib);
+    return 1;
+  }
+  /* First touch with the same static schedule as the passes: pages land near their writer. */
+#pragma omp parallel for schedule(static)
+  for (long i = 0; i < n; i++)
+    a[i] = 0.0;
+  printf("write_load mib=%ld threads=%d seconds=%g started\n", mib, threads, seconds);
+  fflush(stdout);
+  double t0 = omp_get_wtime(), last = t0;
+  long passes = 0, interval = 0;
+  for (;;) {
+    const double v = (double)(passes + 1);
+#pragma omp parallel for schedule(static)
+    for (long i = 0; i < n; i++)
+      a[i] = v;
+    passes++;
+    interval++;
+    double now = omp_get_wtime();
+    if (now - last >= 5.0 || (seconds > 0 && now - t0 >= seconds)) {
+      printf("write_load GB/s=%.2f elapsed=%.0fs check=%.0f\n",
+             (double)interval * (double)n * 8.0 / (now - last) / 1e9, now - t0, sampled_sum(a, n));
+      fflush(stdout);
+      interval = 0;
+      last = now;
+    }
+    if (seconds > 0 && now - t0 >= seconds) {
+      printf("write_load done total_bytes_written=%.0f passes=%ld elapsed=%.3fs\n",
+             (double)passes * (double)n * 8.0, passes, now - t0);
+      break;
+    }
+  }
+  free(a);
+  return 0;
+}
+EOF
 }
 
 build_one() {
@@ -286,11 +363,14 @@ do_install() {
   build_one dp double || die "dp build failed; need a C compiler with -fopenmp"
   build_one sp float || die "sp build failed"
   build_one hp _Float16 || echo "hp skipped: this compiler/arch has no _Float16" >&2
-  # shellcheck disable=SC2046,SC2086
-  "${CC_BIN}" -O3 -ffast-math $(arch_flags) ${EXTRA_CFLAGS} -fopenmp \
-    -o "${BIN_DIR}/read_load" "${PREFIX}/src/read_load.c" 2>"${PREFIX}/build_read.log" ||
-    die "read_load build failed (see ${PREFIX}/build_read.log)"
-  echo "built ${BIN_DIR}/read_load"
+  local k
+  for k in read write; do
+    # shellcheck disable=SC2046,SC2086
+    "${CC_BIN}" -O3 -ffast-math $(arch_flags) ${EXTRA_CFLAGS} -fopenmp \
+      -o "${BIN_DIR}/${k}_load" "${PREFIX}/src/${k}_load.c" 2>"${PREFIX}/build_${k}.log" ||
+      die "${k}_load build failed (see ${PREFIX}/build_${k}.log)"
+    echo "built ${BIN_DIR}/${k}_load"
+  done
 }
 
 running_pid() {
@@ -304,7 +384,7 @@ running_pid() {
 
 binary_for() {
   local bin="${BIN_DIR}/gemm_load_${PRECISION}"
-  [ "${KERNEL}" = gemm ] || bin="${BIN_DIR}/read_load"
+  [ "${KERNEL}" = gemm ] || bin="${BIN_DIR}/${KERNEL}_load"
   if [ ! -x "${bin}" ]; then
     do_install >&2
   fi

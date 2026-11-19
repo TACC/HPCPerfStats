@@ -17,7 +17,7 @@ def _kinds(plan):
 
 
 def test_schedule_blocks_and_autofit():
-    groups = ["filesystem", "likwid", "ib_mad", "arm_cpu"]
+    groups = ["filesystem", "x86_perf", "ib_mad", "arm_cpu"]
     plan = schedule.build_schedule(groups, blocks=2, seed=42)
     kinds = _kinds(plan)
     assert kinds[0] == ("OFF", None) and kinds[1] == ("NONE", None) and kinds[2] == ("ALL", None)
@@ -104,21 +104,43 @@ def test_driver_map_covers_all_st_names():
 
 
 def test_driver_map_backend_resolution():
-    x86 = {"arch": "x86_64", "configure": {"cpu_backend": "likwid", "ib_mad_dlopen": True,
+    x86 = {"arch": "x86_64", "configure": {"cpu_backend": "x86", "ib_mad_dlopen": True,
                                             "infiniband": True}}
     arm = {"arch": "aarch64", "configure": {"cpu_backend": "arm", "ib_mad_dlopen": False,
                                              "infiniband": False}}
-    assert driver_map.group_for_type("host_cpu_hw", x86) == "likwid"
+    assert driver_map.group_for_type("host_cpu_hw", x86) == "x86_perf"
     assert driver_map.group_for_type("host_cpu_hw", arm) == "arm_cpu"
     assert driver_map.group_for_type("host_ib", x86) == "ib_mad"
     assert driver_map.group_for_type("host_ib", arm) == "filesystem"
     assert driver_map.group_for_type("host_proc", x86) == "filesystem"
     assert driver_map.group_for_type("arm_aarch64_imc", arm) == "perf_event"
-    assert driver_map.group_for_type("intel_x86_rapl", None) == "likwid"
+    assert driver_map.group_for_type("intel_x86_rapl", None) == "x86_perf"
     with pytest.raises(driver_map.UnmappedTypeError):
         driver_map.groups_for_enabled(["host_cpu", "brand_new_collector"], x86)
     groups = driver_map.groups_for_enabled(["host_cpu", "host_cpu_hw", "intel_x86_rapl"], x86)
-    assert groups == {"filesystem": ["host_cpu"], "likwid": ["host_cpu_hw", "intel_x86_rapl"]}
+    assert groups == {"filesystem": ["host_cpu"], "x86_perf": ["host_cpu_hw", "intel_x86_rapl"]}
+
+
+def test_driver_map_x86_likwid_backend_is_a_historical_alias():
+    """3.0-x baseline RPMs report cpu_backend `likwid`; a baseline and a 3.1 direct-perf
+    candidate must get the same x86_perf groups so the same legs compare."""
+    old = {"arch": "x86_64", "configure": {"cpu_backend": "likwid"}}
+    new = {"arch": "x86_64", "configure": {"cpu_backend": "x86"}}
+    types = ["host_cpu_hw", "intel_x86_rapl", "intel_x86_uncore_imc_spr", "host_mem"]
+    assert driver_map.groups_for_enabled(types, old) == driver_map.groups_for_enabled(types, new)
+    assert driver_map.group_for_type("host_cpu_hw", old) == "x86_perf"
+    assert "likwid" not in driver_map.DRIVER_GROUPS
+    assert driver_map.variants_for({"x86_perf": types}, old) == {}
+
+
+def test_driver_map_pins_pre_3_1_grace_overlay_names():
+    """The 3.0 Grace overlay daemon's knob, its log marker and the build-info flag are fixed
+    strings in baseline RPMs; other tests use the driver_map constants, so pin them here."""
+    assert driver_map.NOSCF_ENV == "HPCPERFSTATS_LIKWID_GRACE_SCF"
+    assert driver_map.GRACE_OVERLAY_FLAGS == ("likwid_overlay", "papi_hybrid")
+    v = driver_map.VARIANTS["arm_cpu_noscf"]
+    assert v["env"] == {"HPCPERFSTATS_LIKWID_GRACE_SCF": "0"}
+    assert v["marker"] == "SCF uncore events off (HPCPERFSTATS_LIKWID_GRACE_SCF=0)"
 
 
 def test_driver_map_arm_cpu_split_from_gpu():
@@ -126,9 +148,9 @@ def test_driver_map_arm_cpu_split_from_gpu():
     core-s/h on c122-018) and the GPU collector shared one SOLO leg, so their costs could not
     be told apart. They are separate driver groups now."""
     arm = {"arch": "aarch64", "configure": {"cpu_backend": "arm"}}
-    x86 = {"arch": "x86_64", "configure": {"cpu_backend": "likwid"}}
+    x86 = {"arch": "x86_64", "configure": {"cpu_backend": "x86"}}
     assert driver_map.group_for_type("host_cpu_hw", arm) == "arm_cpu"
-    assert driver_map.group_for_type("host_cpu_hw", None) == "likwid"
+    assert driver_map.group_for_type("host_cpu_hw", None) == "x86_perf"
     assert driver_map.group_for_type("host_cpu_hw", {"arch": "aarch64"}) == "arm_cpu"
     assert driver_map.group_for_type("nvidia_gpu", x86) == "dcgm_gpu"
     assert "dcgm" not in driver_map.DRIVER_GROUPS
@@ -157,9 +179,9 @@ def test_driver_map_host_power_socket_and_legacy_dcgm_backend():
 
 def test_disable_csv_for_legs():
     active = ["host_cpu", "host_cpu_hw", "host_mem", "intel_x86_rapl"]
-    groups = {"filesystem": ["host_cpu", "host_mem"], "likwid": ["host_cpu_hw", "intel_x86_rapl"]}
+    groups = {"filesystem": ["host_cpu", "host_mem"], "x86_perf": ["host_cpu_hw", "intel_x86_rapl"]}
     assert driver_map.disable_csv("NONE", active, groups) == ",".join(sorted(active))
-    assert driver_map.disable_csv("SOLO", active, groups, group="likwid") == "host_cpu,host_mem"
+    assert driver_map.disable_csv("SOLO", active, groups, group="x86_perf") == "host_cpu,host_mem"
     assert driver_map.disable_csv("ALL", active, groups) is None
     assert driver_map.disable_csv("OFF", active, groups) is None
 

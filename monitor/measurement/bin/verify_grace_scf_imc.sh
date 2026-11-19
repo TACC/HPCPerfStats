@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
-# Verify Grace DRAM CAS (arm_aarch64_imc via LIKWID SCF) end to end on a Grace node, as root.
+# Verify Grace DRAM CAS (arm_aarch64_imc via direct perf on the SCF PMUs) end to end on a Grace
+# node, as root.
 #
-#   A. Units, independent of LIKWID: kernel perf stat on nvidia_scf_pmu_0 (cmem_rd_data,
-#      cmem_wr_total_bytes) around likwid-bench load/store with a known data volume (reads must be
-#      32-byte beats, writes bytes; idle background removed). NOT_RUN (not FAIL) when perf or
-#      those PMU events are missing; the PMU's event list is kept in OUT.
+# Known loads: scripts/canary_gemm_load.sh run --kernel read (load phase) and --kernel write
+# (store phase), pinned to NUMA node 0 (socket 0 CPUs, so first touch puts the array in socket 0
+# memory), bounded by --seconds; their "read_load done total_bytes_read=" and "write_load done
+# total_bytes_written=" lines are the exact byte counts of the timed passes. The write load's
+# write-allocate fills add DRAM reads, so the store phase checks write counters only.
+#
+#   A. Units, independent of the daemon: kernel perf stat on nvidia_scf_pmu_0 (cmem_rd_data,
+#      cmem_wr_total_bytes) around each load (reads must be 32-byte beats, writes bytes; idle
+#      background removed). NOT_RUN (not FAIL) when perf or those PMU events are missing; the
+#      PMU's event list is kept in OUT.
 #   B. Daemon: a DEBUG build of hpcperfstatsd runs as a transient unit (broker unreachable, dumps
 #      to a temp dir, lshw stub bound like the shipped unit). Its /dev/shm mirror must show
-#      arm_aarch64_imc scf0/scf1, and the scf0 delta across a known socket-0 load must match the
-#      volume (64-byte CAS) while scf1 stays quiet. Same for writes.
+#      arm_aarch64_imc scf0/scf1, and the scf0 dram_cas_reads (read load) and dram_cas_writes
+#      (write load) deltas must match the bytes (64-byte CAS) while scf1 stays quiet.
 #   B2. Round-1 DCGM cadence (watch refresh = sample_freq): host_cpu_hw DCGM user util on 8 pinned
 #      busy CPUs must match host_cpu /proc/stat user time within 5% over the window, and must not
 #      trail it by a sample mid-load.
@@ -21,8 +28,6 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MON="$(cd "${HERE}/../.." && pwd)"
-WS="$(cd "${MON}/../.." && pwd)"
-PREFIX="${PREFIX:-${WS}/.build/prefix-static}"
 PY="${PYTHON:-python3}"
 LIB="${MON}/measurement/lib/grace_scf_verify.py"
 BUILD=1
@@ -40,9 +45,14 @@ SHM=/dev/shm/hpcperfstatsd-scf-verify
 SCF0_PMU=/sys/bus/event_source/devices/nvidia_scf_pmu_0
 PERF_RD="nvidia_scf_pmu_0/cmem_rd_data/"
 PERF_WR="nvidia_scf_pmu_0/cmem_wr_total_bytes/"
-# Fixed iterations: without -i likwid-bench calibrates first, and those passes move DRAM traffic
-# the daemon counts but "Data volume" omits (c122-018: ratios 1.79 / 1.88).
-BENCH_ITERS=10
+LOAD="${MON}/scripts/canary_gemm_load.sh"
+LOAD_PREFIX="${HPCPERFSTATS_GEMM_PREFIX:-${OUT}/load}"
+# 8 GiB (far above the caches) on 8 threads, read or written pass after pass for 20 s: the
+# one-time first touch (and its kernel page zeroing) is a small share of the traffic, and each
+# load spans several 5 s samples.
+LOAD_MIB=8192
+LOAD_THREADS=8
+LOAD_SECONDS=20
 FAILS=0
 NOTRUN=0
 WAS_ACTIVE=$(systemctl is-active hpcperfstats 2>/dev/null)
@@ -76,9 +86,16 @@ mkdir -p "${OUT}/dump" || exit 2
 [ "$(uname -m)" = aarch64 ] || { echo "Grace (aarch64) only" >&2; exit 2; }
 ls -d /sys/bus/event_source/devices/nvidia_scf_pmu_* > "${OUT}/scf_pmus.txt" 2>&1 \
   || { say "FAIL preflight no nvidia_scf_pmu_* in sysfs"; exit 1; }
-export PATH="${PREFIX}/bin:${PATH}" LD_LIBRARY_PATH="${PREFIX}/lib:${LD_LIBRARY_PATH:-}"
-command -v likwid-bench >/dev/null \
-  || { say "FAIL preflight likwid-bench not under ${PREFIX}/bin (run build_static_bundle.sh)"; exit 1; }
+NODE0_CPUS=$(cat /sys/devices/system/node/node0/cpulist 2>/dev/null)
+[ -n "${NODE0_CPUS}" ] || { say "FAIL preflight no /sys/devices/system/node/node0/cpulist"; exit 1; }
+"${LOAD}" install --prefix "${LOAD_PREFIX}" > "${OUT}/load_install.log" 2>&1 \
+  || { say "FAIL preflight load build (see load_install.log; needs cc with -fopenmp)"; exit 1; }
+# Bounded socket-0 loads (argvs, so perf stat can exec them); their output ends with
+# "read_load done total_bytes_read=N" / "write_load done total_bytes_written=N".
+READ_LOAD=(taskset -c "${NODE0_CPUS}" "${LOAD}" run --kernel read --mib "${LOAD_MIB}"
+  --threads "${LOAD_THREADS}" --seconds "${LOAD_SECONDS}" --prefix "${LOAD_PREFIX}")
+WRITE_LOAD=(taskset -c "${NODE0_CPUS}" "${LOAD}" run --kernel write --mib "${LOAD_MIB}"
+  --threads "${LOAD_THREADS}" --seconds "${LOAD_SECONDS}" --prefix "${LOAD_PREFIX}")
 say "host $(hostname -s) kernel $(uname -r) git $(git -C "${MON}" log --oneline -1 2>/dev/null) out ${OUT}"
 
 if [ "${WAS_ACTIVE}" = active ]; then systemctl stop hpcperfstats; say "stopped hpcperfstats.service for the run (restored on exit)"; fi
@@ -93,23 +110,26 @@ elif [ ! -e "${SCF0_PMU}/events/cmem_rd_data" ] || [ ! -e "${SCF0_PMU}/events/cm
   UNITS_SKIP="nvidia_scf_pmu_0 lacks cmem_rd_data/cmem_wr_total_bytes (see scf_pmu0_events.txt)"
 fi
 perfstat() { local o=$1; shift; perf stat -x, -a -e "${PERF_RD},${PERF_WR}" -o "$o" -- "$@"; }
+units_phase() { # phase event bytes-per-unit load-argv...: SCF unit vs the load's exact bytes
+  local k=$1 ev=$2 bpu=$3 t0 t1 secs
+  shift 3
+  t0=$(now)
+  if perfstat "${OUT}/${k}_perf.txt" "$@" > "${OUT}/${k}_output_perf.txt" 2>&1; then
+    t1=$(now)
+    secs=$(awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}')
+    verdict "units_${k}_${ev}_bytes_per_unit" \
+      "$("${PY}" "${LIB}" unit "${OUT}/${k}_perf.txt" "${OUT}/idle_perf.txt" "${OUT}/${k}_output_perf.txt" "${ev}" "${bpu}" "$secs" "${IDLE_S}")"
+  else
+    say "FAIL units_${k} perf stat or the ${k}-phase load failed (see ${k}_perf.txt, ${k}_output_perf.txt)"; FAILS=$((FAILS + 1))
+  fi
+}
 if [ -n "${UNITS_SKIP}" ]; then
   for k in load store; do say "NOT_RUN units_${k} ${UNITS_SKIP}"; NOTRUN=$((NOTRUN + 1)); done
 else
   t0=$(now); perfstat "${OUT}/idle_perf.txt" sleep 5 > /dev/null 2>&1; t1=$(now)
   IDLE_S=$(awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}')
-  for k in load store; do
-    if [ "$k" = load ]; then ev="${PERF_RD}"; bpu=32; else ev="${PERF_WR}"; bpu=1; fi
-    t0=$(now)
-    if ! perfstat "${OUT}/${k}_perf.txt" likwid-bench -t "$k" -i "${BENCH_ITERS}" -w S0:8GB:1 \
-         > "${OUT}/${k}_bench_perf.txt" 2>&1; then
-      say "FAIL units_${k} perf stat failed (see ${k}_perf.txt)"; FAILS=$((FAILS + 1)); continue
-    fi
-    t1=$(now)
-    secs=$(awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}')
-    verdict "units_${k}_${ev}_bytes_per_unit" \
-      "$("${PY}" "${LIB}" unit "${OUT}/${k}_perf.txt" "${OUT}/idle_perf.txt" "${OUT}/${k}_bench_perf.txt" "$ev" "$bpu" "$secs" "${IDLE_S}")"
-  done
+  units_phase load "${PERF_RD}" 32 "${READ_LOAD[@]}"
+  units_phase store "${PERF_WR}" 1 "${WRITE_LOAD[@]}"
 fi
 
 # ---- B. daemon -----------------------------------------------------------------------------
@@ -163,16 +183,22 @@ fi
 cp "${SHM}/schema" "${OUT}/schema.txt"
 verdict daemon_rows "$("${PY}" "${LIB}" rows "${OUT}/schema.txt" "${SHM}/full")"
 
-for k in load store; do
-  if [ "$k" = load ]; then key=dram_cas_reads; else key=dram_cas_writes; fi
-  wait_new_full "$(date +%s)" 30 || { say "FAIL daemon stopped sampling before ${k}"; FAILS=$((FAILS + 1)); continue; }
+daemon_phase() { # phase key load-argv...: scf0 CAS delta across the load vs its exact bytes
+  local k=$1 key=$2
+  shift 2
+  if ! wait_new_full "$(date +%s)" 30; then
+    say "FAIL daemon stopped sampling before the ${k} phase"; FAILS=$((FAILS + 1)); return
+  fi
   cp "${SHM}/full" "${OUT}/${k}_before.txt"
-  likwid-bench -t "$k" -i "${BENCH_ITERS}" -w S0:8GB:1 > "${OUT}/${k}_bench_daemon.txt" 2>&1
+  "$@" > "${OUT}/${k}_output_daemon.txt" 2>&1 \
+    || say "WARN ${k}-phase load exited non-zero (see ${k}_output_daemon.txt)"
   wait_new_full "$(date +%s)" 30 && wait_new_full "$(date +%s)" 30
   cp "${SHM}/full" "${OUT}/${k}_after.txt"
   verdict "daemon_${k}_${key}_scf0_vs_volume" \
-    "$("${PY}" "${LIB}" daemon "${OUT}/schema.txt" "${OUT}/${k}_before.txt" "${OUT}/${k}_after.txt" "${OUT}/${k}_bench_daemon.txt" scf0 "$key" scf1)"
-done
+    "$("${PY}" "${LIB}" daemon "${OUT}/schema.txt" "${OUT}/${k}_before.txt" "${OUT}/${k}_after.txt" "${OUT}/${k}_output_daemon.txt" scf0 "${key}" scf1)"
+}
+daemon_phase load dram_cas_reads "${READ_LOAD[@]}"
+daemon_phase store dram_cas_writes "${WRITE_LOAD[@]}"
 
 # ---- B2. DCGM util fidelity at sample_freq cadence -----------------------------------------
 LOADCPUS=8-15
@@ -194,10 +220,10 @@ fi
 # ---- C. round-1 checks on the same daemon --------------------------------------------------
 save_daemon_evidence
 PID=$(systemctl show -p MainPID --value "${UNIT}")
-if grep -aq 'Grace SCF DRAM CAS via LIKWID on [0-9]* socket' "${DAEMON_LOG}"; then
-  say "PASS journal arm_aarch64_imc uses LIKWID SCF"
+if grep -aq 'Grace SCF DRAM CAS via direct perf on [0-9]* socket' "${DAEMON_LOG}"; then
+  say "PASS journal arm_aarch64_imc reads SCF via direct perf"
 else
-  say "FAIL journal has no 'Grace SCF DRAM CAS via LIKWID' line"; FAILS=$((FAILS + 1))
+  say "FAIL journal has no 'Grace SCF DRAM CAS via direct perf' line"; FAILS=$((FAILS + 1))
 fi
 if grep -aq 'DCGM embedded engine started (v2, NVSwitch module denied)' "${DAEMON_LOG}"; then
   say "PASS journal DCGM v2 start with NVSwitch denied"
@@ -207,7 +233,7 @@ fi
 if [ -n "${PID}" ] && [ "${PID}" != 0 ]; then
   if grep -q libdcgmmodulenvswitch "/proc/${PID}/maps"; then say "FAIL libdcgmmodulenvswitch mapped"; FAILS=$((FAILS + 1)); else say "PASS libdcgmmodulenvswitch not mapped"; fi
 fi
-grep -E 'Enabled types|SCF|DCGM embedded|waiting for the LIKWID overlay' "${OUT}/daemon_journal_filtered.txt" | tail -8 | tee -a "${OUT}/summary.txt"
+grep -E 'Enabled types|SCF|DCGM embedded|arm_aarch64_imc' "${OUT}/daemon_journal_filtered.txt" | tail -8 | tee -a "${OUT}/summary.txt"
 
 if [ "${FAILS}" -eq 0 ]; then say "GRACE_SCF_VERIFY_OK (${NOTRUN} not run) results in ${OUT}"; exit 0; fi
 say "GRACE_SCF_VERIFY_FAIL ${FAILS} check(s) failed; results in ${OUT}"

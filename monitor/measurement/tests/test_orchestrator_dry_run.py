@@ -41,7 +41,7 @@ def test_run_overhead_profile_dry_run():
     assert "Schedule (seed 7" in out
     assert "Projected end:" in out
     assert re.search(r"\bOFF\b.*\n.*\bNONE\b.*\n.*\bALL\b", out)
-    assert "SOLO filesystem" in out and "SOLO likwid" in out
+    assert "SOLO filesystem" in out and "SOLO x86_perf" in out
     assert "restore trap:" in out.lower()
     assert "rpm -Uvh --replacepkgs /tmp/hpcperfstatsd-3.0-7.el9.x86_64.rpm" in out
     assert "CADENCE" not in out
@@ -95,11 +95,11 @@ def test_profile_dropin_runs_profiler_binary_on_production_conf():
 
 def test_dropin_disable_csv():
     active = ["host_cpu", "host_cpu_hw", "host_mem", "intel_x86_rapl"]
-    groups = {"filesystem": ["host_cpu", "host_mem"], "likwid": ["host_cpu_hw", "intel_x86_rapl"]}
+    groups = {"filesystem": ["host_cpu", "host_mem"], "x86_perf": ["host_cpu_hw", "intel_x86_rapl"]}
     none = orchestrator.dropin_text("NONE", active, groups)
     assert "Environment=HPCPERFSTATS_DISABLE_TYPES=host_cpu,host_cpu_hw,host_mem,intel_x86_rapl" in none
     assert "ExecStart=\nExecStart=/usr/sbin/hpcperfstatsd -c " + orchestrator.MEASURE_CONF in none
-    solo = orchestrator.dropin_text("SOLO", active, groups, group="likwid")
+    solo = orchestrator.dropin_text("SOLO", active, groups, group="x86_perf")
     assert "HPCPERFSTATS_DISABLE_TYPES=host_cpu,host_mem\n" in solo
     assert orchestrator.MEASURE_CONF in solo
     assert orchestrator.dropin_text("ALL", active, groups) is None

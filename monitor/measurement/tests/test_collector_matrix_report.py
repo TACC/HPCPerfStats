@@ -31,7 +31,7 @@ def _leg(kind, block, group=None, cpu=None, types=None, uss=10.0, broker=1000.0,
             "node": {"busy_cores": _ci(node_busy, 0.001)}}
 
 
-GROUPS = {"filesystem": ["host_cpu", "host_mem"], "likwid": ["host_cpu_hw", "intel_x86_rapl"]}
+GROUPS = {"filesystem": ["host_cpu", "host_mem"], "x86_perf": ["host_cpu_hw", "intel_x86_rapl"]}
 ACTIVE = ["host_cpu", "host_cpu_hw", "host_mem", "intel_x86_rapl"]
 
 
@@ -42,7 +42,7 @@ def _legs(residual=0.0, none_ok=True):
         legs.append(_leg("NONE", b, cpu=2.0, types=[], status="ok" if none_ok else "failed"))
         legs.append(_leg("ALL", b, cpu=2.0 + 3.0 + 5.0 + residual, types=ACTIVE, tag="first"))
         legs.append(_leg("SOLO", b, "filesystem", cpu=2.0 + 3.0, types=GROUPS["filesystem"]))
-        legs.append(_leg("SOLO", b, "likwid", cpu=2.0 + 5.0, types=GROUPS["likwid"]))
+        legs.append(_leg("SOLO", b, "x86_perf", cpu=2.0 + 5.0, types=GROUPS["x86_perf"]))
         legs.append(_leg("ALL", b, cpu=2.0 + 3.0 + 5.0 + residual, types=ACTIVE, tag="second"))
     legs.append(_leg("OFF", 3))
     return legs
@@ -51,11 +51,11 @@ def _legs(residual=0.0, none_ok=True):
 def test_collector_matrix_additivity():
     m = collector_matrix.build_matrix(_legs(), GROUPS, ACTIVE)
     rows = {r["group"]: r for r in m["rows"]}
-    assert abs(rows["likwid"]["cpu_core_s_per_h"]["mean"] - 5.0) < 1e-9
+    assert abs(rows["x86_perf"]["cpu_core_s_per_h"]["mean"] - 5.0) < 1e-9
     assert abs(rows["filesystem"]["cpu_core_s_per_h"]["mean"] - 3.0) < 1e-9
-    assert [r["group"] for r in m["rows"]] == ["likwid", "filesystem"]
-    assert abs(rows["likwid"]["share_of_all"] - 0.5) < 1e-9
-    assert rows["likwid"]["cpu_core_s_per_h"]["n_blocks"] == 2
+    assert [r["group"] for r in m["rows"]] == ["x86_perf", "filesystem"]
+    assert abs(rows["x86_perf"]["share_of_all"] - 0.5) < 1e-9
+    assert rows["x86_perf"]["cpu_core_s_per_h"]["n_blocks"] == 2
     assert abs(m["framework"]["cpu_core_s_per_h"]["mean"] - 2.0) < 1e-9
     assert abs(m["residual"]["cpu_core_s_per_h"]["mean"]) < 1e-9
     assert m["residual"]["large"] is False
@@ -68,26 +68,26 @@ def test_collector_matrix_none_failed_falls_back_to_off():
     m = collector_matrix.build_matrix(_legs(none_ok=False), GROUPS, ACTIVE)
     assert m["framework"]["status"] == "NOT_MEASURED"
     rows = {r["group"]: r for r in m["rows"]}
-    assert abs(rows["likwid"]["cpu_core_s_per_h"]["mean"] - 7.0) < 1e-9
-    assert "includes framework cost" in " ".join(rows["likwid"]["notes"])
+    assert abs(rows["x86_perf"]["cpu_core_s_per_h"]["mean"] - 7.0) < 1e-9
+    assert "includes framework cost" in " ".join(rows["x86_perf"]["notes"])
 
 
 def test_solo_leg_mismatch_partial_group():
     legs = _legs()
     for leg in legs:
-        if leg["kind"] == "SOLO" and leg["group"] == "likwid":
+        if leg["kind"] == "SOLO" and leg["group"] == "x86_perf":
             leg["verified_types"] = ["host_cpu_hw"]
             leg["missing_types"] = ["intel_x86_rapl"]
     rows = {r["group"]: r for r in collector_matrix.build_matrix(legs, GROUPS, ACTIVE)["rows"]}
-    assert rows["likwid"]["types_measured"] == ["host_cpu_hw"]
-    assert "intel_x86_rapl" in " ".join(rows["likwid"]["notes"])
+    assert rows["x86_perf"]["types_measured"] == ["host_cpu_hw"]
+    assert "intel_x86_rapl" in " ".join(rows["x86_perf"]["notes"])
     for leg in legs:
-        if leg["kind"] == "SOLO" and leg["group"] == "likwid":
+        if leg["kind"] == "SOLO" and leg["group"] == "x86_perf":
             leg["verified_types"] = []
-            leg["missing_types"] = GROUPS["likwid"]
+            leg["missing_types"] = GROUPS["x86_perf"]
     rows = {r["group"]: r for r in collector_matrix.build_matrix(legs, GROUPS, ACTIVE)["rows"]}
-    assert rows["likwid"]["status"] == "NOT_MEASURED"
-    assert "init failed in isolation" in rows["likwid"]["reason"]
+    assert rows["x86_perf"]["status"] == "NOT_MEASURED"
+    assert "init failed in isolation" in rows["x86_perf"]["reason"]
 
 
 def test_type_mismatch_legs_name_their_status_not_init_failure():
@@ -168,7 +168,7 @@ def test_profile_metrics_measured_values(tmp_path):
     outputs = profile_report.write_outputs(run)
     for name in ("profile.json", "report.md", "profile_row.csv"):
         assert (run / name).is_file(), name
-    assert "likwid" in (run / "report.md").read_text()
+    assert "x86_perf" in (run / "report.md").read_text()
     rows = list(csv.DictReader((run / "profile_row.csv").open()))
     assert len(rows) == 1 and float(rows[0]["daemon_cpu_core_s_per_h"]) == 10.0
     assert outputs["profile"] == run / "profile.json"
@@ -185,16 +185,16 @@ def test_baseline_drift_flag(tmp_path):
 
 def test_partial_report_after_each_leg(tmp_path):
     meta = dict(RUN_META)
-    meta["planned_leg_ids"] = ["b1-OFF-", "b1-NONE-", "b1-ALL-", "b1-SOLO-likwid"]
+    meta["planned_leg_ids"] = ["b1-OFF-", "b1-NONE-", "b1-ALL-", "b1-SOLO-x86_perf"]
     legs = [_leg("OFF", 1), _leg("NONE", 1, cpu=2.0, types=[]),
             _leg("ALL", 1, cpu=10.0, types=ACTIVE)]
     run = _write_run(tmp_path, legs, meta)
     profile = profile_report.build_profile(run)
     assert profile["run_complete"] is False
-    assert profile["legs_missing"] == ["b1-SOLO-likwid"]
+    assert profile["legs_missing"] == ["b1-SOLO-x86_perf"]
     rows = {r["group"]: r for r in profile["collector_matrix"]["rows"]}
-    assert rows["likwid"]["status"] == "NOT_MEASURED"
-    assert rows["likwid"]["reason"] == "run interrupted"
+    assert rows["x86_perf"]["status"] == "NOT_MEASURED"
+    assert rows["x86_perf"]["reason"] == "run interrupted"
     assert profile["metrics"]["daemon_cpu_core_s_per_h"]["value"] == 10.0
 
 
@@ -284,7 +284,7 @@ def test_report_per_governor_sets_and_old_results_unnamed(tmp_path):
     assert sets["ondemand"]["headline"]["cpu_core_s_per_h"]["value"] == pytest.approx(130.0)
     assert sets["ondemand"]["headline"]["wakeups_per_s"]["value"] == pytest.approx(620.0)
     rows = {r["group"]: r for r in sets["ondemand"]["collector_matrix"]["rows"]}
-    assert rows["likwid"]["cpu_core_s_per_h"]["mean"] == pytest.approx(65.0)  # 13 x 5, same set only
+    assert rows["x86_perf"]["cpu_core_s_per_h"]["mean"] == pytest.approx(65.0)  # 13 x 5, same set only
     assert profile["metrics_governor"] == "performance"
     assert profile["metrics"]["daemon_cpu_core_s_per_h"]["value"] == pytest.approx(10.0)
     md = (run / "report.md").read_text()

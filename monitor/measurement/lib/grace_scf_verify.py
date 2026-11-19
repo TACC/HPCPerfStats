@@ -3,8 +3,9 @@
 Used by ``bin/verify_grace_scf_imc.sh``. Pure parsing and checks, unit-tested on the dev host:
 
 * ``perf stat -x,`` CSV for the kernel SCF PMU events (``nvidia_scf_pmu_0/cmem_rd_data/``,
-  ``.../cmem_wr_total_bytes/``), an independent path from LIKWID,
-* ``likwid-bench`` "Data volume (Byte)",
+  ``.../cmem_wr_total_bytes/``), a path independent of the daemon's own perf reader,
+* the exact bytes read or written by the bounded ``scripts/canary_gemm_load.sh run --kernel
+  read`` / ``--kernel write`` loads,
 * the DEBUG ``/dev/shm/.../schema`` + ``full`` payloads written by hpcperfstatsd,
 
 and the verdicts: SCF units (reads are 32-byte beats, writes are bytes) measured against a known
@@ -43,17 +44,53 @@ def perf_stat_value(text: str, event: str) -> float | None:
     return None
 
 
-def bench_volume_bytes(text: str) -> int | None:
-    """``Data volume (Byte):`` from likwid-bench output.
+def _done_bytes(text: str, kernel: str) -> int | None:
+    """``total_bytes_<kernel>=`` from the ``<kernel>_load done`` line, at the start of a line."""
+    field = "read" if kernel == "read" else "written"
+    m = re.search(rf"^{kernel}_load done total_bytes_{field}=(\d+) ", text, re.M)
+    return int(m.group(1)) if m else None
+
+
+def load_bytes_read(text: str) -> int | None:
+    """``total_bytes_read=`` from the ``read_load done`` line of a bounded read load.
 
     Args:
-        text: Full likwid-bench output.
+        text: Full ``canary_gemm_load.sh run --kernel read --seconds S`` output.
 
     Returns:
-        Bytes moved by the kernel, or None when the line is missing.
+        Bytes the read passes moved, or None when the run did not finish (no done line).
     """
-    m = re.search(r"Data volume \(Byte\):\s*(\d+)", text)
-    return int(m.group(1)) if m else None
+    return _done_bytes(text, "read")
+
+
+def load_bytes_written(text: str) -> int | None:
+    """``total_bytes_written=`` from the ``write_load done`` line of a bounded write load.
+
+    Args:
+        text: Full ``canary_gemm_load.sh run --kernel write --seconds S`` output.
+
+    Returns:
+        Bytes the write passes stored, or None when the run did not finish (no done line).
+    """
+    return _done_bytes(text, "write")
+
+
+def load_volume(text: str, metric: str) -> int | None:
+    """Known volume for a counter: the write load's bytes for a write counter, else the read's.
+
+    A write counter (``dram_cas_writes``, ``.../cmem_wr_total_bytes/``) is never checked against
+    a read load's volume, nor a read counter against a write load's.
+
+    Args:
+        text: Full load output.
+        metric: Daemon key or perf event spec being checked.
+
+    Returns:
+        The matching done line's bytes, or None when that line is missing.
+    """
+    if metric.endswith("_writes") or "_wr_" in metric:
+        return load_bytes_written(text)
+    return load_bytes_read(text)
 
 
 def parse_schema(text: str) -> dict[str, list[str]]:
@@ -95,22 +132,22 @@ def parse_payload(text: str, schema: dict[str, list[str]]) -> dict[tuple[str, st
 
 
 def unit_check(volume: int, counted: float, idle: float, expect_bytes_per_unit: float,
-               tol: float = 0.25, bench_secs: float = 1.0, idle_secs: float = 1.0) -> dict[str, Any]:
+               tol: float = 0.25, load_secs: float = 1.0, idle_secs: float = 1.0) -> dict[str, Any]:
     """Bytes per counter unit, measured from a known volume with idle background subtracted.
 
     Args:
-        volume: Bytes the benchmark kernel moved.
-        counted: Counter total over the benchmark.
+        volume: Bytes the load moved.
+        counted: Counter total over the load.
         idle: Counter total over an idle window of ``idle_secs``.
         expect_bytes_per_unit: 32 for read beats, 1 for write bytes.
         tol: Allowed relative error.
-        bench_secs: Wall-clock length of the benchmark window.
-        idle_secs: Wall-clock length of the idle window (idle is scaled to the bench window).
+        load_secs: Wall-clock length of the load window.
+        idle_secs: Wall-clock length of the idle window (idle is scaled to the load window).
 
     Returns:
         Verdict dict with ``ok`` and the measured ``bytes_per_unit``.
     """
-    net = counted - (idle * bench_secs / idle_secs if idle_secs > 0 else 0.0)
+    net = counted - (idle * load_secs / idle_secs if idle_secs > 0 else 0.0)
     if volume <= 0 or net <= 0:
         return {"ok": False, "reason": f"no signal (volume={volume}, counted={counted}, idle={idle})"}
     measured = volume / net
@@ -131,7 +168,7 @@ def daemon_delta_check(before: dict, after: dict, dev: str, key: str, volume: in
         after: Parsed payload after the load.
         dev: Device loaded (``scf0``).
         key: ``dram_cas_reads`` or ``dram_cas_writes``.
-        volume: Bytes the benchmark moved.
+        volume: Bytes the load moved.
         other_dev: The idle socket's device, or None on single-socket parts.
         lo: Minimum accepted bytes / volume.
         hi: Maximum accepted bytes / volume.
@@ -203,22 +240,22 @@ def main(argv: list[str]) -> int:
         0 when the verdict is ok, 1 when it is not, 2 on a usage error.
     """
     cmd = argv[1] if len(argv) > 1 else ""
-    if cmd == "unit" and len(argv) == 9:  # unit PERF IDLE BENCH EVENT BPU BENCH_S IDLE_S
-        perf, idle, bench = (open(p, encoding="utf-8").read() for p in argv[2:5])
-        res = unit_check(bench_volume_bytes(bench) or 0, perf_stat_value(perf, argv[5]) or 0.0,
+    if cmd == "unit" and len(argv) == 9:  # unit PERF IDLE LOAD EVENT BPU LOAD_S IDLE_S
+        perf, idle, load = (open(p, encoding="utf-8").read() for p in argv[2:5])
+        res = unit_check(load_volume(load, argv[5]) or 0, perf_stat_value(perf, argv[5]) or 0.0,
                          perf_stat_value(idle, argv[5]) or 0.0, float(argv[6]),
-                         bench_secs=float(argv[7]), idle_secs=float(argv[8]))
+                         load_secs=float(argv[7]), idle_secs=float(argv[8]))
     elif cmd == "rows" and len(argv) == 4:  # rows SCHEMA PAYLOAD
         schema = parse_schema(open(argv[2], encoding="utf-8").read())
         rows = parse_payload(open(argv[3], encoding="utf-8").read(), schema)
         res = {"ok": any(t == "arm_aarch64_imc" for t, _ in rows),
                "rows": {f"{t} {d}": v for (t, d), v in rows.items() if t == "arm_aarch64_imc"}}
-    elif cmd == "daemon" and len(argv) == 9:  # daemon SCHEMA BEFORE AFTER BENCH DEV KEY OTHER_DEV
+    elif cmd == "daemon" and len(argv) == 9:  # daemon SCHEMA BEFORE AFTER LOAD DEV KEY OTHER_DEV
         schema = parse_schema(open(argv[2], encoding="utf-8").read())
         before = parse_payload(open(argv[3], encoding="utf-8").read(), schema)
         after = parse_payload(open(argv[4], encoding="utf-8").read(), schema)
         res = daemon_delta_check(before, after, argv[6], argv[7],
-                                 bench_volume_bytes(open(argv[5], encoding="utf-8").read()) or 0,
+                                 load_volume(open(argv[5], encoding="utf-8").read(), argv[7]) or 0,
                                  argv[8] or None)
     elif cmd == "util" and len(argv) == 7:  # util SCHEMA BEFORE MID AFTER CPU_LIST(a-b)
         schema = parse_schema(open(argv[2], encoding="utf-8").read())

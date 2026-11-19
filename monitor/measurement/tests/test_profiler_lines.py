@@ -31,7 +31,7 @@ def test_undercounted_cycle_header_uses_type_calls():
             "wall_ns=4700000 cpu_ns=4700000 wait_ns=0 avg_wall_ns=100000\n")
     rep = profiler_lines.parse_last_report(text)
     assert rep["cycles"] == 47 and rep["cycles_reported"] == 1
-    caps = {"arch": "x86_64", "configure": {"cpu_backend": "likwid", "infiniband": False}}
+    caps = {"arch": "x86_64", "configure": {"cpu_backend": "x86", "infiniband": False}}
     fs = profiler_lines.group_rollup(rep, caps)["filesystem"]
     assert abs(fs["cpu_ms_per_cycle"] - (47.0 + 4.7) / 47) < 1e-9  # not 47x inflated
 
@@ -39,7 +39,7 @@ def test_undercounted_cycle_header_uses_type_calls():
 def test_no_report_and_group_rollup():
     assert profiler_lines.parse_last_report("Enabled types: host_cpu\n") is None
     rep = profiler_lines.parse_last_report((FIX / "journal_metric_profiler.txt").read_text())
-    caps = {"arch": "x86_64", "configure": {"cpu_backend": "likwid", "infiniband": False}}
+    caps = {"arch": "x86_64", "configure": {"cpu_backend": "x86", "infiniband": False}}
     groups = profiler_lines.group_rollup(rep, caps)
     assert set(groups) == {"filesystem"}
     assert abs(groups["filesystem"]["cpu_ms_per_cycle"] - (107.2 + 67.0) / 134) < 1e-9

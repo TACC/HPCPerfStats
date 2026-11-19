@@ -185,10 +185,10 @@ def test_execute_full_run_on_fake_host(fake_host):
     profile["legs"] = [{**leg, "leg_id": leg["leg_id"].split("-", 1)[1]} for leg in profile["legs"]
                        if leg["governor"] == "performance"]
     assert profile["groups"] == {"filesystem": ["host_cpu", "host_mem"],
-                                 "likwid": ["host_cpu_hw", "intel_x86_rapl"]}
+                                 "x86_perf": ["host_cpu_hw", "intel_x86_rapl"]}
     legs = {leg["leg_id"]: leg for leg in profile["legs"]}
     assert [leg["kind"] for leg in profile["legs"]].count("SOLO") == 2
-    solo = legs["b1-SOLO-likwid"]
+    solo = legs["b1-SOLO-x86_perf"]
     assert solo["status"] == "ok" and solo["verified_types"] == ["host_cpu_hw", "intel_x86_rapl"]
     assert solo["missing_types"] == []
     assert legs["b1-NONE-"]["verified_types"] == []

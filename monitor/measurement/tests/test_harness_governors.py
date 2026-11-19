@@ -75,8 +75,8 @@ def test_cur_freq_summary(tmp_path):
 
 
 def test_schedule_repeats_full_leg_set_per_governor():
-    one = schedule.build_schedule(["filesystem", "likwid"], blocks=2, seed=4, max_hours=99)
-    two = schedule.build_schedule(["filesystem", "likwid"], blocks=2, seed=4, max_hours=99,
+    one = schedule.build_schedule(["filesystem", "x86_perf"], blocks=2, seed=4, max_hours=99)
+    two = schedule.build_schedule(["filesystem", "x86_perf"], blocks=2, seed=4, max_hours=99,
                                   governors=["performance", "ondemand"], cadence_sweep=[60],
                                   profile_collectors=True)
     base = [(leg["kind"], leg["group"], leg["block"]) for leg in one["legs"]]

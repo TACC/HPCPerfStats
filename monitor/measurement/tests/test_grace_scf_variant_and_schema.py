@@ -3,7 +3,8 @@
 1. SCF cost was not isolated: SOLO(perf_event) ran arm_aarch64_imc without the overlay (it only
    waited), and the overlay programs the SCF counters inside arm_cpu either way. Overlay
    builds now put arm_aarch64_imc in arm_cpu and pair SOLO(arm_cpu) with a VARIANT leg that
-   sets HPCPERFSTATS_LIKWID_GRACE_SCF=0, so SCF = SOLO(arm_cpu) − VARIANT(arm_cpu_noscf).
+   sets the overlay's SCF-off knob (driver_map.NOSCF_ENV=0), so
+   SCF = SOLO(arm_cpu) - VARIANT(arm_cpu_noscf).
 2. NVLink keys could not be checked (no payload capture). Legs on <queue>_measure now keep the
    last $ schema message; profile.json records keys per type; two runs diff with
    bin/compare_schema_keys.py.
@@ -30,10 +31,12 @@ from lib import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-OVERLAY = {"arch": "aarch64", "configure": {"cpu_backend": "arm", "likwid_overlay": True}}
+OVERLAY = {"arch": "aarch64",
+           "configure": {"cpu_backend": "arm", driver_map.GRACE_OVERLAY_FLAGS[0]: True}}
 NO_OVERLAY = {"arch": "aarch64", "configure": {"cpu_backend": "arm"}}
 ARM_ACTIVE = ["arm_aarch64_imc", "host_cpu", "host_cpu_hw", "nvidia_gpu"]
 MARKER = driver_map.VARIANTS["arm_cpu_noscf"]["marker"]
+NOSCF = {driver_map.NOSCF_ENV: "0"}
 
 
 def test_overlay_build_groups_imc_with_arm_cpu_and_offers_noscf_variant():
@@ -44,10 +47,11 @@ def test_overlay_build_groups_imc_with_arm_cpu_and_offers_noscf_variant():
     assert list(variants) == ["arm_cpu_noscf"]
     v = variants["arm_cpu_noscf"]
     assert v["base"] == "arm_cpu" and v["types"] == ["host_cpu_hw"]
-    assert v["env"] == {"HPCPERFSTATS_LIKWID_GRACE_SCF": "0"}
-    # Pinned: the 3.0 overlay daemon logged "SCF uncore events %s" with this suffix. 3.1 removed
-    # the overlay (and the knob), so baseline 3.0 RPMs are the only builds that emit it.
-    assert MARKER == "SCF uncore events off (HPCPERFSTATS_LIKWID_GRACE_SCF=0)"
+    assert v["env"] == NOSCF
+    # The 3.0 overlay daemon logged "SCF uncore events %s" with this suffix. 3.1 removed the
+    # overlay (and the knob), so baseline 3.0 RPMs are the only builds that emit it. The literal
+    # knob name is pinned in test_schedule_drivers.py.
+    assert MARKER == f"SCF uncore events off ({driver_map.NOSCF_ENV}=0)"
 
 
 def test_non_overlay_builds_keep_perf_event_and_no_variant():
@@ -67,7 +71,7 @@ def test_schedule_places_variant_beside_solo_in_every_solo_block():
     var = [leg for leg in plan["legs"] if leg["kind"] == "VARIANT"]
     assert [leg["leg_id"] for leg in var] == ["b1-VARIANT-arm_cpu_noscf", "b2-VARIANT-arm_cpu_noscf"]
     assert all(leg["base"] == "arm_cpu" and leg["marker"] == MARKER for leg in var)
-    assert all(leg["env"] == {"HPCPERFSTATS_LIKWID_GRACE_SCF": "0"} and not leg["fwq"] for leg in var)
+    assert all(leg["env"] == NOSCF and not leg["fwq"] for leg in var)
     for b in (1, 2):
         kinds = [leg["kind"] for leg in plan["legs"] if leg["block"] == b]
         assert "VARIANT" in kinds and kinds.index("VARIANT") > kinds.index("ALL")
@@ -82,9 +86,9 @@ def test_variant_dropin_keeps_host_cpu_hw_only_and_sets_knob():
     plan = {"variant_specs": driver_map.variants_for(groups, OVERLAY)}
     lg = orchestrator.leg_groups(groups, plan)
     text = orchestrator.dropin_text("VARIANT", ARM_ACTIVE, lg, "arm_cpu_noscf",
-                                    env={"HPCPERFSTATS_LIKWID_GRACE_SCF": "0"})
+                                    env=NOSCF)
     assert "Environment=HPCPERFSTATS_DISABLE_TYPES=arm_aarch64_imc,host_cpu,nvidia_gpu\n" in text
-    assert "Environment=HPCPERFSTATS_LIKWID_GRACE_SCF=0\n" in text
+    assert f"Environment={driver_map.NOSCF_ENV}=0\n" in text
     assert orchestrator.MEASURE_CONF in text  # partial payloads stay off the production queue
     solo = orchestrator.dropin_text("SOLO", ARM_ACTIVE, lg, "arm_cpu")
     assert "GRACE_SCF" not in solo
@@ -223,10 +227,10 @@ def test_variant_marker_is_recomputed_from_the_leg_journal(tmp_path):
 
     meta = {"leg_id": "b1-VARIANT-arm_cpu_noscf", "kind": "VARIANT", "block": 1,
             "group": "arm_cpu_noscf", "base": "arm_cpu", "marker": MARKER,
-            "env": {"HPCPERFSTATS_LIKWID_GRACE_SCF": "0"}, "phases": {}}
+            "env": NOSCF, "phases": {}}
     (tmp_path / "meta.json").write_text(json.dumps(meta))
     assert leg_summary.summarize_leg(tmp_path)["marker_seen"] is False  # no journal yet
-    (tmp_path / "journal.txt").write_text("hpcperfstatsd[1]: host_cpu_hw: LIKWID " + MARKER
+    (tmp_path / "journal.txt").write_text("hpcperfstatsd[1]: host_cpu_hw: " + MARKER
                                           + "; arm_aarch64_imc uses the perf dmc/imc scan\n")
     s = leg_summary.summarize_leg(tmp_path)
     assert s["marker_seen"] is True and s["base"] == "arm_cpu"

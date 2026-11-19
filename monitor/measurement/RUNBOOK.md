@@ -47,8 +47,8 @@ sudo ./measurement/bin/run_overhead_profile.sh --rpm rpmbuild/RPMS/x86_64/hpcper
 
 The RPM to measure is **only** the `--rpm` path (installed with `rpm -Uvh --replacepkgs`, so
 an older RPM is a downgrade and works); `--build-info` must be the `rpmbuild/build-info` dir
-written by the build of **that** RPM (`monitor-build-capabilities.json`: CPU backend, LIKWID
-overlay, IB MAD). Without it the driver groups fall back to x86 defaults.
+written by the build of **that** RPM (`monitor-build-capabilities.json`: CPU backend, the
+pre-3.1 Grace overlay flag, IB MAD). Without it the driver groups fall back to x86 defaults.
 
 **Governors (D13, D25).** The per-hour cost depends on the cpufreq governor: on c122-018 the
 same daemon used ~8 core-s/h under `performance` and ~109 under `ondemand` at the same ~620
@@ -96,7 +96,9 @@ shortened to fit (see step 4): with two sets raise `--max-hours` (about 24) so b
    `restore.sh` is written to the result dir before any change. A fresh node needs
    `--conf PATH`. The measured package stays installed afterwards (reserved node).
 3. **Discovery**: one 2-minute ALL start; the daemon's `Enabled types:` journal line is the
-   active collector list. Each type maps to a **driver group** (`filesystem`, `likwid`,
+   active collector list. Each type maps to a **driver group** (`filesystem`, `x86_perf`
+   (x86 `host_cpu_hw`, IMC / DF uncore and RAPL on the `x86` direct-perf backend; the 3.0-x
+   x86 backend name in `X86_BACKENDS` maps the same),
    `arm_cpu` (Grace `host_cpu_hw` on the `arm` backend; older build-info saying `dcgm` maps
    the same), `dcgm_gpu` (`nvidia_gpu`), `hwmon_power` (`host_power_socket`), `perf_event`,
    `ib_mad`, …; `lib/driver_map.py`); an unmapped type fails.
@@ -171,9 +173,9 @@ sampler, a build flag) for a CPU gap between two runs, A/B that tool on the live
 sampler and the build were each ruled out that way before the governor was found (findings 10,
 12, 18).
 
-**Grace SCF cost (overlay builds).** `arm_aarch64_imc` sits in `arm_cpu`, and each block adds
-a `VARIANT arm_cpu_noscf` leg: `host_cpu_hw` alone with `HPCPERFSTATS_LIKWID_GRACE_SCF=0` in
-the runtime drop-in (the overlay starts at CYC+INS, no SCF counters). `report.md` → *Paired
+**Grace SCF cost (pre-3.1 overlay builds only).** `arm_aarch64_imc` sits in `arm_cpu`, and each block adds
+a `VARIANT arm_cpu_noscf` leg: `host_cpu_hw` alone with the overlay's SCF-off knob
+(`driver_map.NOSCF_ENV=0`) in the runtime drop-in (the overlay starts at CYC+INS, no SCF counters). `report.md` -> *Paired
 variants* gives SCF counters + `arm_aarch64_imc` = SOLO(`arm_cpu`) − VARIANT in the same block,
 with perf FDs Δ (expect 4 on a 2-socket Grace). `NOT_MEASURED (... marker)` means the daemon did
 not log `SCF uncore events off` — the RPM predates the knob, so the pair would be two identical
@@ -235,22 +237,33 @@ for diagnosis and never feeds a headline number.
 
 ---
 
-## 0b. Grace DRAM CAS verification (`arm_aarch64_imc` via LIKWID SCF)
+## 0b. Grace DRAM CAS verification (`arm_aarch64_imc` via direct perf on the SCF PMUs)
 
-On a Grace node, as root, after `build_static_bundle.sh` has populated the static prefix:
+On a Grace node, as root, with a C compiler that supports `-fopenmp` (`module load gcc` on
+TACC) for the read and write loads:
 
 ```bash
 ./measurement/bin/verify_grace_scf_imc.sh
 ```
 
-It stops `hpcperfstats.service` for the run (restored on exit) and checks, against a known
-`likwid-bench` volume on socket 0 (fixed `-i 10`, no calibration passes): (A) the SCF units
-through kernel `perf stat` on `nvidia_scf_pmu_0/cmem_rd_data/` and `/cmem_wr_total_bytes/`,
-independent of LIKWID (reads = 32-byte beats, writes = bytes, idle subtracted; `NOT_RUN` when
-`perf` or those events are missing); (B) a DEBUG
+It stops `hpcperfstats.service` for the run (restored on exit). The known loads are
+`scripts/canary_gemm_load.sh run --kernel read` (load phase) and `--kernel write` (store
+phase), each 8 GiB, 8 threads, 20 s, built into `<out>/load` (or `$HPCPERFSTATS_GEMM_PREFIX`)
+and pinned with `taskset` to NUMA node 0, so the array sits in socket 0 memory; their
+`read_load done total_bytes_read=` and `write_load done total_bytes_written=` lines are the
+exact byte counts of the timed passes (first touch happens in setup and is not counted). The
+write load overwrites every cache line of the array each pass with plain stores; write-allocate
+fills add DRAM reads equal to the bytes written, so the store phase compares only write
+counters, and CAS writes equal the bytes written because the array dwarfs the LLC. Against
+these the script checks: (A) the SCF units through kernel `perf stat`, independent of the
+daemon: `nvidia_scf_pmu_0/cmem_rd_data/` over the read load (`units_load`, 32-byte beats) and
+`nvidia_scf_pmu_0/cmem_wr_total_bytes/` over the write load (`units_store`, bytes), idle
+subtracted (`NOT_RUN` when `perf` or the events are missing); (B) a DEBUG
 build of the daemon run as a transient unit (broker unreachable, dumps to the result dir,
-`/dev/shm/hpcperfstatsd-scf-verify` mirror): `arm_aarch64_imc` `scf0` deltas match the volume
-in 64-byte CAS within 0.75–1.5x and `scf1` stays below 0.25x; (B2) with DCGM refreshing at
+`/dev/shm/hpcperfstatsd-scf-verify` mirror): the `arm_aarch64_imc` `scf0` `dram_cas_reads`
+delta across the read load and the `dram_cas_writes` delta across the write load
+(`daemon_store_dram_cas_writes`) each match the load's bytes in 64-byte CAS within 0.75-1.5x
+while `scf1` stays below 0.25x; (B2) with DCGM refreshing at
 `sample_freq`, `host_cpu_hw` user util on 8 pinned busy CPUs matches `host_cpu` `/proc/stat`
 user time within 5% and is not a sample behind mid-load; (C) the DCGM NVSwitch module is
 denied and not mapped. Output: `measurement/results/grace_scf_<host>_<UTC>/summary.txt` (daemon

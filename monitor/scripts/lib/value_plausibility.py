@@ -3,8 +3,16 @@ from __future__ import annotations
 
 import time
 
-from .message_parse import schema_key_name
-from .papi_shm_validate import check_papi_row_invariants
+from .message_parse import (
+    fast_schema_keys,
+    schema_key_name,
+    schema_token_is_event_counter,
+)
+from .papi_shm_validate import (
+    caps_indicate_arm_backend,
+    check_host_cpu_hw_rates,
+    check_papi_row_invariants,
+)
 from .payload_parse import rows_by_type, sample_header_timestamp
 
 # Keys retired by round 2 (D33/D36): their presence in a schema means an old emitter.
@@ -19,8 +27,9 @@ EXACT_KEYS = {
 NVIDIA_GPU_PERCENT_KEYS = (
     "gpu_util", "gpu_mem_util", "fp64_active", "sm_active", "sm_occupancy", "fp32_active",
     "fp16_active", "tensor_active", "tensor_imma_active", "tensor_hmma_active",
-    "tensor_dfma_active", "gpu_dram_active",
+    "tensor_dfma_active", "tensor_dmma_active", "integer_active", "gpu_dram_active",
 )
+INTEL_GPU_PERCENT_KEYS = ("compute_engine_util",)
 # Rows only exist with /tmp on tmpfs, a Lustre/BeeGFS/NFS mount, or a running job.
 CONDITIONAL_TYPES = frozenset({
     "host_tmpfs", "host_nfs", "beegfs_client", "lustre_llite", "lustre_mdc", "lustre_osc",
@@ -45,7 +54,7 @@ def check_schema_contract(schema_by_type: dict[str, list[str]]) -> list[str]:
 
 
 def check_row_invariants(type_name: str, dev: str, vals: dict[str, int]) -> list[str]:
-    """Value relations that hold on every sane host_power_socket / nvidia_gpu row."""
+    """Value relations that hold on every sane host_power_socket / nvidia_gpu / intel_gpu row."""
     out: list[str] = []
     if type_name == "host_power_socket":
         watts = {k: vals.get(k, 0) for k in EXACT_KEYS["host_power_socket"]}
@@ -68,6 +77,59 @@ def check_row_invariants(type_name: str, dev: str, vals: dict[str, int]) -> list
             out.append(f"{type_name}/{dev}: used+free={used_free} MB > total={total} MB")
         if vals.get("temperature", 0) > 150:
             out.append(f"{type_name}/{dev}: temperature={vals['temperature']} C > 150")
+    elif type_name == "intel_gpu":
+        for key in INTEL_GPU_PERCENT_KEYS:
+            if vals.get(key, 0) > 100:
+                out.append(f"{type_name}/{dev}: {key}={vals[key]} > 100 %")
+    return out
+
+
+def _narrow_counter_widths(keys: list[str]) -> dict[str, int]:
+    """key -> W for each ``E`` key narrower than 64 bits."""
+    out: dict[str, int] = {}
+    for tok in keys:
+        w = [p[2:] for p in tok.split(",")[1:] if p.startswith("W=")]
+        if schema_token_is_event_counter(tok) and w and int(w[0]) < 64:
+            out[schema_key_name(tok)] = int(w[0])
+    return out
+
+
+def _host_cpu_hw_values(body: str, keys: list[str], *, enable_slow: bool, tier: str) -> dict[str, dict[str, int]]:
+    """dev -> key -> value of the host_cpu_hw rows of one payload (``tier`` "@fast" / "@full")."""
+    rows = rows_by_type(
+        body, {"host_cpu_hw": keys}, require_tier=enable_slow, allowed_tier=tier if enable_slow else None
+    ).get("host_cpu_hw", [])
+    out: dict[str, dict[str, int]] = {}
+    for row in rows:
+        names = [schema_key_name(k) for k in (fast_schema_keys(keys) if row.tier == "@fast" else keys)]
+        out[row.dev] = _value_map(row.values, names)
+    return out
+
+
+def check_host_cpu_hw_pair_rates(
+    schema_by_type: dict[str, list[str]],
+    *,
+    fast_body: str,
+    full_body: str,
+    enable_slow: bool,
+    arm: bool,
+) -> list[str]:
+    """Rate ceilings between the fast and full payloads' host_cpu_hw rows, which the daemon wrote
+    at different ticks of the same lifetimes (skipped when under a second apart)."""
+    keys = schema_by_type.get("host_cpu_hw")
+    ts_fast, ts_full = sample_header_timestamp(fast_body), sample_header_timestamp(full_body)
+    if not keys or ts_fast is None or ts_full is None or abs(ts_fast - ts_full) < 1.0:
+        return []
+    caps = [
+        (ts_fast, _host_cpu_hw_values(fast_body, keys, enable_slow=enable_slow, tier="@fast")),
+        (ts_full, _host_cpu_hw_values(full_body, keys, enable_slow=enable_slow, tier="@full")),
+    ]
+    caps.sort(key=lambda c: c[0])
+    (t_old, old), (t_new, new) = caps
+    widths = _narrow_counter_widths(keys)
+    out: list[str] = []
+    for dev in sorted(old.keys() & new.keys()):
+        out.extend(check_host_cpu_hw_rates(old[dev], new[dev], t_new - t_old, widths, dev=dev, arm=arm))
     return out
 
 
@@ -97,6 +159,10 @@ def check_plausibility(
         (errors if strict else warnings).append(f"WARN plausibility {msg}")
 
     enable_slow = manifest.get("enable_slow_tier", True)
+    arm = caps_indicate_arm_backend(manifest)
+    # x86 direct perf publishes W<64 host_cpu_hw lifetimes modulo 2^W (O11). The Grace
+    # util x freq aperf / mperf fallback is not masked, so the range check is x86-only.
+    hw_widths = {} if arm else _narrow_counter_widths(schema_by_type.get("host_cpu_hw", []))
 
     for msg in check_schema_contract(schema_by_type):
         warn(msg)
@@ -138,9 +204,13 @@ def check_plausibility(
                     if vals["load_1"] > cap:
                         warn(f"host_ps load_1={vals['load_1']} exceeds heuristic cap {cap}")
                 for msg in check_papi_row_invariants(
-                    vals, type_name=type_name, dev=row.dev
+                    vals, type_name=type_name, dev=row.dev, arm=arm
                 ):
                     warn(msg)
+                if type_name == "host_cpu_hw":
+                    for key, width in hw_widths.items():
+                        if vals.get(key, 0) >> width:
+                            warn(f"{type_name}/{row.dev}: {key}={vals[key]} >= 2^{width} (W={width} lifetime not masked)")
                 for msg in check_row_invariants(type_name, row.dev, vals):
                     warn(msg)
                 if type_name == "intel_gpu":
@@ -152,8 +222,11 @@ def check_plausibility(
                             "(XPUM realtime/stats may be empty on PVC)"
                         )
 
-    if schema_body and full_body is None:
-        pass
+    if full_body and fast_body:
+        for msg in check_host_cpu_hw_pair_rates(
+            schema_by_type, fast_body=fast_body, full_body=full_body, enable_slow=enable_slow, arm=arm
+        ):
+            warn(msg)
 
     notes.append("PASS plausibility internal")
     return notes, warnings, errors
