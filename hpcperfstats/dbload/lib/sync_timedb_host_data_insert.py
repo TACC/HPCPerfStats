@@ -49,9 +49,9 @@ CREATE TEMP TABLE IF NOT EXISTS host_data_ingest_stage (
   dev varchar(64) NULL,
   event varchar(64) NULL,
   unit varchar(16) NULL,
-  value real NULL,
-  delta real NULL,
-  arc real NULL
+  value double precision NULL,
+  delta double precision NULL,
+  arc double precision NULL
 ) ON COMMIT DELETE ROWS
 """
 

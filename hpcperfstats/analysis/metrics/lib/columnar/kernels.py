@@ -432,12 +432,7 @@ class FrameIndex:
 
   def values_at(self, name: str, rows: np.ndarray) -> np.ndarray:
     """
-    Float column ``name`` at ``rows``, widened to float64.
-
-    The frame stores float32 (``jobframe.VALUE_DTYPE``); every reader works
-    on the float64 rows it selects, so masks against the float64 ceilings
-    and every sum, mean and product are the same as on float64 storage
-    (widening is exact).
+    Float column ``name`` at ``rows`` (``jobframe.VALUE_DTYPE``, float64).
 
     Args:
       name (str): ``value``, ``arc`` or ``delta``.
@@ -454,12 +449,12 @@ class FrameIndex:
       ...   "1", [(1, "h", "cpu", "user", None, 1, 0.1, None, None)]
       ... )
       >>> v = FrameIndex(f).values_at("value", np.array([0]))
-      >>> v.dtype, v[0] == np.float32(0.1)
-      (dtype('float64'), np.True_)
+      >>> v.dtype, float(v[0])
+      (dtype('float64'), 0.1)
     """
     if name not in _COLUMNS:
       raise ValueError(name)
-    return getattr(self.frame, name)[rows].astype(np.float64)
+    return getattr(self.frame, name)[rows]
 
   def host_time_keys(self) -> tuple[np.ndarray, np.ndarray]:
     """

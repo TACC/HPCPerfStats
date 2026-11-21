@@ -675,3 +675,16 @@ def test_admit_paused_on_headroom():
   pool = _TrackPool()
   _session(pool, ready=ready, admit_ok=_no_headroom)
   assert _max_concurrent(pool) == 1 and not ready
+
+
+def test_peak_bytes_cover_float64_value_columns():
+  """host_data value/arc/delta frames are float64: the build peak (~65 B/row)
+  plus frame and FrameIndex (~56 B/row) exceed the old 100 B/row float32
+  allowance, which under-admitted jobs by ~20% (the hs04 OOM guard)."""
+  import numpy as np
+
+  from hpcperfstats.analysis.metrics.lib.columnar.jobframe import VALUE_DTYPE
+
+  assert np.dtype(VALUE_DTYPE) == np.float64
+  per_row = mss.METRICS_PEAK_BYTES_PER_HOST_MINUTE // 201
+  assert per_row >= 65 + 56

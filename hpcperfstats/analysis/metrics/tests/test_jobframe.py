@@ -39,6 +39,22 @@ def test_dtypes_and_lengths_follow_the_contract():
     assert getattr(f, col).dtype == np.dtype(VALUE_DTYPE)
 
 
+def test_value_columns_are_float64_and_keep_double_precision():
+  """Regression (host_data double precision, 2026-11-21): value / arc /
+  delta were float32, which rounded every counter above 2**24 even when
+  PostgreSQL stores ``double precision``."""
+  big = 2.0**53 - 1.0
+  f = JobFrame.from_records(
+    "1", [(T0, "h", "cpu", "user", None, 1, big, 0.1, big)]
+  )
+  f.check_contract()
+  assert VALUE_DTYPE is np.float64
+  for col in ("value", "arc", "delta"):
+    assert getattr(f, col).dtype == np.float64
+  assert float(f.value[0]) == big and float(f.delta[0]) == big
+  assert float(f.arc[0]) == 0.1
+
+
 def test_rows_sorted_by_series_host_dev_time():
   f = JobFrame.from_records("42", _records())
   keys = list(
@@ -124,7 +140,7 @@ def test_check_contract_rejects_unsorted_or_wrong_dtype():
   )
   with pytest.raises(ValueError, match="sorted"):
     bad.check_contract()
-  bad2 = JobFrame(**{**f.__dict__, "value": f.value.astype(np.float64)})
+  bad2 = JobFrame(**{**f.__dict__, "value": f.value.astype(np.float32)})
   with pytest.raises(ValueError, match="dtype"):
     bad2.check_contract()
 

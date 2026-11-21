@@ -1,7 +1,6 @@
 """
 The database models of hpcperfstats: job_data, metrics_data, host_data,
-proc_data, job_affinity, and RealField. Maps to
-TimescaleDB/PostgreSQL tables.
+proc_data and job_affinity. Maps to TimescaleDB/PostgreSQL tables.
 """
 
 from __future__ import annotations
@@ -16,27 +15,6 @@ from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.db.models import Q
-
-
-class RealField(models.FloatField):
-  """
-  Django field that uses PostgreSQL real (32-bit float) instead of double.
-  """
-
-  def db_type(self, connection: Any) -> Any:
-    """
-    Return PostgreSQL type name 'real'.
-
-    Args:
-      connection (Any): Live handle (pool, client, or connection).
-
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-
-    Examples:
-      >>> RealField().db_type(None)  # doctest: +SKIP
-    """
-    return "real"
 
 
 class job_data(models.Model):
@@ -285,9 +263,10 @@ class host_data(models.Model):
   dev = models.CharField(max_length=64, blank=True, null=True)
   event = models.CharField(max_length=64, blank=True, null=True)
   unit = models.CharField(max_length=16, blank=True, null=True)
-  value = RealField(null=True)
-  arc = RealField(null=True)
-  delta = RealField(null=True)
+  # double precision; PG15 was created with real and keeps it (0001).
+  value = models.FloatField(null=True)
+  arc = models.FloatField(null=True)
+  delta = models.FloatField(null=True)
 
   class Meta:
     """

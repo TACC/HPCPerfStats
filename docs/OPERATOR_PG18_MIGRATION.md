@@ -26,11 +26,32 @@ How the copy keeps the window short (`scripts/pg18_host_data_chunk_copy.py`):
 - **Slice resync.** A changed chunk that has only *gained* rows since it was last verified is compared in 60-minute slices. Only the mismatched slices are deleted and re-copied, so the hot chunk costs minutes of data, not a full day. Any UPDATE or DELETE (operator repair tools) forces a whole-chunk copy.
 - **Compression during the copy, off the copy workers.** A finished chunk older than 8 days is handed to a background compression pool (`--compress-workers`, default 2), and its copy worker moves straight on to the next chunk. PG18 never holds the full history uncompressed, and there is no compression backlog after cutover. Each run also compresses PG18 chunks that have since aged past 8 days. The freeze pass (`--verify`) never compresses; the policy does that after cutover.
 - **All target chunks created up front.** `compress_chunk` blocks *creating* a chunk on `host_data` while it runs (TimescaleDB 2.31: a new-chunk insert waited out a 29 s compress). Each run therefore creates every missing PG18 chunk it will need before copying starts. Background compression then never stalls a copy worker; COPY into an existing chunk and concurrent compressions don't conflict.
-- **Binary COPY.** It uses an explicit, type-checked column list and fails closed if the PG15 and PG18 `host_data` layouts differ.
+- **Binary COPY.** It uses an explicit, type-checked column list and fails closed if the PG15 and PG18 `host_data` layouts differ. The one allowed difference: `value`, `delta` and `arc` are `real` on PG15 and `double precision` on PG18; the source `SELECT` casts exactly those three (exact, every float4 is a float8) and the run logs `widening real -> double precision: arc,delta,value`.
 - **`--verify` (freeze only).** Each copied chunk is recounted on both sides, and the run exits non-zero on any mismatch. The `verified_rows=` total replaces a full `count(*)` of `host_data`.
 - **Per-chunk failures.** A failed chunk is logged and dropped from state; the run continues and exits 1. Rerun the same command.
 - **Chunks pre-created outside the COPY.** TimescaleDB holds `ShareUpdateExclusiveLock` on `host_data` from chunk creation until the creating transaction ends. When the day's PG18 chunk was created inside its COPY, every other worker queued behind the longest COPY (hpcperfstats04, 2026-11-11: three workers blocked 31 h behind one). Each chunk is now created by a committed placeholder insert/delete before its COPY.
 - **No PG18 index maintenance during the bulk copy.** Phase B saves and drops the six `host_data` indexes (`--drop-target-indexes`). On 04's 400–700M-row days, maintaining them meant random index reads at about 1,600 rows/s. C2 rebuilds them before the freeze; on compressed chunks the heap is empty, so only the recent uncompressed chunks cost real build time.
+
+## Restart with double-precision `host_data` (2026-11-21)
+
+PG18's `host_data.value`, `delta` and `arc` are `double precision` (PG15 keeps `real`, so raw counters above 2^24 lose digits there). Every PG18 that was created before this change holds `real` columns and must be rebuilt from an empty database. Only sites where **PG15 is still authoritative** (no cutover) can restart this way; on 2026-11-21 that was every site.
+
+Before the restart, the site's `web` image must be built from code where `0001_initial` and the model declare these columns `double precision`: Phase B runs `migrate` from that image, and a fresh PG18 gets the new type from `0001`. There is no retyping migration; PG15 already applied `0001`, never re-runs it and keeps `real`. Redeploying that image to `web` does nothing to PG15's schema.
+
+Stop the copy (and any index restore), drop and recreate the PG18 database, and move the old state files aside. PG15, `web`, `pipeline` and every other container are untouched.
+
+```bash
+podman stop -t 30 hpcperfstats_pg18_copy hpcperfstats_pg18_indexes 2>/dev/null
+podman rm -f hpcperfstats_pg18_copy hpcperfstats_pg18_indexes 2>/dev/null
+P="podman-compose -p hpcperfstats --profile pg18-migrate"
+D="DROP DATABASE IF EXISTS hpcperfstats WITH (FORCE)"
+C="CREATE DATABASE hpcperfstats OWNER hpcperfstats"
+$P exec -T db_pg18 psql -h localhost -U hpcperfstats -d postgres -XtA -v ON_ERROR_STOP=1 -c "$D" -c "$C"
+M='cd /hpcperfstats/pg18_migrate && for f in state*.json; do [ -e "$f" ] && mv "$f" "$f.pre-double"; done; ls'
+$P run --rm --no-deps -T --entrypoint sh web -c "$M"
+```
+
+Then run Phase B, Phase C and the rest of the runbook as for a first migration. Phase B's fail-closed check includes `value_types=arc:double precision,delta:double precision,value:double precision`. The `*.pre-double` files are only a record; nothing reads them.
 
 Freeze precondition: **no `host_data` UPDATE/DELETE tools** (`repair_jstamp_deltas`, `backfill_host_data_null_dev.sh`, `collapse_percore_parallel.sh`) may run on PG15 between D1 and D3. If they do, the affected chunks fall back to whole-chunk copies (correct, just slower).
 
@@ -87,7 +108,7 @@ with connection.cursor() as cur:
     print("server", cur.fetchone()[0])
 print("migrate_ok")
 '
-podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -XtA -v ON_ERROR_STOP=1 -c "SELECT 'host_data_n=' || count(*) FROM host_data" -c "SELECT 'compression_enabled=' || compression_enabled FROM timescaledb_information.hypertables WHERE hypertable_name = 'host_data'" -c "SELECT remove_compression_policy('host_data', if_exists => true)" -c "SELECT 'compression_jobs=' || count(*) FROM timescaledb_information.jobs WHERE hypertable_name = 'host_data' AND proc_name LIKE '%compression%'"
+podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -XtA -v ON_ERROR_STOP=1 -c "SELECT 'host_data_n=' || count(*) FROM host_data" -c "SELECT 'compression_enabled=' || compression_enabled FROM timescaledb_information.hypertables WHERE hypertable_name = 'host_data'" -c "SELECT remove_compression_policy('host_data', if_exists => true)" -c "SELECT 'compression_jobs=' || count(*) FROM timescaledb_information.jobs WHERE hypertable_name = 'host_data' AND proc_name LIKE '%compression%'" -c "SELECT 'value_types=' || string_agg(column_name || ':' || data_type, ',' ORDER BY column_name) FROM information_schema.columns WHERE table_name = 'host_data' AND column_name IN ('arc', 'delta', 'value')"
 podman-compose -p hpcperfstats --profile pg18-migrate run --rm --no-deps -T -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --target-host db18 --state-file /hpcperfstats/pg18_migrate/state.json --drop-target-indexes 2>&1 | grep -E 'dropped|ERROR|Error'
 ```
 
@@ -95,7 +116,7 @@ The last line saves PG18's `host_data` index definitions to `/hpcperfstats/pg18_
 
 Checks run in `psql`, not through Django's cursor: on hpcperfstats02 (2026-11-06) the `web` image rejected parameterized `cursor.execute(sql, params)` with `the query has 1 placeholders but 2 parameters were passed`. Rerunning this block is safe (`migrate` is idempotent; the policy removal uses `if_exists`).
 
-**Fail closed:** `server` is PostgreSQL 18, `migrate_ok`, `host_data_n=0`, `compression_enabled=true`, `compression_jobs=0`, and `target indexes dropped=6`. If you see `create_hypertable … does not exist`, the `web` image predates the `0001` extension fix; redeploy, then rerun.
+**Fail closed:** `server` is PostgreSQL 18, `migrate_ok`, `host_data_n=0`, `compression_enabled=true`, `compression_jobs=0`, `value_types=arc:double precision,delta:double precision,value:double precision`, and `target indexes dropped=6`. If you see `create_hypertable … does not exist`, the `web` image predates the `0001` extension fix; redeploy, then rerun.
 
 ---
 

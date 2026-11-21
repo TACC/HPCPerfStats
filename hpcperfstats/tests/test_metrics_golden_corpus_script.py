@@ -73,24 +73,31 @@ def _float64_capture(tmp_path, corpus_mod, values):
   return path
 
 
-def test_load_frame_npz_narrows_float64_capture_to_float32(
+def test_load_frame_npz_loads_float64_and_float32_captures_as_float64(
   tmp_path, corpus_mod
 ):
-  """Regression (float32 frames, 2026-11-21): the golden corpus was
-  captured with float64 value columns and ``check_contract`` rejected
-  every loaded frame (``value dtype float64 != float32``)."""
+  """Regression (float32 frames, 2026-11-21): ``check_contract`` rejected
+  every capture whose value dtype differed from ``VALUE_DTYPE``. Frames are
+  float64 again (host_data double precision): float64 captures load
+  unchanged and float32 captures widen exactly."""
   import numpy as np
 
   from hpcperfstats.analysis.metrics.lib.columnar.jobframe import VALUE_DTYPE
 
   frame = corpus_mod.load_frame_npz(
-    _float64_capture(tmp_path, corpus_mod, [np.nan])
+    _float64_capture(tmp_path, corpus_mod, [0.1])
   )
   frame.check_contract()
-  assert frame.value.dtype == VALUE_DTYPE == np.float32
-  path = _float64_capture(tmp_path, corpus_mod, [0.1])
-  with pytest.raises(ValueError, match="not exact"):
-    corpus_mod.load_frame_npz(path)
+  assert frame.value.dtype == VALUE_DTYPE == np.float64
+  assert frame.value.tolist() == [0.1]
+  path = tmp_path / "f.npz"
+  data = dict(np.load(path, allow_pickle=True))
+  for name in ("value", "arc", "delta"):
+    data[name] = np.asarray([0.1], dtype=np.float32)
+  np.savez_compressed(path, **data)
+  frame = corpus_mod.load_frame_npz(path)
+  frame.check_contract()
+  assert frame.value.tolist() == [float(np.float32(0.1))]
 
 
 def _seed_args(tmp_path, ignore_log):

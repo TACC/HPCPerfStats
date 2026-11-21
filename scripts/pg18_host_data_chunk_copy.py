@@ -37,6 +37,8 @@ Attributes:
   _VALID_TARGET_INDEX_NAMES_SQL: Names of valid ``host_data`` target indexes.
   _VALID_UNIQUE_COUNT_SQL: Count of valid UNIQUE ``host_data`` indexes.
   _ZSTD_DUMP_ARGS: ``zstd`` argv for optional ``--dump-dir`` audit files.
+  WIDENING: The one ``(source, target)`` type pair binary COPY may bridge.
+  WIDENED_COLUMNS: ``host_data`` columns that may take ``WIDENING``.
 """
 
 from __future__ import annotations
@@ -64,6 +66,10 @@ _STATE_VERSION = 1
 _ZSTD_DUMP_ARGS = ("zstd", "-T4", "-3")
 _PRECREATE_HOST = "__pg18_chunk_precreate__"
 APP_NAME = "pg18_chunk_copy"
+# PG15 stores host_data values as float4; PG18 is created with float8. The
+# source SELECT casts these columns, which is exact (every float4 is a float8).
+WIDENING = ("real", "double precision")
+WIDENED_COLUMNS = frozenset({"value", "delta", "arc"})
 _INFLIGHT_SQL = (
   "SELECT coalesce(sum(p.tuples_processed), 0), count(*) "
   "FROM pg_stat_progress_copy p JOIN pg_stat_activity a USING (pid) "
@@ -159,6 +165,7 @@ class CopyOptions:
       before this instant; ``None`` disables compression.
     slice_minutes: Slice width for insert-only resync of a partially synced
       chunk (only mismatched slices are re-copied); ``0`` disables.
+    widen: Columns the source SELECT casts ``real`` to ``double precision``.
   """
 
   source_host: str
@@ -172,6 +179,7 @@ class CopyOptions:
   verify: bool = False
   compress_before: datetime | None = None
   slice_minutes: int = 60
+  widen: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -415,6 +423,8 @@ def build_copy_out_sql(
   columns: Sequence[str],
   start: datetime | None = None,
   end: datetime | None = None,
+  *,
+  widen: frozenset[str] = frozenset(),
 ) -> str:
   """
   Build a binary ``COPY (SELECT <cols> FROM <chunk>) TO STDOUT``.
@@ -428,6 +438,8 @@ def build_copy_out_sql(
     columns (Sequence[str]): Column names in target order.
     start (datetime | None): Optional inclusive slice start.
     end (datetime | None): Optional exclusive slice end.
+    widen (frozenset[str]): Columns cast to ``double precision`` (source
+      ``real``, target ``double precision``).
 
   Returns:
     str: ``COPY ... TO STDOUT (FORMAT binary)`` statement.
@@ -450,7 +462,10 @@ def build_copy_out_sql(
   """
   if chunk.chunk_name == "host_data" and chunk.chunk_schema in {"public", ""}:
     raise ValueError("refusing to COPY parent hypertable host_data")
-  cols = ", ".join(quote_ident(c) for c in columns)
+  cols = ", ".join(
+    quote_ident(c) + ("::double precision" if c in widen else "")
+    for c in columns
+  )
   where = ""
   bounds = (start or chunk.range_start, end or chunk.range_end)
   if bounds != (chunk.range_start, chunk.range_end):
@@ -829,36 +844,44 @@ def fetch_column_layout(conn: Connection) -> list[tuple[str, str]]:
 def matched_copy_columns(
   source: Sequence[tuple[str, str]],
   target: Sequence[tuple[str, str]],
-) -> tuple[str, ...]:
+) -> tuple[tuple[str, ...], frozenset[str]]:
   """
   Return target column order after proving both layouts carry the same types.
 
   Binary COPY needs identical types per column; a missing or retyped column
-  would drop or corrupt data, so any difference fails closed.
+  would drop or corrupt data, so any difference fails closed. The one allowed
+  difference is ``WIDENING`` on ``WIDENED_COLUMNS`` (source ``real``, target
+  ``double precision``), which the caller casts in the source SELECT.
 
   Args:
     source (Sequence[tuple[str, str]]): Source ``(name, type)`` pairs.
     target (Sequence[tuple[str, str]]): Target ``(name, type)`` pairs.
 
   Returns:
-    tuple[str, ...]: Column names in target attnum order.
+    tuple[tuple[str, ...], frozenset[str]]: Column names in target attnum
+      order, and the columns to widen.
 
   Raises:
     ValueError: Raised when names or types differ between the layouts.
 
   Examples:
     >>> matched_copy_columns(
-    ...   [("host", "text"), ("time", "timestamptz")],
-    ...   [("time", "timestamptz"), ("host", "text")],
+    ...   [("host", "text"), ("value", "real")],
+    ...   [("value", "double precision"), ("host", "text")],
     ... )
-    ('time', 'host')
+    (('value', 'host'), frozenset({'value'}))
   """
-  if not target or dict(source) != dict(target):
+  src = dict(source)
+  widen = frozenset(
+    n for n, t in target if n in WIDENED_COLUMNS and (src.get(n), t) == WIDENING
+  )
+  expected = {n: WIDENING[0] if n in widen else t for n, t in target}
+  if not target or src != expected:
     raise ValueError(
       f"host_data column layout differs: source={list(source)} "
       f"target={list(target)}"
     )
-  return tuple(name for name, _ in target)
+  return tuple(name for name, _ in target), widen
 
 
 def fetch_chunk_signatures(
@@ -1425,7 +1448,9 @@ def _stream_chunk(
   Examples:
     >>> _stream_chunk(src, tgt, chunk, opts)  # doctest: +SKIP
   """
-  out_sql = build_copy_out_sql(chunk, opts.columns, *(window or (None, None)))
+  out_sql = build_copy_out_sql(
+    chunk, opts.columns, *(window or (None, None)), widen=opts.widen
+  )
   in_sql = build_copy_in_sql(opts.columns)
   with src.cursor() as scur, tgt.cursor() as tcur:
     scur.execute("SET statement_timeout = 0")
@@ -2285,7 +2310,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _connect(base, base.source_host) as src,
     _connect(base, base.target_host) as tgt,
   ):
-    columns = matched_copy_columns(
+    columns, widen = matched_copy_columns(
       fetch_column_layout(src), fetch_column_layout(tgt)
     )
     sigs = fetch_chunk_signatures(src) if args.changed_only else {}
@@ -2318,7 +2343,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     verify=args.verify,
     compress_before=compress_before,
     slice_minutes=args.slice_minutes,
+    widen=widen,
   )
+  if widen:
+    LOG.info("widening real -> double precision: %s", ",".join(sorted(widen)))
   state = load_state(args.state_file)
   examine, same = (
     split_unchanged(selected, state, sigs)

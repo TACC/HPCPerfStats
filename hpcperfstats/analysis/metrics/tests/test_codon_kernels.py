@@ -294,12 +294,15 @@ def _random_rows(rng, n, *, hosts, with_owned):
   return rows
 
 
+@pytest.mark.parametrize("float_width", [4, 8])
 @pytest.mark.parametrize("with_owned", [False, True])
 @pytest.mark.usefixtures("kern")
-def test_copy_decode_matches_reference(with_owned):
+def test_copy_decode_matches_reference(with_owned, float_width):
+  """Codon K0 equals the reference on ``real`` (PG15, 4-byte) and
+  ``double precision`` (PG18, 8-byte) streams; both yield float64."""
   rng = np.random.default_rng(11)
   rows = _random_rows(rng, 5_000, hosts=40, with_owned=with_owned)
-  raw = encode_copy_binary(rows, with_owned=with_owned)
+  raw = encode_copy_binary(rows, with_owned=with_owned, float_width=float_width)
   ni_c, ni_r = NameInterner(), NameInterner()
   got = decode_copy_binary(raw, ni_c, has_owned_column=with_owned)
   want = decode_copy_binary_reference(raw, ni_r, has_owned_column=with_owned)
@@ -321,6 +324,7 @@ def test_copy_decode_matches_reference(with_owned):
     g, w = getattr(got, name), getattr(want, name)
     assert g.dtype == w.dtype, name
     _assert_same(g, w)
+  assert got.value.dtype == np.float64
 
 
 @pytest.mark.usefixtures("kern")
@@ -341,7 +345,7 @@ def test_copy_decode_empty_and_interner_continuity():
   ni = NameInterner()
   ni.host("pre")
   empty = decode_copy_binary(encode_copy_binary([]), ni)
-  assert len(empty) == 0 and empty.value.dtype == np.float32
+  assert len(empty) == 0 and empty.value.dtype == np.float64
   rows = [(1_700_000_000_000_000, "pre", "t", "e", "0", 1.0, None, 2.0)]
   ch = decode_copy_binary(encode_copy_binary(rows), ni)
   assert ch.host_id.tolist() == [0]
@@ -363,6 +367,14 @@ def test_copy_decode_rejects_bad_streams_without_fallback(monkeypatch):
     decode_copy_binary(raw, NameInterner(), has_owned_column=True)
   with pytest.raises(codon_bridge.CodonKernelError):
     decode_copy_binary(raw[:-6], NameInterner())
+  # A float field length other than 4, 8 or -1 (NULL) fails the job.
+  bad = bytearray(raw)
+  # header 19, field count 2, time 4+8, three 1-byte texts, NULL dev 4.
+  off = 19 + 2 + 12 + 3 * 5 + 4
+  assert int.from_bytes(bad[off : off + 4], "big") == 4
+  bad[off : off + 4] = (2).to_bytes(4, "big")
+  with pytest.raises(codon_bridge.CodonKernelError):
+    decode_copy_binary(bytes(bad), NameInterner())
   assert calls == []
 
 

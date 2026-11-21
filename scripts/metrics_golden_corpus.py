@@ -554,19 +554,14 @@ def load_frame_npz(path: Path) -> Any:
   """
   Load a JobFrame saved by ``_save_frame_npz``.
 
-  Captures saved while frames stored float64 values are narrowed to
-  ``VALUE_DTYPE``; the narrowing must be exact (the columns are PostgreSQL
-  ``real``), so a capture holding a value float32 cannot represent fails
-  instead of silently changing the golden input.
+  Captures saved while frames stored float32 values widen to
+  ``VALUE_DTYPE`` (float64) exactly; float64 captures load unchanged.
 
   Args:
     path (Path): ``.npz`` path.
 
   Returns:
     Any: ``JobFrame`` instance.
-
-  Raises:
-    ValueError: A value column does not narrow exactly to ``VALUE_DTYPE``.
 
   Examples:
     >>> load_frame_npz(Path("/tmp/x.npz"))  # doctest: +SKIP
@@ -585,12 +580,9 @@ def load_frame_npz(path: Path) -> Any:
       if "sentinel" in z.files
       else np.zeros(z["value"].shape, dtype=np.int16)
     )
-    cols = {}
-    for name in ("value", "arc", "delta"):
-      raw = z[name]
-      cols[name] = raw.astype(VALUE_DTYPE)
-      if not np.array_equal(cols[name], raw, equal_nan=True):
-        raise ValueError(f"{path}: {name} is not exact in {VALUE_DTYPE}")
+    cols = {
+      name: z[name].astype(VALUE_DTYPE) for name in ("value", "arc", "delta")
+    }
     return JobFrame(
       jid=str(z["jid"]),
       time_us=z["time_us"],

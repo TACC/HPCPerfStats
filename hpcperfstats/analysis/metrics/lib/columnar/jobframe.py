@@ -10,10 +10,9 @@ Layout:
   copies);
 * ``owned`` uint8 (1 when the row belongs to the job: ``jid`` match or
   ``dev = 'j:<jid>'``; 0 for host-wide residual rows of shared-node jobs);
-* ``value`` / ``arc`` / ``delta`` float32 with NaN for SQL NULL (the
-  ``host_data`` columns are PostgreSQL ``real``, so storage is exact);
-  readers widen the rows they select to float64 before any arithmetic
-  (``kernels.FrameIndex.values_at``).
+* ``value`` / ``arc`` / ``delta`` float64 with NaN for SQL NULL (exact for
+  both ``host_data`` column widths: PostgreSQL ``real`` and ``double
+  precision``).
 
 Rows are sorted by ``(series_id, host_id, dev_id, time_us)`` so every kernel
 can run segment scans without hashing. Names never reach the kernels.
@@ -37,7 +36,7 @@ from hpcperfstats.lib.monitor_sentinel import sentinel_codes
 
 TIME_DTYPE = np.int64
 ID_DTYPE = np.int32
-VALUE_DTYPE = np.float32
+VALUE_DTYPE = np.float64
 JOB_DEV_PREFIX = "j:"
 
 
@@ -247,10 +246,10 @@ class JobFrame:
     series_id: int32 ``(type, event)`` series id per row.
     dev_id: int32 signed device id per row.
     owned: uint8 job-ownership flag per row.
-    value: float32 ``value`` column (NaN for NULL and for monitor value
-      sentinels, so every reader sees a sentinel as missing).
-    arc: float32 ``arc`` column (NaN for NULL).
-    delta: float32 ``delta`` column (NaN for NULL).
+    value: ``VALUE_DTYPE`` ``value`` column (NaN for NULL and for monitor
+      value sentinels, so every reader sees a sentinel as missing).
+    arc: ``VALUE_DTYPE`` ``arc`` column (NaN for NULL).
+    delta: ``VALUE_DTYPE`` ``delta`` column (NaN for NULL).
     sentinel: int16 monitor value-sentinel code per row (0 for data and
       NULL); the code that ``build_job_frame`` took out of ``value``.
     hosts: Host names by id.
@@ -644,7 +643,7 @@ def build_job_frame(
     "delta": take("delta", VALUE_DTYPE),
   }
   del series_id
-  # Last, once ``chunk`` is empty: the sentinel pass widens ``value``.
+  # Last, once ``chunk`` is empty: the sentinel pass copies ``value``.
   value = take("value", VALUE_DTYPE)
   codes = sentinel_codes(value)
   value = np.where(codes != 0, np.nan, value)

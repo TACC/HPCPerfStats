@@ -846,3 +846,26 @@ def test_no_migration_soft_skips_required_work():
     if pat.search(path.read_text(encoding="utf-8"))
   ]
   assert offenders == [], offenders
+
+
+def test_host_data_value_columns_are_double_precision():
+  """host_data value / arc / delta are double precision (float8) in 0001 and
+  the model, so a fresh PG18 keeps raw counters above 2^24 exact. Databases
+  that already applied 0001 (PG15) keep real and never re-run it; there is
+  no later migration that retypes them."""
+  from django.db import connection
+
+  from hpcperfstats.site.lib.machine.models import host_data
+
+  mod = _migration_module("0001_initial")
+  create = next(
+    op
+    for op in mod.Migration.operations
+    if isinstance(op, migrations.CreateModel) and op.name == "host_data"
+  )
+  fields = dict(create.fields)
+  for name in ("value", "arc", "delta"):
+    assert type(fields[name]) is models.FloatField, name
+    field = host_data._meta.get_field(name)
+    assert type(field) is models.FloatField, name
+    assert field.db_type(connection) == "double precision", name

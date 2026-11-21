@@ -5,9 +5,10 @@ Attributes:
   METRICS_PEAK_BYTES_PER_HOST_MINUTE: Peak process bytes one host-minute
     of a job costs while it is in flight: golden-corpus p90 frame rows per
     host-minute times a per-row allowance that covers the consuming
-    fetch/build peak (about 52 B/row measured) and a float32 frame plus its
-    ``FrameIndex`` (about 44 B/row) held by either the metrics thread or the
-    prewarm child. Memory admission multiplies a ref's
+    fetch/build peak (about 65 B/row measured with float64 value columns)
+    and a float64 frame plus its ``FrameIndex`` (about 56 B/row) held by
+    either the metrics thread or the prewarm child. Memory admission
+    multiplies a ref's
     ``estimated_sample_count`` by it.
 """
 
@@ -23,7 +24,7 @@ from hpcperfstats.analysis.metrics.lib.metrics_idle_slot_supplement import (
   pop_supplement_refs_from_ready_queue,
 )
 
-METRICS_PEAK_BYTES_PER_HOST_MINUTE = 201 * 100
+METRICS_PEAK_BYTES_PER_HOST_MINUTE = 201 * 125
 
 
 def resolve_metrics_pool_max_inflight(pool: Any, fallback: int = 1) -> int:

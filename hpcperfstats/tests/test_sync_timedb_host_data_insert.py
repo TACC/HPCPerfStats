@@ -587,3 +587,19 @@ def test_host_stage_empty_after_commit_and_rollback():
   with connection.cursor() as cursor:
     cursor.execute("SELECT count(*) FROM host_data_ingest_stage")
     assert cursor.fetchone()[0] == 0
+
+
+def test_stage_ddl_uses_double_precision_for_value_columns():
+  """PG18 host_data value/delta/arc are double precision: a real staging
+  column would round every value to float4 before the INSERT. PG15 (real)
+  still narrows on that INSERT exactly as before."""
+  import re
+
+  for col in ("value", "delta", "arc"):
+    assert re.search(
+      rf"^\s*{col} double precision NULL", hdi._STAGE_DDL, re.MULTILINE
+    ), col
+  assert " real" not in hdi._STAGE_DDL
+  # Text COPY carries the full float64 digits into the stage.
+  big = float(2**53 - 1)
+  assert float(hdi._sql_literal(big)) == big

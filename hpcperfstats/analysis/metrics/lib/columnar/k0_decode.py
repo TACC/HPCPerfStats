@@ -8,7 +8,8 @@ by ``int32 length`` + payload per field (``-1`` length is NULL), ending with
 an int16 ``-1`` trailer. The job fetch selects, in this order:
 ``time`` (timestamptz, int64 microseconds since 2000-01-01), ``host``,
 ``type``, ``event``, ``dev`` (text), ``value``, ``arc``, ``delta``
-(``real``, big-endian float32) and optionally ``owned`` (int4).
+(``real`` or ``double precision``: big-endian float32 or float64, told apart
+by the field length) and optionally ``owned`` (int4).
 
 This module is the oracle for the Codon decoder; it favours clarity over
 speed and stays pandas-free.
@@ -19,7 +20,8 @@ Attributes:
   _H: Big-endian int16 struct (field count / trailer).
   _I: Big-endian int32 struct (lengths, flags, ``owned``).
   _Q: Big-endian int64 struct (timestamptz microseconds).
-  _F: Big-endian float32 struct (``real`` columns).
+  _FLOAT_BY_LEN: Big-endian float struct per field length (4 is
+    ``real``, 8 is ``double precision``).
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ PG_EPOCH_OFFSET_US = 946_684_800_000_000
 _H = struct.Struct(">h")
 _I = struct.Struct(">i")
 _Q = struct.Struct(">q")
-_F = struct.Struct(">f")
+_FLOAT_BY_LEN = {4: struct.Struct(">f"), 8: struct.Struct(">d")}
 
 
 def empty_chunk() -> DecodedChunk:
@@ -57,7 +59,7 @@ def empty_chunk() -> DecodedChunk:
 
   Examples:
     >>> empty_chunk().value.dtype
-    dtype('float32')
+    dtype('float64')
   """
   return DecodedChunk(
     time_us=np.empty(0, dtype=TIME_DTYPE),
@@ -103,9 +105,10 @@ def concat_chunks(chunks: list[DecodedChunk]) -> DecodedChunk:
   )
 
 
-def _float4_or_nan(buf: bytes, off: int, length: int) -> float:
+def _float_or_nan(buf: bytes, off: int, length: int) -> float:
   """
-  Decode one ``real`` field (``-1`` length is NULL -> NaN).
+  Decode one ``real`` (length 4) or ``double precision`` (length 8) field;
+  length ``-1`` is NULL -> NaN.
 
   Args:
     buf (bytes): Stream buffer.
@@ -113,16 +116,24 @@ def _float4_or_nan(buf: bytes, off: int, length: int) -> float:
     length (int): Field length from the stream.
 
   Returns:
-    float: Value as float64 (exact float32 widening) or NaN.
+    float: Value as float64 (float32 widens exactly) or NaN.
+
+  Raises:
+    ValueError: Any other field length.
 
   Examples:
     >>> import struct
-    >>> _float4_or_nan(struct.pack(">f", 1.5), 0, 4)
+    >>> _float_or_nan(struct.pack(">f", 1.5), 0, 4)
     1.5
+    >>> _float_or_nan(struct.pack(">d", 0.1), 0, 8)
+    0.1
   """
-  if length < 0:
+  if length == -1:
     return float("nan")
-  return float(_F.unpack_from(buf, off)[0])
+  fmt = _FLOAT_BY_LEN.get(length)
+  if fmt is None:
+    raise ValueError(f"float field length {length} is not 4, 8 or -1")
+  return float(fmt.unpack_from(buf, off)[0])
 
 
 def decode_copy_binary(
@@ -171,8 +182,8 @@ def _decode_copy_binary_codon(
 
   The kernel returns table ids plus one distinct-name table for the four
   text columns; only those few names cross into Python and the per-row ids
-  are remapped with one ``take`` per column. The kernel writes float64; the
-  ``real`` values narrow to ``VALUE_DTYPE`` exactly, one chunk at a time.
+  are remapped with one ``take`` per column. The kernel writes the float
+  columns as float64 (``VALUE_DTYPE``), so they are used as returned.
 
   Args:
     data (bytes | bytearray | memoryview): Complete COPY stream.
@@ -221,9 +232,9 @@ def _decode_copy_binary_codon(
     event_id=remap(cols["event"]),
     dev_id=remap(cols["dev"]),
     owned=cols["owned"],
-    value=cols.pop("value").astype(VALUE_DTYPE),
-    arc=cols.pop("arc").astype(VALUE_DTYPE),
-    delta=cols.pop("delta").astype(VALUE_DTYPE),
+    value=cols.pop("value"),
+    arc=cols.pop("arc"),
+    delta=cols.pop("delta"),
   )
 
 
@@ -249,7 +260,8 @@ def decode_copy_binary_reference(
 
   Raises:
     ValueError: The stream does not start with the COPY signature, a tuple
-      has an unexpected field count, or a NULL ``time``.
+      has an unexpected field count, a NULL ``time``, or a float field
+      whose length is not 4, 8 or -1.
 
   Examples:
     >>> from hpcperfstats.analysis.metrics.lib.columnar.k0_decode import (
@@ -325,11 +337,11 @@ def decode_copy_binary_reference(
     types.append(ids[1])
     events.append(ids[2])
     devs.append(ids[3])
-    # value / arc / delta (real)
+    # value / arc / delta (real or double precision)
     for sink in (values, arcs, deltas):
       ln = _I.unpack_from(buf, off)[0]
       off += 4
-      sink.append(_float4_or_nan(buf, off, ln))
+      sink.append(_float_or_nan(buf, off, ln))
       if ln > 0:
         off += ln
     if has_owned_column:
@@ -361,6 +373,7 @@ def encode_copy_binary(
   rows: list[tuple[Any, ...]],
   *,
   with_owned: bool = False,
+  float_width: int = 4,
 ) -> bytes:
   """
   Encode host_data rows as a binary COPY stream (tests and fixtures).
@@ -371,6 +384,8 @@ def encode_copy_binary(
   Args:
     rows (list[tuple[Any, ...]]): Row tuples.
     with_owned (bool): Append the ``owned`` int4 column.
+    float_width (int): Float field length: 4 encodes the value columns as
+      ``real`` (PG15), 8 as ``double precision`` (PG18).
 
   Returns:
     bytes: Complete COPY stream with header and trailer.
@@ -378,7 +393,12 @@ def encode_copy_binary(
   Examples:
     >>> encode_copy_binary([])[:11] == COPY_SIGNATURE
     True
+    >>> row = [(0, "h", "t", "e", None, 1, 1, 1)]
+    >>> wide = encode_copy_binary(row, float_width=8)
+    >>> len(wide) - len(encode_copy_binary(row))
+    12
   """
+  fmt = _FLOAT_BY_LEN[float_width]
   out = bytearray(COPY_SIGNATURE)
   out += _I.pack(0)
   out += _I.pack(0)
@@ -397,7 +417,7 @@ def encode_copy_binary(
       if num is None:
         out += _I.pack(-1)
       else:
-        out += _I.pack(4) + _F.pack(float(num))
+        out += _I.pack(float_width) + fmt.pack(float(num))
     if with_owned:
       own = row[8] if len(row) > 8 else 1
       if own is None:

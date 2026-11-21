@@ -16,7 +16,8 @@ Exports (C ABI, all ``int`` results are row/group counts or negative codes):
 * ``copy_count_rows_c`` — pass 1 over a PostgreSQL ``COPY … (FORMAT BINARY)``
   host_data stream: tuple count or ``ERR_*``.
 * ``copy_decode_c`` — pass 2: numeric columns plus chunk-local text ids and
-  the distinct-name table (offset/length into the stream).
+  the distinct-name table (offset/length into the stream); float fields are
+  ``real`` (length 4) or ``double precision`` (length 8), written as float64.
 * ``group_reduce_c`` — count / sum / max per int64 key over masked rows,
   groups sorted by key (stable LSD radix sort in caller scratch), summation
   in row order (``np.unique`` + ``np.add.at`` parity).
@@ -43,6 +44,7 @@ ERR_NULL_TIME = -3
 ERR_NAME_CAP = -4
 ERR_ROW_COUNT = -5
 ERR_TRUNCATED = -6
+ERR_FLOAT_LENGTH = -7
 
 COPY_HEADER_LEN = 19
 # b"PGCOPY\n\xff\r\n\x00"
@@ -87,6 +89,11 @@ def _be_f32(p: Ptr[u8], off: int) -> float:
   )
   f = Ptr[float32](__ptr__(bits).as_byte())[0]
   return float(f)
+
+
+def _be_f64(p: Ptr[u8], off: int) -> float:
+  bits = u64(_be_i64(p, off))
+  return Ptr[float](__ptr__(bits).as_byte())[0]
 
 
 def _signature_ok(p: Ptr[u8], n: int) -> bool:
@@ -184,8 +191,9 @@ def copy_decode_c(
 
   Text ids are indexes into the distinct-name table written to
   ``out_name_*`` (one table for the four text columns; ``out_name_col`` says
-  which column each entry belongs to). Returns the number of distinct names
-  or a negative ``ERR_*`` code.
+  which column each entry belongs to). A float field of length 4 or 8 is
+  decoded, -1 is NULL (NaN), any other length is ``ERR_FLOAT_LENGTH``.
+  Returns the number of distinct names or a negative ``ERR_*`` code.
   """
   if not _signature_ok(buf, n):
     return ERR_SIGNATURE
@@ -245,11 +253,12 @@ def copy_decode_c(
       ln = _be_i32(buf, off)
       off += 4
       val = nan
-      if ln == 4:
-        if off + 4 > n:
+      if ln != -1:
+        if ln != 4 and ln != 8:
+          return ERR_FLOAT_LENGTH
+        if off + ln > n:
           return ERR_TRUNCATED
-        val = _be_f32(buf, off)
-      if ln > 0:
+        val = _be_f32(buf, off) if ln == 4 else _be_f64(buf, off)
         off += ln
       if col == 0:
         out_value[row] = val

@@ -591,7 +591,64 @@ def test_matched_copy_columns_uses_target_order() -> None:
     [("host", "character varying(64)"), ("time", "timestamptz")],
     [("time", "timestamptz"), ("host", "character varying(64)")],
   )
-  assert cols == ("time", "host")
+  assert cols == (("time", "host"), frozenset())
+
+
+def test_matched_copy_columns_widens_only_real_value_columns() -> None:
+  """PG18 host_data value/delta/arc are double precision, PG15 real: the copy
+  casts exactly those three and nothing else."""
+  mod = _load_mod()
+  target = [
+    ("time", "timestamptz"),
+    ("value", "double precision"),
+    ("delta", "double precision"),
+    ("arc", "double precision"),
+  ]
+  source = [(n, "real" if n != "time" else t) for n, t in target]
+  cols, widen = mod.matched_copy_columns(source, target)
+  assert cols == ("time", "value", "delta", "arc")
+  assert widen == {"value", "delta", "arc"}
+  # Already-double source (rerun after cutover-era schema): no cast.
+  assert mod.matched_copy_columns(target, target)[1] == frozenset()
+
+
+@pytest.mark.parametrize(
+  ("source", "target"),
+  [
+    # real -> double on a column outside value/delta/arc
+    ([("other", "real")], [("other", "double precision")]),
+    # narrowing double -> real
+    ([("value", "double precision")], [("value", "real")]),
+    # any other retype of a value column
+    ([("value", "numeric")], [("value", "double precision")]),
+    ([("value", "integer")], [("value", "real")]),
+  ],
+)
+def test_matched_copy_columns_rejects_other_type_changes(
+  source: list[tuple[str, str]], target: list[tuple[str, str]]
+) -> None:
+  mod = _load_mod()
+  with pytest.raises(ValueError, match="layout differs"):
+    mod.matched_copy_columns(source, target)
+
+
+def test_build_copy_out_sql_casts_widened_columns() -> None:
+  mod = _load_mod()
+  chunk = mod.ChunkRow(
+    "_timescaledb_internal",
+    "_hyper_1_2_chunk",
+    datetime(2026, 8, 10, tzinfo=UTC),
+    datetime(2026, 8, 11, tzinfo=UTC),
+    False,
+  )
+  sql = mod.build_copy_out_sql(
+    chunk, ["time", "value", "delta"], widen=frozenset({"value", "delta"})
+  )
+  assert sql == (
+    'COPY (SELECT "time", "value"::double precision, '
+    '"delta"::double precision FROM _timescaledb_internal._hyper_1_2_chunk)'
+    " TO STDOUT (FORMAT binary)"
+  )
 
 
 @pytest.mark.parametrize(
