@@ -125,6 +125,22 @@ events:
   # old values.
   fp_ops_retired: fp_ops_retired
   amd_fp_dp_ops: amd_fp_dp_ops
+  # Additive identity (monitor 1a60efb3): amd_x86_uncore_df_{rome,milan,
+  # genoa,turin} emit one row per DRAM channel (dev chan0..chan7 Rome / Milan,
+  # chan0..chan11 Genoa / Turin) with dram_data_beats (Zen2 / Zen3, read +
+  # write) or dram_read_beats / dram_write_beats (Zen4 / Zen5), E,W=48, 64 B
+  # per beat; keys a row's arch lacks are NOT_PRESENT, rows without a verified
+  # event NOT_BUILT. They replace the single df row's dram_chan0_bytes ..
+  # dram_chan3_bytes (beats too; channels 0-3 only, so Milan read half).
+  # Deliberately no dram_chanN_bytes -> beat-key alias: the dev changes too
+  # (df -> chan<N>), the old keys map many-to-one (and to two keys on Zen4 /
+  # Zen5), and an alias would make events_probe_names() pull old and new
+  # names into each other's probes. Consumers sum
+  # canonical.AMD_DF_BEAT_EVENTS (old and new keys; a row carries one family)
+  # over every row. No backfill; Milan DF bandwidth steps up about 2x.
+  dram_data_beats: dram_data_beats
+  dram_read_beats: dram_read_beats
+  dram_write_beats: dram_write_beats
   Active: active
   AnonHugePages: anon_huge_pages
   AnonPages: anon_pages

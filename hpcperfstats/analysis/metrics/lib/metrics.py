@@ -721,7 +721,13 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # nvidia_gpu integer_active / tensor_dmma_active pipe busy percents.
 # 15 (2026-11-18): avg_compute_engine_util from the intel_gpu (PVC)
 # compute_engine_util busy percent.
-METRICS_CONTRACT_VERSION = 15
+# 16 (2026-11-21): AMD DF rows are one chan<N> row per DRAM channel with
+# dram_data_beats (Zen2 / Zen3) or dram_read_beats + dram_write_beats
+# (Zen4 / Zen5); avg_mbw, the roofline bandwidth points and the Summary
+# amd_mbw series sum them over every row (AMD_DF_BEAT_EVENTS), the old df
+# row's dram_chanN_bytes still read. Milan DF bandwidth steps up about 2x at
+# the monitor upgrade (channels 4-7 were never read); no backfill.
+METRICS_CONTRACT_VERSION = 16
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.
@@ -2205,18 +2211,7 @@ class Metrics:
       "avg_mbw": {
         "typename": "amd_x86_uncore_df",
         "events": [
-          "dram_chan0_bytes",
-          "dram_chan1_bytes",
-          "dram_chan2_bytes",
-          "dram_chan3_bytes",
-          "MBW_CHANNEL_0",
-          "MBW_CHANNEL_1",
-          "MBW_CHANNEL_2",
-          "MBW_CHANNEL_3",
-          "MBW_CHANNEL_4",
-          "MBW_CHANNEL_5",
-          "MBW_CHANNEL_6",
-          "MBW_CHANNEL_7",
+          ev for events, _ in amd_df_bw_event_conv_tries() for ev in events
         ],
         # _job_arc_avg_mbw applies each key family's own factor from
         # amd_df_bw_event_conv_tries; this is the DF beat factor.
@@ -5217,20 +5212,10 @@ def _dram_bw_weighted_events_for_imbalance(u: Any) -> Any:
   Examples:
     >>> _dram_bw_weighted_events_for_imbalance(None)  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.monitor_naming.canonical import (
-    DRAM_CHAN_BYTES_EVENTS,
-  )
-  from hpcperfstats.dbload.lib.monitor_naming.legacy import (
-    LEGACY_AMD_DF_MBW_CHANNEL_EVENTS,
-  )
-
   for df_typ in amd_df_type_names():
     schema_df, _, _ = resolve_get_type(u, (df_typ,))
     if schema_df is not None:
-      for chans in (
-        DRAM_CHAN_BYTES_EVENTS,
-        LEGACY_AMD_DF_MBW_CHANNEL_EVENTS,
-      ):
+      for chans, _ in amd_df_bw_event_conv_tries():
         found = [c for c in chans if c in schema_df]
         if found:
           return df_typ, [(c, 1.0) for c in found]

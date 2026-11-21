@@ -192,7 +192,7 @@ def test_no_intel_gpu_collector_has_no_value(monkeypatch):
 
 def test_metrics_contract_bumped_for_pvc_compute_busy():
   """Contract 15 adds avg_compute_engine_util (one bump over 14)."""
-  assert metrics.METRICS_CONTRACT_VERSION == 15
+  assert metrics.METRICS_CONTRACT_VERSION >= 15
 
 
 def test_gpu_pie_help_names_pipes_and_matches_spa_copy():

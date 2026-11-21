@@ -148,7 +148,7 @@ Other causes (a read that failed, counters busy with another tool, a monitor upd
 | `avg_fp16_instr` | Average CPU FP16 instruction rate | Mean half-precision floating-point instructions per second (Ginstr/s), all vector widths; Grace nodes today | FP16 share of the CPU pie; shows whether mixed-precision CPU kernels use half precision as intended. |
 | `avg_arm_int8_ops` | Average CPU INT8 operation rate | Mean INT8 vector instructions per second (Ginstr/s) | INT8 share of the CPU Multiprecision Mix pie (not in `avg_flops`); useful for quantized inference on the CPU. |
 | `avg_arm_int16_ops` | Average CPU INT16 operation rate | Mean INT16 vector instructions per second (Ginstr/s) | INT16 share of the CPU Multiprecision Mix pie (not in `avg_flops`). |
-| `avg_mbw` | Average DRAM memory bandwidth | Mean DRAM bandwidth | High with low FLOPs suggests memory-bound CPU phases. |
+| `avg_mbw` | Average DRAM memory bandwidth | Mean DRAM bandwidth. AMD Milan jobs from monitors before per-channel DF rows read about half (only 4 of 8 channels were counted). | High with low FLOPs suggests memory-bound CPU phases. |
 | `avg_freq` | Average effective CPU frequency | Mean CPU frequency | Drops may indicate power/thermal policy or throttling. |
 | `avg_ethbw` | Average Ethernet bandwidth | Mean Ethernet bandwidth | Useful for TCP/object-store workflows that bypass IB paths<sup>[16](#ref-16)</sup>. |
 | `detail_gpu_active` | GPUs with non-zero utilization | Number of active GPUs | Lower than allocated GPUs usually means mapping/launcher inefficiency. |

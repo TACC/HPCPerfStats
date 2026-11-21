@@ -11,18 +11,20 @@ It is the pure (no database) step of ``manage.py repair_jstamp_deltas``.
 Limits: ``value`` is stored as PostgreSQL ``real``, so a per-sample delta is
 quantized to the float's spacing at the counter's size. Sums of deltas still
 telescope to ``last - first`` (totals and means are right); peaks of slow,
-large counters are coarse. A negative node delta is a counter wrap on 48-bit
-events (corrected by whole multiples of 2**48, one per wrapped device) and a
-gap (``None``) on every other width, like ingest's gauge-dip rule.
+large counters are coarse. A negative node delta is a counter wrap on the
+events the monitor declares ``W=48`` or ``W=32`` (corrected by whole
+multiples of ``2**W``, one per wrapped device) and a gap (``None``) on every
+other width, like ingest's gauge-dip rule.
 
 Attributes:
   EVENT_MULTIPLIER: ``(type, event) -> U=`` multiplier the parser applied to
     ``delta`` (the stored ``unit`` keeps only the letters, ``4B`` -> ``B``).
-  WRAP48_EVENTS: Events the monitor declares ``W=48``.
+  WRAP_BITS: ``event -> W`` for the events the monitor declares ``W=48``
+    (PMC / uncore counters) or ``W=32`` (RAPL ``*_energy`` mJ totals, IB
+    error counters); ``W=64`` counters never wrap in practice.
   SKIP_TYPES: Types whose shared-stamped rows were never merged across
     devices (GPU types keep hardware ``dev``; ``host_mem_job`` has one
     device per job).
-  _WRAP48: ``2**48`` as a float.
 """
 
 from __future__ import annotations
@@ -41,44 +43,72 @@ EVENT_MULTIPLIER: dict[tuple[str, str], float] = {
   ("host_block", "wr_sectors"): 512.0,
 }
 
-WRAP48_EVENTS: frozenset[str] = frozenset(
-  {
-    "aperf",
-    "arm_int16_ops",
-    "arm_int8_ops",
-    "cycles_unhalted_core",
-    "cycles_unhalted_ref",
-    "dram_act_count",
-    "dram_cas_reads",
-    "dram_cas_writes",
-    "dram_chan0_bytes",
-    "dram_chan1_bytes",
-    "dram_chan2_bytes",
-    "dram_chan3_bytes",
-    "dram_pre_count_miss",
-    "fp_arith_inst_retired_128b_packed_double",
-    "fp_arith_inst_retired_128b_packed_single",
-    "fp_arith_inst_retired_256b_packed_double",
-    "fp_arith_inst_retired_256b_packed_single",
-    "fp_arith_inst_retired_512b_packed_double",
-    "fp_arith_inst_retired_512b_packed_single",
-    "fp_arith_inst_retired_scalar_double",
-    "fp_arith_inst_retired_scalar_single",
-    "hbm_cas_reads",
-    "hbm_cas_writes",
-    "instr_retired",
-    "instr_retired_any",
-    "l1d_replacement",
-    "ls_dispatch",
-    "mem_load_uops_retired_l1_hit",
-    "mem_load_uops_retired_l2_hit",
-    "mem_load_uops_retired_llc_hit",
-    "mperf",
-    "retired_branch_instr",
-    "retired_instructions",
-    "retired_misp_branch_instr",
-  }
-)
+WRAP_BITS: dict[str, int] = {
+  **dict.fromkeys(
+    (
+      "aperf",
+      "arm_int16_ops",
+      "arm_int8_ops",
+      "cycles_unhalted_core",
+      "cycles_unhalted_ref",
+      "dram_act_count",
+      "dram_cas_reads",
+      "dram_cas_writes",
+      "dram_chan0_bytes",
+      "dram_chan1_bytes",
+      "dram_chan2_bytes",
+      "dram_chan3_bytes",
+      "dram_data_beats",
+      "dram_pre_count_miss",
+      "dram_read_beats",
+      "dram_write_beats",
+      "fp_arith_inst_retired_128b_packed_double",
+      "fp_arith_inst_retired_128b_packed_single",
+      "fp_arith_inst_retired_256b_packed_double",
+      "fp_arith_inst_retired_256b_packed_single",
+      "fp_arith_inst_retired_512b_packed_double",
+      "fp_arith_inst_retired_512b_packed_single",
+      "fp_arith_inst_retired_scalar_double",
+      "fp_arith_inst_retired_scalar_single",
+      "hbm_cas_reads",
+      "hbm_cas_writes",
+      "instr_retired",
+      "instr_retired_any",
+      "l1d_replacement",
+      "ls_dispatch",
+      "mem_load_uops_retired_l1_hit",
+      "mem_load_uops_retired_l2_hit",
+      "mem_load_uops_retired_llc_hit",
+      "mperf",
+      "retired_branch_instr",
+      "retired_instructions",
+      "retired_misp_branch_instr",
+    ),
+    48,
+  ),
+  **dict.fromkeys(
+    (
+      "core_energy",
+      "dram_energy",
+      "pkg_energy",
+      "pp0_energy",
+      "pp1_energy",
+      "excessive_buffer_overrun_errors",
+      "link_downed",
+      "link_error_recovery",
+      "local_link_integrity_errors",
+      "port_rcv_constraint_errors",
+      "port_rcv_errors",
+      "port_rcv_remote_physical_errors",
+      "port_rcv_switch_relay_errors",
+      "port_xmit_constraint_errors",
+      "port_xmit_discards",
+      "port_xmit_wait",
+      "symbol_error",
+    ),
+    32,
+  ),
+}
 
 SKIP_TYPES: tuple[str, ...] = (
   "amd_gpu",
@@ -86,8 +116,6 @@ SKIP_TYPES: tuple[str, ...] = (
   "intel_gpu",
   "nvidia_gpu",
 )
-
-_WRAP48 = float(2**48)
 
 
 class SeriesCarry(NamedTuple):
@@ -137,8 +165,8 @@ def node_delta(
 
   Returns:
     float | None: ``(value - prev) * multiplier``. A negative difference is
-    a 48-bit wrap for ``WRAP48_EVENTS`` (whole multiples of ``2**48`` are
-    added) and ``None`` otherwise; ``None`` when either value is missing.
+    a wrap for ``WRAP_BITS`` events (whole multiples of ``2**W`` are added)
+    and ``None`` otherwise; ``None`` when either value is missing.
 
   Examples:
     >>> node_delta("host_ib", "port_xmit_data", 10.0, 15.0)
@@ -147,6 +175,8 @@ def node_delta(
     True
     >>> node_delta("host_cpu_hw", "aperf", 2.0**48 - 5, 3.0)
     8.0
+    >>> node_delta("intel_x86_rapl", "pkg_energy", 2.0**32 - 5, 3.0)
+    8.0
   """
   if prev is None or value is None:
     return None
@@ -154,9 +184,10 @@ def node_delta(
     return None
   diff = value - prev
   if diff < 0:
-    if event not in WRAP48_EVENTS:
+    if event not in WRAP_BITS:
       return None
-    diff += math.ceil(-diff / _WRAP48) * _WRAP48
+    span = float(2 ** WRAP_BITS[event])
+    diff += math.ceil(-diff / span) * span
   return diff * EVENT_MULTIPLIER.get((typ, event), 1.0)
 
 

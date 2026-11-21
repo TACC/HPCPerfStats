@@ -621,6 +621,27 @@ def _run_unreadable(
   return unread, total, per
 
 
+def _static_code_rows(code: np.ndarray) -> np.ndarray:
+  """
+  Mark rows whose sentinel code is static-kind (counter not present, not
+  built, permission denied): the counter does not exist on that row.
+
+  Args:
+    code (np.ndarray): int64 sentinel code per row (0 for valid rows).
+
+  Returns:
+    np.ndarray: bool per row, True for a static-kind code.
+
+  Examples:
+    >>> _static_code_rows(np.array([0, -2, -3, -10])).tolist()
+    [False, True, False, True]
+  """
+  static_codes = [
+    c for c in np.unique(code[code != 0]).tolist() if lookup(c).kind == STATIC
+  ]
+  return np.isin(code, static_codes)
+
+
 def sentinel_samples(
   index: Any,
   typ: str,
@@ -683,6 +704,16 @@ def sentinel_samples(
   if rows.size == 0:
     return None
   code = f.sentinel[rows].astype(np.int64)
+  static = _static_code_rows(code)
+  if static.any():
+    # A static row next to a live row of its sample is an absent counter
+    # (the sum of the others is complete, as in sentinel_sample_mask); a
+    # sample of static rows only stays a gap so the host is classified.
+    key = (f.host_id[rows].astype(np.int64) << 32) | index._time_index[
+      rows
+    ].astype(np.int64)
+    absent = static & np.isin(key, key[~static])
+    rows, code = rows[~absent], code[~absent]
   host_names = f.hosts
   known = set(host_names)
   partial = [
@@ -900,10 +931,7 @@ def sentinel_sample_mask(
     ([False, False], [7])
   """
   code = index.frame.sentinel[rows].astype(np.int64)
-  static_codes = [
-    c for c in np.unique(code[code != 0]).tolist() if lookup(c).kind == STATIC
-  ]
-  live = np.flatnonzero(~np.isin(code, static_codes))
+  live = np.flatnonzero(~_static_code_rows(code))
   key, code = sample_key[live], code[live]
   vals_l, ok = vals[live], valid[live].copy()
   eff = np.where(ok, vals_l, 0.0)

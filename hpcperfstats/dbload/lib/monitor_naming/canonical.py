@@ -2,8 +2,14 @@
 Canonical monitor st_name and event keys (current hpcperfstatsd emission).
 
 Attributes:
-  AMD_DF_BYTES_PER_BEAT: Bytes per AMD DF ``dram_chanN_bytes`` count; the
-    keys hold DRAM data beats in every monitor era, never bytes.
+  AMD_DF_BEAT_EVENTS: AMD DF DRAM beat keys, summed over every row of a
+    family DF type: the per-channel ``chan<N>`` rows' ``dram_data_beats``
+    (Zen2 / Zen3, read + write) or ``dram_read_beats`` /
+    ``dram_write_beats`` (Zen4 / Zen5), and the older single ``df`` row's
+    ``dram_chan0_bytes`` .. ``dram_chan3_bytes`` (beats despite the name).
+    A row carries one family; the keys it lacks are sentinels.
+  AMD_DF_BYTES_PER_BEAT: Bytes per ``AMD_DF_BEAT_EVENTS`` count; the keys
+    hold DRAM data beats in every monitor era, never bytes.
   AMD_DF_STATS_TYPES: Attribute.
   AMD_DF_TYPE: Attribute.
   AMD_FP_DP_OPS: AMD Zen5 ``host_cpu_hw`` double-precision FLOP lifetime
@@ -27,7 +33,6 @@ Attributes:
   DCGM_CPU_POWER_UTIL_W: Attribute.
   DRAM_CAS_READS: Attribute.
   DRAM_CAS_WRITES: Attribute.
-  DRAM_CHAN_BYTES_EVENTS: Attribute.
   FP_OPS_RETIRED: AMD ``host_cpu_hw`` total FLOP lifetime (Zen3, Zen4 and
     Zen5; ``E,W=64,U=FLOP``).
   GRACE_FP_ARITH_SCALAR_DOUBLE: Attribute.
@@ -123,7 +128,12 @@ AMD_DF_STATS_TYPES = (
 )
 INTEL_RAPL_STATS_TYPES = ("intel_x86_rapl",)
 AMD_RAPL_STATS_TYPES = ("amd_x86_rapl",)
-DRAM_CHAN_BYTES_EVENTS = tuple(f"dram_chan{i}_bytes" for i in range(4))
+AMD_DF_BEAT_EVENTS = (
+  "dram_data_beats",
+  "dram_read_beats",
+  "dram_write_beats",
+  *(f"dram_chan{i}_bytes" for i in range(4)),
+)
 AMD_DF_BYTES_PER_BEAT = 64
 HOST_CPU_HW_TYPE = "host_cpu_hw"
 HOST_ROOFLINE_PEAK_TYPE = "host_roofline_peak"

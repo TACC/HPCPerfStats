@@ -78,6 +78,7 @@ MARKERS = (
   "#define INTEL_ICX_IMC_KEYS",
   "#define INTEL_SKX_IMC_KEYS",
   "#define INTEL_SPR_IMC_KEYS",
+  "#define AMD_X86_UNCORE_DF_KEYS",
   "#define CPU_COUNTER_METRICS_KEYS",
   "#define EVENT_KEYS",
   "#define BYTE_KEYS",
@@ -696,18 +697,29 @@ DESC: dict[str, str] = {
     "Intel intel_x86_rapl DRAM energy, a running total in mJ modulo 2^32 "
     "(its rate is watts)."
   ),
-  # Live AMD family DF (x86_uncore_perf.c); historical archives may use MBW_CHANNEL_*.
+  # AMD family DF (x86_uncore_perf.c): one chan<N> row per DRAM channel;
+  # older monitors emitted one df row of dram_chanN_bytes, historical
+  # archives MBW_CHANNEL_*.
+  "dram_data_beats": (
+    "AMD DF 64-byte DRAM data beats (reads and writes) on one DRAM channel (one chan<N> row per channel) from amd_x86_uncore_df_rome / amd_x86_uncore_df_milan."
+  ),
+  "dram_read_beats": (
+    "AMD DF 64-byte DRAM read beats on one DRAM channel (one chan<N> row per channel) from amd_x86_uncore_df_genoa / amd_x86_uncore_df_turin."
+  ),
+  "dram_write_beats": (
+    "AMD DF 64-byte DRAM write beats on one DRAM channel (one chan<N> row per channel) from amd_x86_uncore_df_genoa / amd_x86_uncore_df_turin."
+  ),
   "dram_chan0_bytes": (
-    "AMD DF DRAM channel 0 data beats (64 bytes each) from amd_x86_uncore_df_{rome,milan,genoa,turin} by direct perf; Zen4 / Zen5 count read + write beats since monitor 3.1 (reads only before)."
+    "AMD DF DRAM channel 0 data beats (64 bytes each, despite the name) on the single df row of amd_x86_uncore_df_{rome,milan,genoa,turin} from older monitors; now one chan<N> row per channel with dram_data_beats or dram_read_beats / dram_write_beats."
   ),
   "dram_chan1_bytes": (
-    "AMD DF DRAM channel 1 data beats (64 bytes each) from amd_x86_uncore_df_{rome,milan,genoa,turin} by direct perf; Zen4 / Zen5 count read + write beats since monitor 3.1 (reads only before)."
+    "AMD DF DRAM channel 1 data beats (64 bytes each, despite the name) on the single df row of amd_x86_uncore_df_{rome,milan,genoa,turin} from older monitors; now one chan<N> row per channel with dram_data_beats or dram_read_beats / dram_write_beats."
   ),
   "dram_chan2_bytes": (
-    "AMD DF DRAM channel 2 data beats (64 bytes each) from amd_x86_uncore_df_{rome,milan,genoa,turin} by direct perf; Zen4 / Zen5 count read + write beats since monitor 3.1 (reads only before)."
+    "AMD DF DRAM channel 2 data beats (64 bytes each, despite the name) on the single df row of amd_x86_uncore_df_{rome,milan,genoa,turin} from older monitors; now one chan<N> row per channel with dram_data_beats or dram_read_beats / dram_write_beats."
   ),
   "dram_chan3_bytes": (
-    "AMD DF DRAM channel 3 data beats (64 bytes each) from amd_x86_uncore_df_{rome,milan,genoa,turin} by direct perf; Zen4 / Zen5 count read + write beats since monitor 3.1 (reads only before)."
+    "AMD DF DRAM channel 3 data beats (64 bytes each, despite the name) on the single df row of amd_x86_uncore_df_{rome,milan,genoa,turin} from older monitors; now one chan<N> row per channel with dram_data_beats or dram_read_beats / dram_write_beats."
   ),
   "MBW_CHANNEL_0": (
     "Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan0_bytes)."

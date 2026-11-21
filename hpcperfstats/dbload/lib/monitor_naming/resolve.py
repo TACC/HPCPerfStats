@@ -305,8 +305,9 @@ def amd_df_bw_event_conv_tries() -> tuple[tuple[tuple[str, ...], float], ...]:
   """
   (events, conv) for AMD DF BW: live beat counters first, then historical MBW.
 
-  ``dram_chanN_bytes`` count DRAM beats of ``canon.AMD_DF_BYTES_PER_BEAT``
-  bytes each; ``MBW_CHANNEL_*`` keep their own factor.
+  ``canon.AMD_DF_BEAT_EVENTS`` (per-channel ``chan<N>`` rows and the older
+  single ``df`` row) count DRAM beats of ``canon.AMD_DF_BYTES_PER_BEAT``
+  bytes each, summed over every row; ``MBW_CHANNEL_*`` keep their own factor.
 
   Returns:
     tuple[tuple[tuple[str, ...], float], ...]: tuple[tuple[tuple[str, ...],
@@ -316,7 +317,7 @@ def amd_df_bw_event_conv_tries() -> tuple[tuple[tuple[str, ...], float], ...]:
     >>> amd_df_bw_event_conv_tries()  # doctest: +SKIP
   """
   return (
-    (canon.DRAM_CHAN_BYTES_EVENTS, canon.AMD_DF_BYTES_PER_BEAT / (1024**3)),
+    (canon.AMD_DF_BEAT_EVENTS, canon.AMD_DF_BYTES_PER_BEAT / (1024**3)),
     (leg.LEGACY_AMD_DF_MBW_CHANNEL_EVENTS, 2.0 / (1024**3)),
   )
 

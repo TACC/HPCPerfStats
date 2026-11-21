@@ -138,7 +138,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan0_bytes).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_devplot_shared_node_help.py; hpcperfstats/analysis/metrics/tests/test_hover_tooltips.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py
 
 ### `MBW_CHANNEL_1`
@@ -146,49 +146,56 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan1_bytes).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `MBW_CHANNEL_2`
 
 - **Definition:** Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan2_bytes).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `MBW_CHANNEL_3`
 
 - **Definition:** Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan3_bytes).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `MBW_CHANNEL_4`
 
 - **Definition:** Historical AMD DF DRAM channel bandwidth counter for one DF DRAM channel (legacy 8-channel archives).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `MBW_CHANNEL_5`
 
 - **Definition:** Historical AMD DF DRAM channel bandwidth counter for one DF DRAM channel (legacy 8-channel archives).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `MBW_CHANNEL_6`
 
 - **Definition:** Historical AMD DF DRAM channel bandwidth counter for one DF DRAM channel (legacy 8-channel archives).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `MBW_CHANNEL_7`
 
 - **Definition:** Historical AMD DF DRAM channel bandwidth counter for one DF DRAM channel (legacy 8-channel archives).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `READ_ops`
 
@@ -637,33 +644,46 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `dram_chan0_bytes`
 
-- **Definition:** AMD DF DRAM channel 0 data beats (64 bytes each) from amd_x86_uncore_df_{rome,milan,genoa,turin} by direct perf; Zen4 / Zen5 count read + write beats since monitor 3.1 (reads only before).
+- **Definition:** AMD DF DRAM channel 0 data beats (64 bytes each, despite the name) on the single df row of amd_x86_uncore_df_{rome,milan,genoa,turin} from older monitors; now one chan<N> row per channel with dram_data_beats or dram_read_beats / dram_write_beats.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py
 
 ### `dram_chan1_bytes`
 
-- **Definition:** AMD DF DRAM channel 1 data beats (64 bytes each) from amd_x86_uncore_df_{rome,milan,genoa,turin} by direct perf; Zen4 / Zen5 count read + write beats since monitor 3.1 (reads only before).
+- **Definition:** AMD DF DRAM channel 1 data beats (64 bytes each, despite the name) on the single df row of amd_x86_uncore_df_{rome,milan,genoa,turin} from older monitors; now one chan<N> row per channel with dram_data_beats or dram_read_beats / dram_write_beats.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py
 
 ### `dram_chan2_bytes`
 
-- **Definition:** AMD DF DRAM channel 2 data beats (64 bytes each) from amd_x86_uncore_df_{rome,milan,genoa,turin} by direct perf; Zen4 / Zen5 count read + write beats since monitor 3.1 (reads only before).
+- **Definition:** AMD DF DRAM channel 2 data beats (64 bytes each, despite the name) on the single df row of amd_x86_uncore_df_{rome,milan,genoa,turin} from older monitors; now one chan<N> row per channel with dram_data_beats or dram_read_beats / dram_write_beats.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `dram_chan3_bytes`
 
-- **Definition:** AMD DF DRAM channel 3 data beats (64 bytes each) from amd_x86_uncore_df_{rome,milan,genoa,turin} by direct perf; Zen4 / Zen5 count read + write beats since monitor 3.1 (reads only before).
+- **Definition:** AMD DF DRAM channel 3 data beats (64 bytes each, despite the name) on the single df row of amd_x86_uncore_df_{rome,milan,genoa,turin} from older monitors; now one chan<N> row per channel with dram_data_beats or dram_read_beats / dram_write_beats.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
+
+### `dram_data_beats`
+
+- **Definition:** AMD DF 64-byte DRAM data beats (reads and writes) on one DRAM channel (one chan<N> row per channel) from amd_x86_uncore_df_rome / amd_x86_uncore_df_milan.
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_amd_df_beat_bytes.py
 
 ### `dram_energy`
 
@@ -680,6 +700,24 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
+
+### `dram_read_beats`
+
+- **Definition:** AMD DF 64-byte DRAM read beats on one DRAM channel (one chan<N> row per channel) from amd_x86_uncore_df_genoa / amd_x86_uncore_df_turin.
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_amd_df_beat_bytes.py
+
+### `dram_write_beats`
+
+- **Definition:** AMD DF 64-byte DRAM write beats on one DRAM channel (one chan<N> row per channel) from amd_x86_uncore_df_genoa / amd_x86_uncore_df_turin.
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_amd_df_beat_bytes.py
 
 ### `errors`
 
@@ -1111,7 +1149,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/update_metrics.py; hpcperfstats/dbload/lib/sync_timedb_progress_report.py; hpcperfstats/site/lib/machine/management/commands/pg_connection_stats.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_codon_kernels.py; hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_columnar_kernel_routing.py; hpcperfstats/analysis/metrics/tests/test_columnar_kernels.py; hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_aggregation.py; hpcperfstats/analysis/metrics/tests/test_metrics_telemetry_bounds.py; hpcperfstats/site/lib/machine/tests/test_admin_monitor_ingest_coverage.py; hpcperfstats/site/lib/machine/tests/test_cpu_precision_mix_artifact.py; hpcperfstats/site/lib/machine/tests/test_metrics.py; hpcperfstats/site/lib/machine/tests/test_update_metrics.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage_compose.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_codon_kernels.py; hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_columnar_kernel_routing.py; hpcperfstats/analysis/metrics/tests/test_columnar_kernels.py; hpcperfstats/analysis/metrics/tests/test_columnar_metrics_view.py; hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_aggregation.py; hpcperfstats/analysis/metrics/tests/test_metrics_telemetry_bounds.py; hpcperfstats/site/lib/machine/tests/test_admin_monitor_ingest_coverage.py; hpcperfstats/site/lib/machine/tests/test_cpu_precision_mix_artifact.py; hpcperfstats/site/lib/machine/tests/test_metrics.py; hpcperfstats/site/lib/machine/tests/test_update_metrics.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage_compose.py
 
 ### `in_flight`
 
@@ -2335,7 +2373,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_columnar_kernels.py; hpcperfstats/analysis/metrics/tests/test_columnar_schema_all_hosts.py; hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_jobframe.py; hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_aggregation.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/analysis/metrics/tests/test_time_imbalance.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py; hpcperfstats/site/lib/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_columnar_kernels.py; hpcperfstats/analysis/metrics/tests/test_columnar_metrics_view.py; hpcperfstats/analysis/metrics/tests/test_columnar_schema_all_hosts.py; hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_jobframe.py; hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_aggregation.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/analysis/metrics/tests/test_time_imbalance.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py; hpcperfstats/site/lib/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `temperature`
 
@@ -2538,7 +2576,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/columnar/consumed_series.py; hpcperfstats/analysis/metrics/lib/columnar/job_table.py; hpcperfstats/analysis/metrics/lib/columnar/jobframe.py; hpcperfstats/analysis/metrics/lib/columnar/k0_decode.py; hpcperfstats/analysis/metrics/lib/columnar/kernels.py; hpcperfstats/analysis/metrics/lib/columnar/summary_series.py; hpcperfstats/analysis/metrics/lib/columnar/testing.py; hpcperfstats/analysis/metrics/lib/columnar/type_detail_series.py; hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/devplot.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/analysis/metrics/lib/sentinel_profile.py; hpcperfstats/analysis/metrics/lib/sentinel_reasons.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py; hpcperfstats/dbload/lib/host_data_percore_collapse.py; hpcperfstats/dbload/lib/ingest_coverage.py; hpcperfstats/dbload/lib/listend_db_ingest.py; hpcperfstats/dbload/lib/sync_timedb_host_data_insert.py; hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/dbload/lib/sync_timedb_sample_ingest.py; hpcperfstats/site/lib/machine/admin_monitor_ingest_coverage.py; hpcperfstats/site/lib/machine/admin_monitor_telemetry_health.py; hpcperfstats/site/lib/machine/management/commands/repair_jstamp_deltas.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_codon_kernels.py; hpcperfstats/analysis/metrics/tests/test_columnar_bridge.py; hpcperfstats/analysis/metrics/tests/test_columnar_consumed_series.py; hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_columnar_handoff.py; hpcperfstats/analysis/metrics/tests/test_columnar_kernel_routing.py; hpcperfstats/analysis/metrics/tests/test_columnar_kernels.py; hpcperfstats/analysis/metrics/tests/test_columnar_schema_all_hosts.py; hpcperfstats/analysis/metrics/tests/test_copy_decode.py; hpcperfstats/analysis/metrics/tests/test_copy_fetch.py; hpcperfstats/analysis/metrics/tests/test_gpu_integer_dmma_metrics.py; hpcperfstats/analysis/metrics/tests/test_hover_tooltips.py; hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_jobframe.py; hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_aggregation.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_reasons.py; hpcperfstats/analysis/metrics/tests/test_metrics_telemetry_bounds.py; hpcperfstats/analysis/metrics/tests/test_node_power_est.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_pvc_compute_engine_util_metric.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/analysis/metrics/tests/test_time_imbalance.py; hpcperfstats/site/lib/machine/tests/test_admin_monitor_ingest_coverage.py; hpcperfstats/site/lib/machine/tests/test_admin_monitor_telemetry_health.py; hpcperfstats/site/lib/machine/tests/test_collapse_percore_host_data_command.py; hpcperfstats/site/lib/machine/tests/test_ingest_coverage_sweeper_compose.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py; hpcperfstats/site/lib/machine/tests/test_job_detail_artifacts_prewarm.py; hpcperfstats/site/lib/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/lib/machine/tests/test_metrics.py; hpcperfstats/site/lib/machine/tests/test_metrics_sample_persist.py; hpcperfstats/site/lib/machine/tests/test_openapi_wire_contracts.py; hpcperfstats/site/lib/machine/tests/test_repair_jstamp_deltas_command.py; hpcperfstats/site/lib/machine/tests/test_sentinel_run_persist.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_diagnosis_compose.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage_compose.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_codon_kernels.py; hpcperfstats/analysis/metrics/tests/test_columnar_bridge.py; hpcperfstats/analysis/metrics/tests/test_columnar_consumed_series.py; hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_columnar_handoff.py; hpcperfstats/analysis/metrics/tests/test_columnar_kernel_routing.py; hpcperfstats/analysis/metrics/tests/test_columnar_kernels.py; hpcperfstats/analysis/metrics/tests/test_columnar_metrics_view.py; hpcperfstats/analysis/metrics/tests/test_columnar_schema_all_hosts.py; hpcperfstats/analysis/metrics/tests/test_copy_decode.py; hpcperfstats/analysis/metrics/tests/test_copy_fetch.py; hpcperfstats/analysis/metrics/tests/test_gpu_integer_dmma_metrics.py; hpcperfstats/analysis/metrics/tests/test_hover_tooltips.py; hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_jobframe.py; hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_aggregation.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_reasons.py; hpcperfstats/analysis/metrics/tests/test_metrics_telemetry_bounds.py; hpcperfstats/analysis/metrics/tests/test_node_power_est.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_pvc_compute_engine_util_metric.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/analysis/metrics/tests/test_time_imbalance.py; hpcperfstats/site/lib/machine/tests/test_admin_monitor_ingest_coverage.py; hpcperfstats/site/lib/machine/tests/test_admin_monitor_telemetry_health.py; hpcperfstats/site/lib/machine/tests/test_collapse_percore_host_data_command.py; hpcperfstats/site/lib/machine/tests/test_ingest_coverage_sweeper_compose.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py; hpcperfstats/site/lib/machine/tests/test_job_detail_artifacts_prewarm.py; hpcperfstats/site/lib/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/lib/machine/tests/test_metrics.py; hpcperfstats/site/lib/machine/tests/test_metrics_sample_persist.py; hpcperfstats/site/lib/machine/tests/test_openapi_wire_contracts.py; hpcperfstats/site/lib/machine/tests/test_repair_jstamp_deltas_command.py; hpcperfstats/site/lib/machine/tests/test_sentinel_run_persist.py; hpcperfstats/site/lib/machine/tests/test_update_metrics.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_diagnosis_compose.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage_compose.py
 
 ### `vfs_alloc_inode_ops`
 

@@ -6,13 +6,13 @@ Monitor st_name and event naming: canonical (new monitor), legacy (historical
 from __future__ import annotations
 
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+  AMD_DF_BEAT_EVENTS,
   AMD_DF_STATS_TYPES,
   AMD_DF_TYPE,
   AMD_PMC_TYPE,
   AMD_RAPL_STATS_TYPES,
   ARM_IMC_STATS_TYPES,
   CHA_TYPENAME_PRIORITY,
-  DRAM_CHAN_BYTES_EVENTS,
   HOST_CPU_HW_TYPE,
   HOST_ROOFLINE_PEAK_TYPE,
   INTEL_CORE_PMC_TYPES_ORDERED,
@@ -35,13 +35,13 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
 )
 
 __all__ = [
+  "AMD_DF_BEAT_EVENTS",
   "AMD_DF_STATS_TYPES",
   "AMD_DF_TYPE",
   "AMD_PMC_TYPE",
   "AMD_RAPL_STATS_TYPES",
   "ARM_IMC_STATS_TYPES",
   "CHA_TYPENAME_PRIORITY",
-  "DRAM_CHAN_BYTES_EVENTS",
   "HOST_CPU_HW_TYPE",
   "HOST_ROOFLINE_PEAK_TYPE",
   "INTEL_CORE_PMC_TYPES_ORDERED",

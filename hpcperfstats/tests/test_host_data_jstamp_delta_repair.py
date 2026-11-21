@@ -16,7 +16,7 @@ import pytest
 from hpcperfstats.dbload.lib.host_data_jstamp_delta_repair import (
   EVENT_MULTIPLIER,
   SKIP_TYPES,
-  WRAP48_EVENTS,
+  WRAP_BITS,
   SeriesCarry,
   group_series,
   node_delta,
@@ -72,6 +72,38 @@ def test_negative_delta_is_a_wrap_only_on_48_bit_events():
   assert node_delta("host_cpu_hw", "aperf", 2.0**49, 3.0) == 3.0
   assert node_delta("host_ib", "port_xmit_data", 10.0, 5.0) is None
   assert node_delta("host_cpu", "user", 10.0, 5.0) is None
+
+
+@pytest.mark.parametrize(
+  "event", ["dram_data_beats", "dram_read_beats", "dram_write_beats"]
+)
+def test_amd_df_channel_beat_keys_wrap_at_48_bits(event):
+  """Per-channel AMD DF beat keys (``E,W=48``) wrap like the old df keys."""
+  typ = "amd_x86_uncore_df_milan"
+  assert node_delta(typ, event, 10.0, 5.0) == 2.0**48 - 5
+  assert node_delta(typ, "dram_chan0_bytes", 10.0, 5.0) == 2.0**48 - 5
+
+
+def test_rapl_energy_wrap_across_2_32_mj_is_repaired():
+  """RAPL ``*_energy`` are ``E,W=32,U=mJ`` running totals modulo 2**32: a
+  node value that drops across the wrap is one 2**32 step, not a gap."""
+  for typ in ("intel_x86_rapl", "amd_x86_rapl"):
+    prev, value = 2.0**32 - 1000.0, 500.0
+    assert node_delta(typ, "pkg_energy", prev, value) == 1500.0
+  # Two sockets wrapped in one interval: two 2**32 steps.
+  assert node_delta("amd_x86_rapl", "pkg_energy", 2.0**33 - 10, 30.0) == 40.0
+  fixes, _ = plan_series(
+    "intel_x86_rapl", "dram_energy", _rows([2.0**32 - 600.0, 600.0]), None
+  )
+  assert fixes[1].delta == 1200.0
+  assert fixes[1].arc == pytest.approx(20.0)
+
+
+def test_ib_error_counter_wraps_at_32_bits_but_data_counters_do_not():
+  """W=32 IB error counters wrap; port data / packets are W=64 now."""
+  assert node_delta("host_ib", "symbol_error", 2.0**32 - 1, 1.0) == 2.0
+  assert node_delta("host_ib", "port_xmit_data", 10.0, 5.0) is None
+  assert node_delta("host_ib", "port_rcv_packets", 10.0, 5.0) is None
 
 
 def test_null_value_breaks_the_series_and_dt_zero_has_no_arc():
@@ -137,8 +169,12 @@ def test_tables_match_the_monitor_schema_declarations():
   """Drift guard: every ``W=48`` and numeric ``U=`` event is in the tables."""
   opts = _monitor_schema_options()
   assert opts, "no X(...) schema declarations found"
-  w48 = {e for e, o in opts.items() if re.search(r"(^|,)W=48(,|$)", o)}
-  assert w48 == set(WRAP48_EVENTS)
+  widths = {}
+  for event, o in opts.items():
+    m = re.search(r"(?:^|,)W=(32|48)(?:,|$)", o)
+    if m:
+      widths[event] = int(m.group(1))
+  assert widths == WRAP_BITS
   numeric_units = {}
   for event, o in opts.items():
     m = re.search(r"(?:^|,)U=(\d+)[A-Za-z]", o)

@@ -846,3 +846,55 @@ def test_no_migration_soft_skips_required_work():
     if pat.search(path.read_text(encoding="utf-8"))
   ]
   assert offenders == [], offenders
+
+
+def _latest_sample_sum_sql():
+  """``CREATE`` SQL of ``host_data_sum_metric_per_sample`` from the newest
+  migration that defines it, with that migration's module name."""
+  from pathlib import Path
+
+  mig_dir = Path(__file__).resolve().parents[1] / "migrations"
+  found = None
+  for path in sorted(mig_dir.glob("0*.py")):
+    mod = importlib.import_module(
+      f"hpcperfstats.site.lib.machine.migrations.{path.stem}"
+    )
+    for op in mod.Migration.operations:
+      if isinstance(op, migrations.RunSQL) and (
+        "FUNCTION host_data_sum_metric_per_sample" in str(op.sql)
+      ):
+        found = (path.stem, str(op.sql), op)
+  assert found is not None
+  return found
+
+
+def test_sample_sum_function_accumulates_in_double_precision():
+  """``host_data`` value / arc are ``real``: SUM(real) accumulates in float4
+  (about 7 digits), so the newest definition casts each row to double
+  precision before summing, and keeps the 0034 signature and return type."""
+  name, sql, _op = _latest_sample_sum_sql()
+  assert name != "0034_metrics_host_data_sql_functions"
+  assert not re.search(r"SUM\(\s*h\.(arc|value)\s*\)", sql)
+  assert "SUM(h.arc::double precision)" in sql
+  assert "SUM(h.value::double precision)" in sql
+  assert re.search(
+    r"host_data_sum_metric_per_sample\(\s*p_hosts text\[\],\s*"
+    r"p_start timestamptz,\s*p_end timestamptz,\s*p_type text,\s*"
+    r"p_events text\[\],\s*p_val_col text\s*\)",
+    sql,
+  )
+  assert (
+    "RETURNS TABLE(host text, sample_time timestamptz, "
+    "sum_val double precision)" in sql
+  )
+  # Monitor value sentinels (value < 0) are never summed.
+  assert "h.value >= 0" in sql
+
+
+def test_sample_sum_double_precision_migration_reverses_to_0034_body():
+  """Reverse restores the 0034 function body (CREATE OR REPLACE, no drop)."""
+  _name, _sql, op = _latest_sample_sum_sql()
+  m34 = importlib.import_module(
+    "hpcperfstats.site.lib.machine.migrations.0034_metrics_host_data_sql_functions"
+  )
+  assert op.reverse_sql == m34.CREATE_SAMPLE_SUM

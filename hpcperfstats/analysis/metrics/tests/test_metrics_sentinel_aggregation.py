@@ -172,6 +172,20 @@ def test_derived_ratio_numerator_and_denominator_aligned():
   assert pct == pytest.approx(50.0, rel=1e-12)
 
 
+def test_static_event_in_a_sum_is_absent_not_a_gap():
+  """tx NOT_PRESENT for the whole job while rx is valid: the counter does not
+  exist there, so the fold sums rx alone (same rule as the per-sample sum),
+  instead of gapping every sample and dropping the host."""
+  rows = []
+  for h in _HOSTS:
+    rows += _counter(h, "host_ib", "port_rcv_data", 10.0)
+    gap = dict.fromkeys(range(_MIN + 1), -2) if h == "c1.x" else None
+    rows += _counter(h, "host_ib", "port_xmit_data", 30.0, sentinels=gap)
+  value, sink = _fold(_table(rows))
+  assert value == pytest.approx((10.0 + 3 * 40.0) / 4, rel=1e-12)
+  assert sink == [] or not sink[0].excluded
+
+
 def test_static_host_excluded_from_mean_with_host_note():
   """1 of 4 hosts NOT_PRESENT: mean of 3 hosts, note "excluded hosts 1/4"."""
   rows = []
