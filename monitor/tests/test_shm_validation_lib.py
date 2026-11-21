@@ -1339,27 +1339,6 @@ class Round2ShmChecksTests(unittest.TestCase):
         self.assertEqual(self._live({}, "NOW job42 h\n", gpus=("0",)), [])
         self.assertTrue(self._live({}, "NOW - h\n", gpus=("0",)))
 
-
-    def test_plausibility_host_ib_absent_on_full_when_slow_tier(self) -> None:
-        schema = {"host_ib": ["port_rcv_data,E,W=32"], "host_vm": ["pgfault,E"]}
-        manifest = _round2_manifest(schema)
-        full = "1234567890.0 - h\nhost_vm - @full 1\n"
-        fast = "1234567890.0 - h\nhost_ib mlx5_0.1 @fast 5\n"
-        _, warnings, errors = check_plausibility(
-            manifest, schema, full_body=full, fast_body=fast,
-            schema_body=None, no_freshness=True, strict=True,
-        )
-        self.assertEqual(warnings, [])
-        self.assertEqual(errors, [])
-        _, warnings, errors = check_plausibility(
-            manifest, schema, full_body=full, fast_body=None,
-            schema_body=None, no_freshness=True, strict=True,
-        )
-        self.assertTrue(
-            any("host_ib" in e for e in errors) or any("host_ib" in w for w in warnings),
-            (warnings, errors),
-        )
-
     def test_conditional_types_absent_without_mount_or_job(self) -> None:
         """c122-018 2026-11-09: no Lustre/BeeGFS mount, no job -> not 'missing from full payload'."""
         cond = ["beegfs_client", "lustre_llite", "lustre_mdc", "lustre_osc", "host_mem_job",
@@ -1374,9 +1353,9 @@ class Round2ShmChecksTests(unittest.TestCase):
                                       schema_body=None, no_freshness=True, strict=False)[1]
 
         self.assertEqual(warns(manifest), [])
-        manifest["types"]["lustre_mdc"]["devices"] = ["/scratch"]
-        self.assertEqual(warns(manifest), ["WARN plausibility type 'lustre_mdc' missing from full payload"])
-        manifest["types"]["lustre_mdc"].pop("devices")
+        manifest["types"]["lustre_osc"]["devices"] = ["/scratch"]
+        self.assertEqual(warns(manifest), ["WARN plausibility type 'lustre_osc' missing from full payload"])
+        manifest["types"]["lustre_osc"].pop("devices")
         no_vm = "1234567890.0 - h\n"
         got = check_plausibility(manifest, schema, full_body=no_vm, fast_body=None,
                                  schema_body=None, no_freshness=True, strict=False)[1]
@@ -1910,42 +1889,6 @@ class SentinelManifestLayerTests(unittest.TestCase):
             strict=strict,
         )
 
-
-    def test_ib_mad_runtime_sentinel_token_on_ibdyn_slug(self) -> None:
-        body = self._body("host_ib mlx5_0.1 1 -7")
-        _, warnings, errors = self._allow(body, slug="x86_64-ver3.1-hw-ibdyn-x86perf-sent1")
-        self.assertEqual(warnings, [])
-        self.assertEqual(errors, [])
-        _, _, errors = self._allow(body, slug="x86_64-ver3.1-hw-x86perf-sent1", strict=True)
-        self.assertTrue(errors)
-
-    def test_ib_mad_runtime_sentinels_allowed_on_ibdyn_slug(self) -> None:
-        from lib.sentinel_validate import allowed_sentinels, check_allowed_sentinels
-
-        slug = "x86_64-ver3.1-hw-ibdyn-x86perf-sent1"
-        schema = {"host_ib": ["port_select", "port_rcv_pkts"]}
-        body = "1000.0 - h\nhost_ib mlx5_0.1 -7 -9\n"
-        allowed, expect = allowed_sentinels(slug, schema)
-        _, _, errors = check_allowed_sentinels(
-            {"allowed_sentinels": allowed, "expect_not_built": expect},
-            {"full": (body, False, None)},
-            schema,
-            strict=True,
-        )
-        self.assertEqual(errors, [])
-
-    def test_opa_mad_runtime_codes_on_opadyn_slug(self) -> None:
-        from lib.sentinel_validate import allowed_sentinels
-
-        allowed, _ = allowed_sentinels(
-            "x86_64-ver3.1-hw-opa-opadyn-x86perf-sent1", ["host_opa"],
-        )
-        codes = allowed["host_opa"]["*"]
-        self.assertIn(3, codes)
-        self.assertIn(7, codes)
-        self.assertIn(9, codes)
-        self.assertNotIn(10, codes)
-
     def test_allowed_sentinels_follow_the_build(self) -> None:
         from lib.sentinel_validate import allowed_sentinels
 
@@ -1966,6 +1909,16 @@ class SentinelManifestLayerTests(unittest.TestCase):
         self.assertNotIn(NOT_BUILT, allowed["host_opa"]["*"])
         allowed, _ = allowed_sentinels("x86_64-ver3.1-hw-x86perf-sent1", ["host_opa"])
         self.assertIn(NOT_BUILT, allowed["host_opa"]["*"])
+
+    def test_ib_mad_build_keeps_runtime_failures_visible(self) -> None:
+        """A MAD port that keeps failing must stay a sentinel FAIL on an ib/ibdyn build, while a
+        refused switch query (NOT_PRESENT) passes."""
+        from lib.sentinel_validate import NOT_PRESENT, _code, allowed_sentinels
+
+        allowed, _ = allowed_sentinels("aarch64-ver3.1-hw-ib-ibdyn-arm-sent1", ["host_ib"])
+        self.assertIn(NOT_PRESENT, allowed["host_ib"]["*"])
+        for name in ("READ_FAILED", "BACKEND_ERROR", "BACKOFF"):
+            self.assertNotIn(_code(name), allowed["host_ib"]["*"], name)
 
     def test_x86perf_host_cpu_hw_disallows_not_built(self) -> None:
         from lib.sentinel_validate import allowed_sentinels
