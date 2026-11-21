@@ -551,7 +551,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 | Task | Command |
 |------|---------|
 | Build and start container stack | `podman-compose -p hpcperfstats up --build -d` |
-| Stop and remove containers | `podman-compose -p hpcperfstats down` |
+| Stop and remove containers | `podman-compose -p hpcperfstats --profile pg18-migrate down` (the profile keeps `db_pg18` in the graceful stop; without it `db_pg18` is SIGKILLed mid shutdown checkpoint) |
 | Existing-stack rebuilds / Valkey / PG18 / INI | **[docs/upgrade.md](docs/upgrade.md)** |
 | Restart proxy after cert renew or `server=` change | `docker compose restart proxy` |
 | View logs  | `podman-compose -p hpcperfstats logs` |

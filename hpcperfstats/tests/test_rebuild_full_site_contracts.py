@@ -37,7 +37,10 @@ def test_rebuild_full_site_compose_down_before_up() -> None:
   assert "HPCPERFSTATS_COMPOSE_DOWN_TIMEOUT:-30" not in script
   assert "up -d --force-recreate" not in script
   assert "up -d --no-build" in script
-  assert "--profile" not in script.replace("--profile-phase", "")
+  # db_pg18 must stay unstarted: only the down command may name its profile.
+  assert not any(
+    "--profile" in line and " up " in line for line in script.splitlines()
+  )
   assert "PG18_PROFILE" not in script
   down_pos = script.index("compose_down_project")
   up_pos = script.index("compose_up_project_stack()")
@@ -75,10 +78,45 @@ def test_rebuild_full_site_builds_but_does_not_start_db_pg18() -> None:
   assert "db_pg18" not in required
 
 
-def _postgres_socket_check_fn() -> str:
+def _script_fn(name: str) -> str:
   script = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
-  start = script.index("verify_postgres_socket_shared() {")
+  start = script.index(f"{name}() {{")
   return script[start : script.index("\n}\n", start) + 3]
+
+
+def test_rebuild_full_site_down_stops_db_pg18_gracefully(
+  tmp_path: Path,
+) -> None:
+  """Regression: down without the profile SIGKILLed db_pg18 mid checkpoint.
+
+  podman-compose leaves profile services out of its graceful
+  ``stop -t <stop_grace_period>`` list; --remove-orphans then ran a bare
+  ``podman stop`` at podman's default timeout on db_pg18.
+  """
+  import subprocess
+
+  log = tmp_path / "calls.log"
+  prog = (
+    "set -euo pipefail\n"
+    'fake_compose() { echo "$@" >> "$FAKE_LOG"; }\n'
+    "PODMAN_COMPOSE=(fake_compose -p hpcperfstats)\n"
+    "DRY_RUN=0\n"
+    "pipeline_supervisor_shutdown() { :; }\n"
+    + _script_fn("run_cmd")
+    + _script_fn("compose_down_project")
+    + "compose_down_project\n"
+  )
+  proc = subprocess.run(
+    ["bash", "-c", prog],
+    capture_output=True,
+    text=True,
+    env={"FAKE_LOG": str(log), "PATH": "/usr/bin:/bin"},
+    check=False,
+  )
+  assert proc.returncode == 0, proc.stderr
+  assert log.read_text() == (
+    "-p hpcperfstats --profile pg18-migrate down --remove-orphans\n"
+  )
 
 
 def _run_socket_check(tmp_path: Path, missing_in: str) -> tuple[int, str]:
@@ -103,7 +141,7 @@ def _run_socket_check(tmp_path: Path, missing_in: str) -> tuple[int, str]:
     "compose_service_container_name() { printf '%s_%s_1' "
     '"${HPCPERFSTATS_COMPOSE_PROJECT}" "$1"; }\n'
     "sleep() { :; }\n"
-    + _postgres_socket_check_fn()
+    + _script_fn("verify_postgres_socket_shared")
     + "verify_postgres_socket_shared\n"
   )
   proc = subprocess.run(

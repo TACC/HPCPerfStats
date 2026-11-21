@@ -45,11 +45,12 @@ Build default-stack images and hpcperfstats-db (db_pg18 image), then tear down
 the compose project (graceful stop, preserve volumes) and start the default stack.
 The db_pg18 container (profile pg18-migrate) is built but NOT started:
 
-  podman-compose down --remove-orphans
+  podman-compose --profile pg18-migrate down --remove-orphans
   podman-compose up -d --no-build
 
 Down uses each service stop_grace_period from compose (do not pass down -t; a global
 timeout overrides longer db/rabbitmq/pg18 grace and risks SIGKILL mid-shutdown).
+--profile pg18-migrate keeps db_pg18 in that graceful stop instead of orphan cleanup.
 
 Bind volume guard (scripts/lib/compose_bind_volume_guard.sh): between down and up,
 missing o=bind volumes are created with their device: options and existing ones
@@ -211,7 +212,9 @@ compose_down_project() {
   pipeline_supervisor_shutdown
   LAST_STEP="podman-compose down --remove-orphans"
   echo "rebuild_full_site.sh: ${LAST_STEP} (volumes preserved; no -v; stop_grace_period from compose) ..."
-  run_cmd "${PODMAN_COMPOSE[@]}" down --remove-orphans
+  # db_pg18 sits behind profile pg18-migrate: without it, down stops db_pg18 as an
+  # orphan at podman's default stop timeout and SIGKILLs its shutdown checkpoint.
+  run_cmd "${PODMAN_COMPOSE[@]}" --profile pg18-migrate down --remove-orphans
 }
 
 compose_up_project_stack() {
