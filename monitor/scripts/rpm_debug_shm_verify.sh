@@ -319,13 +319,13 @@ run_extra_check() {
 # run_canary_checks PY RESULTS SHM_DIR: the standalone counter checks that run unattended as root in
 # bounded time (README "Correctness check inventory").
 run_canary_checks() {
-  local py="$1" results="$2" shm_dir="$3" class grace=0 scf=0 x86 idle_pmu=0
+  local py="$1" results="$2" shm_dir="$3" class grace=0 scf=0 x86=0 idle_pmu=0
   class="$("${py}" "${SCRIPT_DIR}/lib/counter_accuracy.py" arch --field class)" || class=other
   test "${class}" != grace || grace=1
   if test "${grace}" = 1 && ls -d /sys/bus/event_source/devices/nvidia_scf_pmu_* >/dev/null 2>&1; then
     scf=1
   fi
-  x86="$(test "${class}" = intel || test "${class}" = amd && echo 1)"
+  case "${class}" in intel | amd) x86=1 ;; esac
   # The running daemon's direct-perf reader holds the core FP counters (every perf_raw_flops
   # event reads <not counted>), so that canary runs with the service stopped.
   if test "${x86}" = 1 && env_flag_on "${PERF_RAW_FLOPS_CHECK:-1}"; then

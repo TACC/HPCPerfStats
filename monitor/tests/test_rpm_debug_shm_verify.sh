@@ -211,4 +211,27 @@ run_fn wait_full_payload "${fake}/shm" 2 >/dev/null \
 run_fn wait_full_payload "${fake}/shm/missing" 0 \
   || { echo "wait_full_payload 0 must not wait" >&2; exit 1; }
 
+# run_canary_checks under the script's set -euo pipefail: on a non-x86 class (Grace) the x86
+# test must not abort the run (c122-018 2026-11-21: every canary after counter accuracy came out
+# "not reached" and verify exited 1 with no FAIL).
+for cls in grace amd; do
+  printf '#!/bin/sh\necho %s\n' "${cls}" > "${fake}/arch_py"
+  chmod +x "${fake}/arch_py"
+  : > "${fake}/canary_${cls}.tsv"
+  # A plain statement, not an `if` / `||` condition: bash ignores set -e inside conditions,
+  # which would hide exactly the abort this checks for.
+  set +e
+  (PERF_RAW_FLOPS_CHECK=0 PMU_SHARING_CHECK=0 FP_SLICES_CHECK=0 SCF_PERF_CHECK=0 \
+    run_fn run_canary_checks "${fake}/arch_py" "${fake}/canary_${cls}.tsv" "${fake}/shm" \
+    >"${fake}/canary_${cls}.log" 2>&1)
+  rc=$?
+  set -e
+  if test "${rc}" -ne 0; then
+    echo "run_canary_checks aborted (rc ${rc}) for arch ${cls}" >&2
+    cat "${fake}/canary_${cls}.log" >&2; exit 1
+  fi
+  grep -q 'fp_slices' "${fake}/canary_${cls}.tsv" \
+    || { echo "run_canary_checks stopped before fp_slices for arch ${cls}" >&2; exit 1; }
+done
+
 echo "test_rpm_debug_shm_verify passed"
