@@ -161,6 +161,36 @@ static void test_fault_inject_table(void)
   assert(stats_fault_inject_fired(5) == 0);
 }
 
+/* fault_fired lists each entry as configured with its fire count; 0 marks a point never reached,
+ * which the live checker reports as a NOTE. */
+static void test_fault_inject_report_counts_fires(void)
+{
+  char *text = NULL;
+  size_t len = 0;
+  FILE *mem;
+  int err = 0;
+
+  assert(stats_fault_inject_set("open:/proc/stat!13@1+2,dcgm_fetch@1+3") == 2);
+  assert(!STATS_FAULT("open", "/proc/stat", &err));
+  stats_fault_inject_tick();
+  assert(STATS_FAULT("open", "/proc/stat", &err));
+  mem = open_memstream(&text, &len);
+  assert(mem != NULL);
+  assert(stats_fault_inject_report(mem) == 2);
+  assert(fclose(mem) == 0);
+  assert(strcmp(text, "open:/proc/stat!13@1+2 1\ndcgm_fetch@1+3 0\n") == 0);
+  free(text);
+
+  text = NULL;
+  assert(stats_fault_inject_set("open@0") == -1); /* a rejected spec leaves no entries */
+  mem = open_memstream(&text, &len);
+  assert(mem != NULL);
+  assert(stats_fault_inject_report(mem) == 0);
+  assert(fclose(mem) == 0);
+  assert(len == 0);
+  free(text);
+}
+
 /* Opens dfd/name without following links and asserts mode 0600 on the opened fd. */
 static int open_mode_0600(int dfd, const char *name)
 {
@@ -171,14 +201,25 @@ static int open_mode_0600(int dfd, const char *name)
   return fd;
 }
 
+/* Reads dfd/name (mode 0600, no link follow) into buf and removes it. */
+static void read_and_unlink_0600(int dfd, const char *name, char *buf, size_t size)
+{
+  FILE *f = fdopen(open_mode_0600(dfd, name), "r");
+  size_t n;
+
+  assert(f != NULL);
+  n = fread(buf, 1, size - 1, f);
+  buf[n] = '\0';
+  fclose(f);
+  assert(unlinkat(dfd, name, 0) == 0);
+}
+
 static void test_shm_files(void)
 {
   char dir[96];
   int dfd;
   char *buf;
-  FILE *f;
   char got[4096];
-  size_t n;
 
   snprintf(dir, sizeof(dir), "/dev/shm/hps_test_sentinels_%ld", (long)getpid());
   if (access("/dev/shm", W_OK) != 0) {
@@ -187,21 +228,25 @@ static void test_shm_files(void)
   }
   setenv("HPCPERFSTATS_DEBUG_SHM_DIR", dir, 1);
   stats_buffer_debug_shm_init();
+  assert(stats_fault_inject_set("dcgm_fetch@1+3") == 1);
   stats_sentinel_debug_write_shm();
 
   dfd = open(dir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
   assert(dfd >= 0);
-  f = fdopen(open_mode_0600(dfd, "sentinels"), "r");
-  assert(f != NULL);
-  n = fread(got, 1, sizeof(got) - 1, f);
-  got[n] = '\0';
-  fclose(f);
+  read_and_unlink_0600(dfd, "sentinels", got, sizeof(got));
   buf = render();
   assert(strcmp(got, buf) == 0);
   free(buf);
-  assert(unlinkat(dfd, "sentinels", 0) == 0);
+  read_and_unlink_0600(dfd, "sentinel_sites", got, sizeof(got));
+  read_and_unlink_0600(dfd, "fault_fired", got, sizeof(got));
+  assert(strcmp(got, "dcgm_fetch@1+3 0\n") == 0);
 
-  close(open_mode_0600(dfd, "sentinel_sites"));
+  /* An empty table still writes the file, so a stale run's counts never survive a restart. */
+  assert(stats_fault_inject_set(NULL) == 0);
+  stats_sentinel_debug_write_shm();
+  read_and_unlink_0600(dfd, "fault_fired", got, sizeof(got));
+  assert(got[0] == '\0');
+  assert(unlinkat(dfd, "sentinels", 0) == 0);
   assert(unlinkat(dfd, "sentinel_sites", 0) == 0);
   close(dfd);
   assert(rmdir(dir) == 0);
@@ -227,6 +272,7 @@ int main(int argc, char **argv)
   test_all_forms_note_only_unset_keys(s);
   test_site_registry_counts_hits();
   test_fault_inject_table();
+  test_fault_inject_report_counts_fires();
   test_shm_files();
   stats_type_destroy(&g_type);
   printf("test_debug_shm_sentinels passed\n");

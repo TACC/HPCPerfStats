@@ -361,6 +361,19 @@ want fp_slices SKIP
 want fault_inject NOT_RUN
 grep -q 'no perf' "${RES}" || fail "NOT_RUN reason lost: $(cat "${RES}")"
 
+# --- fault_inject_verify.sh output -> status: the checker's NOT_RUN line (no planned fault
+# point reached, e.g. dcgm_fetch on an NVML+GPM node) is NOT_RUN, not PASS ---
+for c in "PASS 0 fault_inject: PASS (0 failure(s))" "FAIL 1 fault_inject: FAIL (1 failure(s))" \
+  "NOT_RUN 0 fault_inject: NOT_RUN (no planned fault point was reached on this node)" \
+  "SKIP 0 SKIP: fault injection (FAULT_INJECT=0)"; do
+  RES="${T}/fi.tsv"
+  : >"${RES}"
+  printf '%s\n' "${c#* * }" >"${T}/fi.out"
+  bash -c '. "$1"; record_fault_inject "$2" "$3" "$4"' _ "${VERIFY}" "${RES}" "${T}/fi.out" \
+    "$(echo "${c}" | cut -d' ' -f2)" >"${T}/fi.log" 2>&1 || fail "record_fault_inject: $(cat "${T}/fi.log")"
+  want fault_inject "${c%% *}"
+done
+
 "${PY}" "${ROOT}/tests/test_counter_accuracy_lib.py" >"${T}/py.log" 2>&1 ||
   fail "test_counter_accuracy_lib.py: $(tail -n 20 "${T}/py.log")"
 "${PY}" "${ROOT}/tests/test_correctness_summary.py" >"${T}/py.log" 2>&1 ||

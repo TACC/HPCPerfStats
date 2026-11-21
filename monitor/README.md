@@ -380,7 +380,8 @@ so an emitted `0` always means "read, and the counter was 0". Codes come from th
 - **DEBUG provenance** (`--enable-debug` only): every `stats_set_missing*` call site registers in
   a linker-section registry; `/dev/shm/hpcperfstatsd-debug/sentinels` lists each non-OK key as
   `type dev key code slug errno site first_ts last_ts count`, `sentinel_sites` lists every site
-  with its hit count, and each state transition is logged once. `debug_fault_inject` in the conf
+  with its hit count, `fault_fired` lists each configured `debug_fault_inject` entry as
+  `<entry> <fires>` (empty without one), and each state transition is logged once. `debug_fault_inject` in the conf
   forces failures at the fault points `open`, `opendir` (I/O primitives), `perf_open` (event
   name), `mad_query` (HCA), `dcgm_fetch`, `hwmon_read` (meter name), `scandir` (host_proc),
   `statfs` (host_tmpfs) and `net_rebuild_slow` (host_net), as
@@ -400,6 +401,15 @@ so an emitted `0` always means "read, and the counter was 0". Codes come from th
   back after release (where the read path does not latch), bridgeable gaps keep counters
   monotonic, and every site in `sentinel_sites` fired: a never-fired site is a NOTE when make check
   forces its file (`fault_ci_files.py`) or its collector is not active on the node, else FAIL.
+  The plan counts collect cycles; with the slow tier a cycle writes either `fast` or `full`, so
+  the capture reads both mirrors, numbers their samples by header timestamp, and a code counts
+  when either mirror shows it inside the entry's window (a one-cycle fault often lands only in
+  `fast`); the resume check reads the first `fast` and the first `full` sample after release (the
+  slow-tier keys come back only in `full`). A planned point that `fault_fired` reports with 0
+  fires (for example `dcgm_fetch` when NVML+GPM serves Hopper / Blackwell GPUs) is a NOTE, not a
+  FAIL; an older daemon without `fault_fired` keeps the FAIL. When no planned point fired at all
+  the layer is `NOT_RUN` (`fault_inject: NOT_RUN` line, `fault_inject` check `NOT_RUN` in the
+  campaign JSON).
 - **Release log**: the hourly status adds `sentinels: SLUG=n ...` (tokens emitted per code since
   the last hour; `sentinels: none` when there were none).
 - **Error-path lint**: `scripts/check_sentinel_error_paths.py src` (in `make check`) flags
@@ -618,6 +628,7 @@ outbound payloads** under **`/dev/shm/hpcperfstatsd-debug/`**:
 | `fast` | Latest `@fast` sample (one payload) |
 | `full` | Latest `@full` (or legacy full-width) sample (one payload) |
 | `fast.burst` / `full.burst` | **All** payloads from the latest sample tick, concatenated (shared-node: N jid + host `-`) |
+| `sentinels` / `sentinel_sites` / `fault_fired` | Value-sentinel provenance, failure-site hit counts and `debug_fault_inject` fire counts (see **DEBUG provenance** under value sentinels) |
 
 On **shared-node** builds (`--enable-shared-node-multi-jid`), a multi-jid sample
 burst emits N jid payloads plus one node-wide `-` payload. DEBUG shm keeps the

@@ -2710,47 +2710,142 @@ class FaultInjectScheduleTests(unittest.TestCase):
         self.assertGreater(fic.fault_window(opendir)[0], fic.resume_index(mad))
         self.assertEqual(fic.capture_count(plan), fic.fault_window(opendir)[1])
 
-    def _capture(self, td: Path, rows: list[str]) -> Path:
+    def _capture(self, td: Path, rows: list[str], kind_of=None, fired: str | None = None) -> Path:
+        """One sample per collect cycle 30 s apart, `full` unless kind_of(i) says `fast`; with a
+        kind_of the rows carry tier markers (slow tier on), without it they are legacy rows."""
         cap = td / "cap"
         cap.mkdir()
         (cap / "schema").write_text("$hpcperfstats 3.1\n$hostname h1\n$sentinels 1\n!host_ib "
                                     + " ".join(self.IB_SCHEMA) + "\n", encoding="utf-8")
-        (cap / "baseline").write_text("1.0 j1 h1\nhost_ib mlx5_0.1 5 6\n", encoding="utf-8")
+        for kind in ("fast", "full") if kind_of else ("full",):
+            tier = f" @{kind}" if kind_of else ""
+            (cap / f"baseline.{kind}").write_text(f"1.0 j1 h1\nhost_ib mlx5_0.1{tier} 5 6\n",
+                                                 encoding="utf-8")
         for i, row in enumerate(rows):
-            (cap / f"t{i}").write_text(f"{i + 2}.0 j1 h1\nhost_ib mlx5_0.1 {row}\n", encoding="utf-8")
+            kind = kind_of(i) if kind_of else "full"
+            tier = f" @{kind}" if kind_of else ""
+            (cap / f"t{i}.{kind}").write_text(f"{100 + 30 * i}.0 j1 h1\nhost_ib mlx5_0.1{tier} {row}\n",
+                                              encoding="utf-8")
+        if fired is not None:
+            (cap / "fault_fired").write_text(fired, encoding="utf-8")
         return cap
 
-    def _check(self, rows_for) -> list[str]:
+    def _check(self, rows_for, kind_of=None, plan=None, fired=None) -> tuple[list[str], list[str]]:
         import fault_inject_check as fic
 
-        plan = [e for e in self._ib_plan() if e["type"] == "host_ib"]
-        manifest = {"enable_slow_tier": False,
+        plan = plan or [e for e in self._ib_plan() if e["type"] == "host_ib"]
+        manifest = {"enable_slow_tier": kind_of is not None,
                     "types": {"host_ib": {"schema_keys": self.IB_SCHEMA}}}
-        rows = [rows_for(i, plan) for i in range(fic.capture_count(plan))]
+        rows = [rows_for(i, plan) for i in range(fic.capture_count(plan) + 1)]
         with tempfile.TemporaryDirectory() as td:
-            _, errors = fic.check(plan, manifest, self._capture(Path(td), rows), sample_freq=30.0)
-        return errors
+            return fic.check(plan, manifest, self._capture(Path(td), rows, kind_of, fired),
+                             sample_freq=30.0)
+
+    @staticmethod
+    def _staggered(i: int, plan: list[dict]) -> str:
+        import fault_inject_check as fic
+
+        mad, opendir = plan
+        if fic.fault_window(opendir)[0] < i:  # the walk failed, then the latch: NOT_PRESENT
+            return "-3 -3" if i == opendir["delay"] else "-2 -2"
+        return "5 -7" if mad["delay"] <= i < mad["delay"] + mad["ticks"] else "5 6"
 
     def test_check_passes_the_staggered_ib_schedule(self) -> None:
-        import fault_inject_check as fic
-
-        def rows(i: int, plan: list[dict]) -> str:
-            mad, opendir = plan
-            if fic.fault_window(opendir)[0] < i:  # the walk failed, then the latch: NOT_PRESENT
-                return "-3 -3" if i == opendir["delay"] else "-2 -2"
-            return "5 -7" if mad["delay"] <= i < mad["delay"] + mad["ticks"] else "5 6"
-
-        self.assertEqual(self._check(rows), [])
+        self.assertEqual(self._check(self._staggered)[1], [])
 
     def test_check_fails_when_the_walk_failure_carries_no_code(self) -> None:
         def rows(i: int, plan: list[dict]) -> str:
             mad = plan[0]
             return "5 -7" if mad["delay"] <= i < mad["delay"] + mad["ticks"] else "5 6"
 
-        errors = self._check(rows)
+        errors = self._check(rows)[1]
         self.assertEqual(len(errors), 1)
         self.assertTrue(errors[0].startswith("FAIL fault_inject opendir:/sys/class/infiniband@"))
         self.assertTrue(errors[0].endswith("no host_ib key carried READ_FAILED"))
+
+    def test_opendir_read_failed_only_in_a_fast_sample_passes(self) -> None:
+        # Regression (c317-016, c561-009 2026-11-21): with the slow tier the one opendir cycle
+        # was fast-only, so READ_FAILED landed in `fast` while the capture read only `full`
+        # (which by then showed the latch's NOT_PRESENT): "no host_ib key carried READ_FAILED".
+        plan = [e for e in self._ib_plan() if e["type"] == "host_ib"]
+        opendir_cycle = plan[1]["delay"]
+
+        def kind_of(i: int) -> str:
+            return "fast" if (i - opendir_cycle) % 2 == 0 else "full"
+
+        notes, errors = self._check(self._staggered, kind_of)
+        self.assertEqual(errors, [])
+        self.assertTrue(any(n.startswith("PASS fault_inject opendir:") for n in notes), notes)
+
+    def test_resume_reads_the_first_full_sample_after_release(self) -> None:
+        # Slow-tier keys show up only in `full`: a code still on a key in the first full sample
+        # after release FAILs even when the fast samples around it carry values again.
+        mad = self._ib_plan()[0]
+
+        def kind_of(i: int) -> str:
+            return "full" if i % 2 else "fast"
+
+        def rows(i: int, _plan: list[dict]) -> str:
+            stuck = kind_of(i) == "full" and i >= mad["delay"]
+            return "5 -7" if stuck or mad["delay"] <= i < mad["delay"] + mad["ticks"] else "5 6"
+
+        errors = self._check(rows, kind_of, plan=[mad])[1]
+        self.assertEqual(len(errors), 1, errors)
+        self.assertTrue(errors[0].startswith(f"FAIL fault_inject {mad['spec']}: no value after release"))
+
+    def test_sample_cycles_count_from_header_timestamps(self) -> None:
+        # A cycle the capture has no sample for does not shift the later cycles.
+        import fault_inject_check as fic
+
+        self.assertEqual(fic.sample_cycles([100.0, 130.2, 159.9, 220.1, 250.0]), [0, 1, 2, 4, 5])
+        self.assertEqual(fic.sample_cycles([5.0]), [0])
+
+    def test_fault_point_never_reached_is_a_note(self) -> None:
+        # Regression (c561-009 2026-11-21, H100): NVML+GPM serves the GPUs, so the dcgm_fetch
+        # point never runs and "no nvidia_gpu key carried BACKEND_ERROR" failed the layer.
+        mad = self._ib_plan()[0]
+        notes, errors = self._check(lambda i, p: "5 6", plan=[mad],
+                                    fired=f"{mad['spec']} 0\nother@1 4\n")
+        self.assertEqual(errors, [])
+        self.assertIn(f"NOTE fault_inject {mad['spec']}: fault point not reached on this node (0 fires)",
+                      notes)
+
+    def test_fault_point_that_fired_without_its_code_fails(self) -> None:
+        mad = self._ib_plan()[0]
+        for fired in (f"{mad['spec']} 3\n", None):  # None: older daemon, no fault_fired file
+            errors = self._check(lambda i, p: "5 6", plan=[mad], fired=fired)[1]
+            self.assertEqual(errors, [f"FAIL fault_inject {mad['spec']}: no host_ib key carried "
+                                      "BACKEND_ERROR/BACKOFF"])
+
+    def test_layer_is_not_run_when_no_planned_point_was_reached(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        import fault_inject_check as fic
+
+        plan = [e for e in self._ib_plan() if e["type"] == "nvidia_gpu"]
+        manifest = {"enable_slow_tier": False, "types": {"nvidia_gpu": {"schema_keys": ["gpu_util,"]}}}
+        for fired, want, want_rc in (("dcgm_fetch@1+3 0\n", "fault_inject: NOT_RUN", 0),
+                                     ("dcgm_fetch@1+3 3\n", "fault_inject: FAIL", 1)):
+            with tempfile.TemporaryDirectory() as td:
+                cap = Path(td) / "cap"
+                cap.mkdir()
+                (cap / "schema").write_text("$hpcperfstats 3.1\n$sentinels 1\n!nvidia_gpu gpu_util,\n",
+                                            encoding="utf-8")
+                (cap / "baseline.full").write_text("1.0 j1 h1\nnvidia_gpu 0 5\n", encoding="utf-8")
+                for i in range(fic.capture_count(plan)):
+                    (cap / f"t{i}.full").write_text(f"{10 + i}.0 j1 h1\nnvidia_gpu 0 5\n",
+                                                    encoding="utf-8")
+                (cap / "sentinel_sites").write_text("ps.c:54 1\n", encoding="utf-8")
+                (cap / "fault_fired").write_text(fired, encoding="utf-8")
+                (Path(td) / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+                (Path(td) / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    rc = fic.main(["check", "--plan", str(Path(td) / "plan.json"), "--manifest",
+                                   str(Path(td) / "manifest.json"), "--capture-dir", str(cap)])
+            self.assertTrue(out.getvalue().strip().splitlines()[-1].startswith(want), out.getvalue())
+            self.assertEqual(rc, want_rc)
 
 
 class EmitBuildCapabilitiesFleetTests(unittest.TestCase):

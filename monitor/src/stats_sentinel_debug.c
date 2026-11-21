@@ -17,11 +17,13 @@
 #define STATS_FAULT_MAX 16
 #define STATS_FAULT_POINT_MAX 32
 #define STATS_FAULT_SUBJECT_MAX 128
+#define STATS_FAULT_SPEC_MAX (STATS_FAULT_POINT_MAX + STATS_FAULT_SUBJECT_MAX + 32)
 
 extern struct stats_sentinel_site *__start_stats_sentinel_sites[] __attribute__((weak));
 extern struct stats_sentinel_site *__stop_stats_sentinel_sites[] __attribute__((weak));
 
 struct stats_fault {
+  char spec[STATS_FAULT_SPEC_MAX]; /* the entry as configured, for the fault_fired file */
   char point[STATS_FAULT_POINT_MAX];
   char subject[STATS_FAULT_SUBJECT_MAX];
   int err;
@@ -231,30 +233,44 @@ size_t stats_sentinel_sites_report(FILE *out)
   return never;
 }
 
+size_t stats_fault_inject_report(FILE *out)
+{
+  for (int i = 0; i < g_nfaults; i++)
+    fprintf(out, "%s %lu\n", g_faults[i].spec, g_faults[i].fired);
+  return (size_t)g_nfaults;
+}
+
+/* Render `report` into memory and write it as the shm file `name`. */
+static void stats_sentinel_debug_write_report(const char *name, size_t (*report)(FILE *))
+{
+  char *text = NULL;
+  size_t len = 0;
+  FILE *mem = open_memstream(&text, &len);
+
+  if (mem == NULL)
+    return;
+  (void)report(mem);
+  if (fclose(mem) == 0)
+    stats_buffer_debug_shm_write_file(name, text, len);
+  free(text);
+}
+
 void stats_sentinel_debug_write_shm(void)
 {
   size_t len = 0;
   char *buf = stats_sentinel_debug_render(&len);
-  char *sites = NULL;
-  size_t sites_len = 0;
-  FILE *mem;
 
   if (buf != NULL)
     stats_buffer_debug_shm_write_file("sentinels", buf, len);
   free(buf);
-  mem = open_memstream(&sites, &sites_len);
-  if (mem == NULL)
-    return;
-  (void)stats_sentinel_sites_report(mem);
-  if (fclose(mem) == 0)
-    stats_buffer_debug_shm_write_file("sentinel_sites", sites, sites_len);
-  free(sites);
+  stats_sentinel_debug_write_report("sentinel_sites", stats_sentinel_sites_report);
+  stats_sentinel_debug_write_report("fault_fired", stats_fault_inject_report);
 }
 
 /* One "point[:subject][!errno][@[delay+]ticks]" entry; returns -1 when malformed. */
 static int stats_fault_parse_entry(const char *entry, size_t n, struct stats_fault *f)
 {
-  char tmp[STATS_FAULT_POINT_MAX + STATS_FAULT_SUBJECT_MAX + 32];
+  char tmp[STATS_FAULT_SPEC_MAX];
   char *at;
   char *plus;
   char *bang;
@@ -266,6 +282,7 @@ static int stats_fault_parse_entry(const char *entry, size_t n, struct stats_fau
   memcpy(tmp, entry, n);
   tmp[n] = '\0';
   memset(f, 0, sizeof(*f));
+  memcpy(f->spec, tmp, n + 1);
   f->err = EIO;
   f->ticks = -1;
   if ((at = strrchr(tmp, '@')) != NULL) {

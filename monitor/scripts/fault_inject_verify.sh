@@ -3,10 +3,12 @@
 #
 # Restarts the daemon with `debug_fault_inject <spec>` appended to its conf (every injectable
 # point this node has, for FAULT_INJECT_TICKS collect cycles after one clean cycle; the IB
-# opendir fault last, see fault_inject_check.py), captures the samples the plan needs, restores
-# the conf and restarts again, then runs scripts/fault_inject_check.py: codes on
-# exactly the planned keys, values back after release, bridge validity, and every registered
-# failure site fired (NOTE for sites whose collector is not active on this node).
+# opendir fault last, see fault_inject_check.py), captures the `fast` and `full` samples of the
+# collect cycles the plan needs plus fault_fired, restores the conf and restarts again, then runs
+# scripts/fault_inject_check.py: codes on exactly the planned keys, values back after release,
+# bridge validity, and every registered failure site fired (NOTE for sites whose collector is not
+# active on this node, and for a planned point the daemon never reached). Its last line is
+# `fault_inject: PASS|FAIL|NOT_RUN (...)`; NOT_RUN (no planned point reached) exits 0.
 #
 # Required env: CAPS, MANIFEST, SHM_DIR, PY. Optional: FAULT_INJECT (default 1; 0 = SKIP),
 # FAULT_INJECT_CONF (default HPCPERFSTATS_CONF or /etc/hpcperfstats/hpcperfstats.conf),

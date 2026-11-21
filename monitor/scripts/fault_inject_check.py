@@ -3,17 +3,23 @@
 
 plan     pick the injectable fault points this node has, write the plan JSON and print the
          debug_fault_inject spec (empty when none applies)
-capture  copy the current shm sample as the baseline, run the restart command, then copy as
-         many consecutive samples as the plan needs and the sentinel_sites file
+capture  copy the current `fast` / `full` samples as baselines, run the restart command, then
+         copy every new sample of either mirror until the plan's cycles are covered, plus the
+         sentinel_sites and fault_fired files
 check    the forced codes appear on exactly the planned keys, values resume after release
          where the read path does not latch, bridgeable gaps keep their counters monotonic,
-         and every registered failure site fired unless its collector is inactive here
+         and every registered failure site fired unless its collector is inactive here; a
+         planned point with 0 fires in fault_fired is a NOTE
 
-Sample i of a capture is collect cycle i after the restart. A collect-time fault arms after
-ARM_DELAY clean cycles (`@delay+ticks`), so the rows it must mark already exist; perf_open faults
-act at begin and hold for the whole run. The opendir fault on /sys/class/infiniband runs last:
-it stops the port walk (no MAD query is reached) and the directory latch holds it until the
-restart, so it starts after every other host_ib fault has been checked for resume.
+Plan windows count collect cycles. Each cycle writes one sample: `full` (every key) every
+sample_freq_slow, `fast` (fast-tier keys) otherwise; without the slow tier every sample is
+`full`. So the capture takes both mirrors, numbers their samples by header timestamp
+(sample_cycles), and a forced code counts when either mirror shows it inside the window. A
+collect-time fault arms after ARM_DELAY clean cycles (`@delay+ticks`), so the rows it must mark
+already exist; perf_open faults act at begin and hold for the whole run. The opendir fault on
+/sys/class/infiniband runs last: it stops the port walk (no MAD query is reached) and the
+directory latch holds it until the restart, so it starts after every other host_ib fault has
+been checked for resume.
 
 Output is bounded (--max-lines); the full report goes to --report.
 """
@@ -21,9 +27,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
+import statistics
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 MONITOR = Path(__file__).resolve().parents[1]
@@ -32,9 +41,10 @@ sys.path.insert(0, str(MONITOR / "scripts"))
 from lib.cross_sample_validate import check_sentinel_bridges  # noqa: E402
 from lib.fault_ci_files import CI_COVERED_FILES  # noqa: E402
 from lib.message_parse import parse_schema_counts, schema_key_name  # noqa: E402
+from lib.payload_parse import sample_header_timestamp  # noqa: E402
 from lib.sentinel_catalog import SENTINEL_SLUGS, sentinels_banner_version  # noqa: E402
 from lib.sentinel_validate import sentinel_keys  # noqa: E402
-from lib.shm_snapshot import SnapshotPair, read_shm_sample, wait_for_timestamp_advance  # noqa: E402
+from lib.shm_snapshot import SnapshotPair, read_shm_sample  # noqa: E402
 
 
 def _code(slug: str) -> int:
@@ -50,6 +60,10 @@ NOT_PRESENT = _code("NOT_PRESENT")
 EBUSY = 16
 ARM_DELAY = 1  # clean collect cycles before a collect-time fault fires
 RESUME_AFTER = 2  # released cycles before the resume check
+KINDS = ("fast", "full")
+POLL_SEC = 0.5
+# Why a planned point may never run on a node that has its collector.
+_NOT_REACHED_HINT = {"dcgm_fetch": "NVML+GPM serves the GPUs"}
 
 _IB_MAD_KEYS = (
     "port_select counter_select port_xmit_pkts port_rcv_pkts port_unicast_xmit_pkts "
@@ -158,26 +172,104 @@ def capture_count(plan: list[dict]) -> int:
     return max(ends, default=RESUME_AFTER + 1)
 
 
-def capture(shm_dir: Path, out_dir: Path, *, restart_cmd: str, count: int, timeout: float) -> None:
-    """Baseline, restart, then `count` consecutive `full` samples plus sentinel_sites."""
+def sample_cycles(stamps: list[float]) -> list[int]:
+    """Collect cycle of each ascending sample timestamp (the first is cycle 0). A gap counts
+    round(gap / median gap) cycles, at least one, so a cycle without a captured sample does not
+    shift the later ones."""
+    gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+    step = statistics.median(gaps) if gaps else 1.0
+    cycles = [0]
+    for gap in gaps:
+        cycles.append(cycles[-1] + max(1, round(gap / step)))
+    return cycles
+
+
+def capture(shm_dir: Path, out_dir: Path, *, restart_cmd: str, plan: list[dict], timeout: float) -> None:
+    """Baselines (baseline.<kind>), restart, then every new sample of either mirror as
+    t<n>.<kind> (n in arrival order) until capture_count(plan) cycles are in and, once a `fast`
+    sample showed the slow tier is on, a `full` one at or after the last resume check (slow-tier
+    keys resume only there); then schema, sentinel_sites and fault_fired. `timeout` bounds the
+    wait for each new sample."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = shm_dir / "full"
-    ts, body, _ = read_shm_sample(path)
-    (out_dir / "baseline").write_text(body, encoding="utf-8")
+    prev = dict.fromkeys(KINDS, 0.0)
+    for kind in KINDS:
+        if kind == "full" or (shm_dir / kind).is_file():
+            ts, body, _ = read_shm_sample(shm_dir / kind)
+            (out_dir / f"baseline.{kind}").write_text(body, encoding="utf-8")
+            prev[kind] = ts if ts is not None else 0.0
+    count = capture_count(plan)
+    full_after = max((resume_index(e) for e in plan if e["resume"]), default=-1)
     subprocess.run(restart_cmd, shell=True, check=True)
-    prev = ts if ts is not None else 0.0
-    for i in range(count):
-        prev, body = wait_for_timestamp_advance(path, prev, timeout_sec=timeout)
-        (out_dir / f"t{i}").write_text(body, encoding="utf-8")
-    shutil.copyfile(shm_dir / "schema", out_dir / "schema")
-    if (shm_dir / "sentinel_sites").is_file():
-        shutil.copyfile(shm_dir / "sentinel_sites", out_dir / "sentinel_sites")
+    stamps: set[float] = set()
+    fast_seen, last_full = False, -1
+    deadline = time.time() + timeout
+    while len(stamps) < count or (fast_seen and last_full < full_after):
+        new = False
+        for kind in KINDS:
+            if not (shm_dir / kind).is_file():
+                continue
+            ts, body, _ = read_shm_sample(shm_dir / kind)
+            if ts is None or ts <= prev[kind]:
+                continue
+            prev[kind], new = ts, True
+            stamps.add(ts)
+            (out_dir / f"t{len(stamps) - 1}.{kind}").write_text(body, encoding="utf-8")
+            fast_seen = fast_seen or kind == "fast"
+            last_full = len(stamps) - 1 if kind == "full" else last_full
+        if new:
+            deadline = time.time() + timeout
+        elif time.time() > deadline:
+            raise TimeoutError(f"no new fast/full sample within {timeout:.0f}s "
+                               f"({len(stamps)} of {count} cycles captured)")
+        else:
+            time.sleep(POLL_SEC)
+    for name in ("schema", "sentinel_sites", "fault_fired"):
+        if name == "schema" or (shm_dir / name).is_file():
+            shutil.copyfile(shm_dir / name, out_dir / name)
 
 
 def _keys_of(entry: dict, schema: dict[str, list[str]]) -> set[str]:
     if entry["keys"] == ["*"]:
         return {schema_key_name(k) for k in schema[entry["type"]]}
     return set(entry["keys"])
+
+
+def read_fault_fired(path: Path) -> dict[str, int] | None:
+    """spec -> fires from the daemon's fault_fired lines (`<spec> <fires>`); None when the file
+    is missing (a daemon older than the export)."""
+    if not path.is_file():
+        return None
+    fired: dict[str, int] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        spec, _, n = line.rpartition(" ")
+        if spec and n.isdigit():
+            fired[spec] = int(n)
+    return fired
+
+
+def not_reached(plan: list[dict], fired: dict[str, int] | None) -> set[str]:
+    """Specs of planned entries whose fault point the daemon reports it never reached."""
+    return {e["spec"] for e in plan if fired is not None and fired.get(e["spec"]) == 0}
+
+
+def _sentinels(body: str, kind: str, schema: dict[str, list[str]]) -> dict[tuple[str, str, str], int]:
+    tier = f"@{kind}" if f" @{kind}" in body else None
+    return sentinel_keys(body, schema, require_tier=tier is not None, allowed_tier=tier)
+
+
+def _samples(cap_dir: Path) -> list[tuple[int, float, str, str]]:
+    """(cycle, timestamp, kind, body) of every captured t<n>.<kind> sample, in time order."""
+    got = []
+    for path in cap_dir.glob("t*"):
+        kind = path.suffix[1:]
+        body = path.read_text(encoding="utf-8")
+        ts = sample_header_timestamp(body)
+        if kind in KINDS and ts is not None:
+            got.append((ts, kind, body))
+    got.sort(key=lambda s: s[0])
+    stamps = sorted({ts for ts, _, _ in got})
+    cycle_of = dict(zip(stamps, sample_cycles(stamps)))
+    return [(cycle_of[ts], ts, kind, body) for ts, kind, body in got]
 
 
 def check(plan: list[dict], manifest: dict, cap_dir: Path, *, sample_freq: float) -> tuple[list[str], list[str]]:
@@ -187,51 +279,71 @@ def check(plan: list[dict], manifest: dict, cap_dir: Path, *, sample_freq: float
     schema = _schema(manifest)
     schema_body = (cap_dir / "schema").read_text(encoding="utf-8")
     schema.update({t: k for t, k in parse_schema_counts(schema_body).items() if t in schema})
-    paths = sorted(cap_dir.glob("t[0-9]*"), key=lambda p: int(p.name[1:]))
-    bodies = [p.read_text(encoding="utf-8") for p in paths]
+    samples = [(c, ts, kind, body, _sentinels(body, kind, schema))
+               for c, ts, kind, body in _samples(cap_dir)]
     need = capture_count(plan)
-    if len(bodies) < need:
-        return notes, [f"FAIL fault_inject: {len(bodies)} captures, need {need}"]
-    req = False
-    tier = None
-    if any(" @full" in ln for ln in bodies[0].splitlines()):
-        req, tier = True, "@full"
-    maps = [sentinel_keys(b, schema, require_tier=req, allowed_tier=tier) for b in bodies]
-    baseline = sentinel_keys((cap_dir / "baseline").read_text(encoding="utf-8"), schema,
-                             require_tier=req, allowed_tier=tier)
-    window = maps[:max([hi for _, hi in map(fault_window, plan) if hi is not None], default=0)]
+    cycles = samples[-1][0] + 1 if samples else 0
+    if cycles < need:
+        return notes, [f"FAIL fault_inject: {cycles} collect cycles captured, need {need}"]
+    baseline: dict[tuple[str, str, str], set[int]] = {}
+    for kind in KINDS:
+        path = cap_dir / f"baseline.{kind}"
+        if path.is_file():
+            for key, c in _sentinels(path.read_text(encoding="utf-8"), kind, schema).items():
+                baseline.setdefault(key, set()).add(c)
+    window_end = max([hi for _, hi in map(fault_window, plan) if hi is not None], default=0)
+    unreached = not_reached(plan, read_fault_fired(cap_dir / "fault_fired"))
 
     expected: dict[tuple[str, str], set[int]] = {}
     for entry in plan:
         for key in _keys_of(entry, schema):
             expected.setdefault((entry["type"], key), set()).update(entry["codes"] + entry.get("also", []))
     for entry in plan:
+        if entry["spec"] in unreached:
+            hint = _NOT_REACHED_HINT.get(re.split(r"[:!@]", entry["spec"], maxsplit=1)[0])
+            notes.append(f"NOTE fault_inject {entry['spec']}: fault point not reached on this node "
+                         f"(0 fires{'; e.g. ' + hint if hint else ''})")
+            continue
         keys = _keys_of(entry, schema)
         lo, hi = fault_window(entry)
-        hit = {(t, d, k) for m in maps[lo:hi] for (t, d, k), c in m.items()
-               if t == entry["type"] and k in keys and c in entry["codes"]}
+        hit = {(t, d, k) for c_, _, _, _, m in samples if lo <= c_ and (hi is None or c_ < hi)
+               for (t, d, k), c in m.items() if t == entry["type"] and k in keys and c in entry["codes"]}
         if not hit:
             errors.append(f"FAIL fault_inject {entry['spec']}: no {entry['type']} key carried "
                           + "/".join(SENTINEL_SLUGS[c] for c in entry["codes"]))
         else:
             notes.append(f"PASS fault_inject {entry['spec']}: {len(hit)} key(s)")
         if entry["resume"]:
-            stuck = sorted(f"{d} {k}" for (t, d, k), c in maps[resume_index(entry)].items()
-                           if t == entry["type"] and k in keys and c in entry["codes"])
+            # First sample of each mirror after release; only `full` carries the slow-tier keys.
+            after: dict[str, dict] = {}
+            for c_, _, kind, _, m in samples:
+                if c_ >= resume_index(entry):
+                    after.setdefault(kind, m)
+            if "full" not in after:
+                errors.append(f"FAIL fault_inject {entry['spec']}: no full sample at or after cycle "
+                              f"{resume_index(entry)}")
+            stuck = sorted({f"{d} {k}" for m in after.values() for (t, d, k), c in m.items()
+                            if t == entry["type"] and k in keys and c in entry["codes"]})
             if stuck:
                 errors.append(f"FAIL fault_inject {entry['spec']}: no value after release: " + ", ".join(stuck[:8]))
-    for m in window:
+    for c_, _, _, _, m in samples:
+        if c_ >= window_end:
+            continue
         for (t, d, k), c in m.items():
             # NOT_UPDATED is transient around the restart; persistence is its own layer.
-            if c != NOT_UPDATED and baseline.get((t, d, k)) != c and c not in expected.get((t, k), set()):
+            if c != NOT_UPDATED and c not in baseline.get((t, d, k), ()) and c not in expected.get((t, k), set()):
                 errors.append(f"FAIL fault_inject: {t}/{d} {k} changed to {SENTINEL_SLUGS.get(c, c)}"
                               " outside the injected points")
-    pair = SnapshotPair(kind="full", ts_a=0.0, ts_b=sample_freq * (len(bodies) - 1),
-                        body_a=bodies[0], body_b=bodies[-1], bodies_mid=tuple(bodies[1:-1]))
-    b_notes, _, b_err = check_sentinel_bridges(pair, manifest, schema, sample_freq=sample_freq,
-                                               sentinel_banner=sentinels_banner_version(schema_body))
-    notes.extend(n for n in b_notes if "sentinel" in n)
-    errors.extend(b_err)
+    for kind in KINDS:
+        series = [(ts, body) for _, ts, k, body, _ in samples if k == kind]
+        if len(series) < 2:
+            continue
+        pair = SnapshotPair(kind=kind, ts_a=series[0][0], ts_b=series[-1][0], body_a=series[0][1],
+                            body_b=series[-1][1], bodies_mid=tuple(b for _, b in series[1:-1]))
+        b_notes, _, b_err = check_sentinel_bridges(pair, manifest, schema, sample_freq=sample_freq,
+                                                   sentinel_banner=sentinels_banner_version(schema_body))
+        notes.extend(n for n in b_notes if "sentinel" in n)
+        errors.extend(b_err)
     return notes, errors
 
 
@@ -292,7 +404,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "capture":
         try:
             plan = json.loads(args.plan.read_text(encoding="utf-8"))
-            capture(args.shm_dir, args.out_dir, restart_cmd=args.restart_cmd, count=capture_count(plan),
+            capture(args.shm_dir, args.out_dir, restart_cmd=args.restart_cmd, plan=plan,
                     timeout=args.timeout)
         except (OSError, TimeoutError, ValueError, subprocess.CalledProcessError) as exc:
             print(f"FAIL fault_inject capture: {exc}")
@@ -311,6 +423,9 @@ def main(argv: list[str] | None = None) -> int:
     if len(lines) > len(shown):
         print(f"... {len(lines) - len(shown)} more line(s) in the report")
     failed = errors + s_err
+    if not failed and plan and len(not_reached(plan, read_fault_fired(args.capture_dir / "fault_fired"))) == len(plan):
+        print("fault_inject: NOT_RUN (no planned fault point was reached on this node)")
+        return 0
     print(f"fault_inject: {'FAIL' if failed else 'PASS'} ({len(failed)} failure(s))")
     return 1 if failed else 0
 

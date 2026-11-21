@@ -601,15 +601,24 @@ PY
   else
     fi_rc=$?
   fi
-  if grep -q '^SKIP:' "${fi_out}"; then
-    record_check "${results}" fault_inject SKIP - "$(grep -m1 '^SKIP:' "${fi_out}")"
-  elif test "${fi_rc}" = 0; then
+  record_fault_inject "${results}" "${fi_out}" "${fi_rc}"
+  rm -f "${fi_out}"
+}
+
+# record_fault_inject RESULTS OUT RC: fault_inject_verify.sh output and exit code -> one status.
+# A SKIP line or the checker's NOT_RUN line (no planned fault point reached) wins over exit 0.
+record_fault_inject() {
+  local results="$1" out="$2" rc="$3"
+  if grep -q '^SKIP:' "${out}"; then
+    record_check "${results}" fault_inject SKIP - "$(grep -m1 '^SKIP:' "${out}")"
+  elif test "${rc}" = 0 && grep -q '^fault_inject: NOT_RUN' "${out}"; then
+    record_check "${results}" fault_inject NOT_RUN - "$(grep -m1 '^fault_inject: NOT_RUN' "${out}")"
+  elif test "${rc}" = 0; then
     record_check "${results}" fault_inject PASS - "fault_inject_verify.sh exit 0"
   else
     record_check "${results}" fault_inject FAIL - \
-      "exit ${fi_rc}: $(grep -v '^[[:space:]]*$' "${fi_out}" | tail -n 1 | cut -c1-300)"
+      "exit ${rc}: $(grep -v '^[[:space:]]*$' "${out}" | tail -n 1 | cut -c1-300)"
   fi
-  rm -f "${fi_out}"
 }
 
 if test "$(basename "$0")" = "rpm_debug_shm_verify.sh"; then

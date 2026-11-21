@@ -110,6 +110,17 @@ class Schema(unittest.TestCase):
         self.assertEqual(got["flops_dp"]["ratio"], 1.01)
         self.assertEqual(got["fault_inject"]["status"], "SKIP")
 
+    def test_fault_inject_not_run_keeps_its_reason_and_does_not_fail(self):
+        # rpm_debug_shm_verify.sh records NOT_RUN when no planned fault point was reached.
+        reason = "fault_inject: NOT_RUN (no planned fault point was reached on this node)"
+        self.fx.results.write_text("preflight\tPASS\t-\tok\nfault_inject\tNOT_RUN\t-\t%s\n" % reason)
+        self.fx.report.write_text(REPORT.replace("FAIL independent_read", "PASS independent_read"))
+        s = self.fx.build(validate_rc=0)
+        got = {c["name"]: c for c in s["checks"]}
+        self.assertEqual((got["fault_inject"]["status"], got["fault_inject"]["reason"]),
+                         ("NOT_RUN", reason))
+        self.assertEqual(s["overall"], "PASS")
+
     def test_overall_fail_on_any_fail_else_pass(self):
         self.assertEqual(self.fx.build()["overall"], "FAIL")
         self.fx.report.write_text(REPORT.replace("FAIL independent_read", "PASS independent_read"))

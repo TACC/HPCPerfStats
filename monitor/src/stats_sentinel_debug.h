@@ -77,6 +77,8 @@ void stats_fault_inject_tick(void) __attribute__((weak));
 int stats_fault_inject_set(const char *spec) __attribute__((weak));
 /* Times entry `i` of the table forced a failure (0 for a bad index). */
 unsigned long stats_fault_inject_fired(int i);
+/* One line per table entry: "spec fired" (the entry as configured). Returns the entry count. */
+size_t stats_fault_inject_report(FILE *out);
 
 /* One line per key whose state is not OK:
  * "type dev key code slug errno site first_ts last_ts count" (site "-" when none). Returns a
@@ -84,7 +86,7 @@ unsigned long stats_fault_inject_fired(int i);
 char *stats_sentinel_debug_render(size_t *len_out);
 /* One line per registered site: "file:line hits". Returns the number of sites never hit. */
 size_t stats_sentinel_sites_report(FILE *out);
-/* Write the "sentinels" and "sentinel_sites" files to the DEBUG shm directory. */
+/* Write the "sentinels", "sentinel_sites" and "fault_fired" files to the DEBUG shm directory. */
 void stats_sentinel_debug_write_shm(void);
 #else
 #define STATS_FAULT(point, subject, err) 0
