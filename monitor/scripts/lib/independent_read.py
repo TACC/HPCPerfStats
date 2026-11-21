@@ -5,8 +5,10 @@ reads: ``/proc/stat`` (host_cpu), IB / OPA ``ports/<p>/counters`` (host_ib, host
 ``/sys/block/<dev>/stat`` (host_block), ``/sys/devices/system/node/node<N>/meminfo`` (host_mem)
 and the ACPI hwmon power meters (host_power_socket).
 
-- Counters (``E`` keys) are monotonic, so a read taken after capture A was written and before
-  collect B started (``t_read < ts_b``) must satisfy ``v_a <= r <= v_b`` (mod 2^W).
+- Counters (``E`` keys) are monotonic, so a read taken after capture A was written and finished
+  before collect B started must satisfy ``v_a <= r <= v_b`` (mod 2^W). The daemon stamps ``ts_b``
+  after collecting, so ``t_read < ts_b`` (``t_read`` = end of the read) is necessary but not
+  sufficient; the capture starts the read right after a fresh A, about one interval before B.
 - Gauges cannot be bracketed: a gauge FAILs when it was emitted 0 in both captures while the
   source reads non-zero. ``host_mem`` ``dirty`` and ``writeback`` swing quickly (kB-scale); when
   the live read is below 64 kB that mismatch is a NOTE, not a FAIL.
@@ -170,8 +172,8 @@ def read_independent_sources(
     proc_root: Path = Path("/proc"),
     sys_root: Path = Path("/sys"),
 ) -> tuple[float, dict[tuple[str, str, str], int]]:
-    """(wall time of the read, (type, dev, key) -> live value) for the types this layer covers."""
-    t_read = time.time()
+    """(wall time at the end of the reads, (type, dev, key) -> live value) for the types this
+    layer covers."""
     out: dict[tuple[str, str, str], int] = {}
     if "host_cpu" in schema_by_type:
         out.update(_read_proc_stat(proc_root))
@@ -187,7 +189,7 @@ def read_independent_sources(
     if "host_power_socket" in schema_by_type:
         for (sock, key), watts in probe_power_socket_watts(str(sys_root)).items():
             out[("host_power_socket", sock, key)] = int(watts + 0.5)
-    return t_read, out
+    return time.time(), out
 
 
 def _token(schema_keys: list[str], key: str) -> str:

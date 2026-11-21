@@ -30,10 +30,11 @@ NVIDIA_GPU_PERCENT_KEYS = (
     "tensor_dfma_active", "tensor_dmma_active", "integer_active", "gpu_dram_active",
 )
 INTEL_GPU_PERCENT_KEYS = ("compute_engine_util",)
-# Rows only exist with /tmp on tmpfs, a Lustre/BeeGFS/NFS mount, or a running job.
+# Rows only exist with /tmp on tmpfs, a Lustre/BeeGFS/NFS mount, a running job, or a
+# collectible IB / OPA port (ib_port_collectible: all ports down or Ethernet -> no rows).
 CONDITIONAL_TYPES = frozenset({
     "host_tmpfs", "host_nfs", "beegfs_client", "lustre_llite", "lustre_mdc", "lustre_osc",
-    "host_mem_job", "host_proc",
+    "host_mem_job", "host_proc", "host_ib", "host_opa",
 })
 POWER_SOCKET_MAX_W = 2000
 POWER_SOCKET_SLACK_W = 2  # meters average over different windows
@@ -185,7 +186,7 @@ def check_plausibility(
             allowed_tier="@full" if enable_slow else None,
         )
         for type_name in schema_by_type:
-            # Mount- or job-scoped types emit no rows without a mount/job; warn only when
+            # Conditional types emit no rows without a mount, job or port; warn only when
             # the manifest's probed devices expect some.
             devices = manifest.get("types", {}).get(type_name, {}).get("devices")
             if type_name not in full_rows and not (type_name in CONDITIONAL_TYPES and not devices):

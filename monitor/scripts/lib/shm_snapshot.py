@@ -57,13 +57,15 @@ def capture_pair(
     bounds: WaitBounds | None = None,
     between: Callable[[str], None] | None = None,
 ) -> SnapshotPair:
-    """Two consecutive captures of ``kind``. ``between(body_a)`` runs after capture A while the
-    file still holds it (retried when a sample lands during the call)."""
+    """Two consecutive captures of ``kind``. ``between(body_a)`` runs right after a fresh sample
+    A lands (about one interval before collect B) while the file still holds it (retried when a
+    sample lands during the call)."""
     if bounds is None:
         bounds = wait_bounds_from_timing(timing)
     path = shm_dir / kind
     if not path.is_file():
         raise FileNotFoundError(f"missing shm file: {path}")
+    timeout = bounds.fast_timeout_sec if kind == "fast" else bounds.full_timeout_sec
 
     for _attempt in range(3):
         ts_a, body_a, _ = read_shm_sample(path)
@@ -71,11 +73,11 @@ def capture_pair(
             raise ValueError(f"{path}: no sample header timestamp")
         if between is None:
             break
+        ts_a, body_a = wait_for_timestamp_advance(path, ts_a, timeout_sec=timeout)
         between(body_a)
         if read_shm_sample(path)[0] == ts_a:
             break
 
-    timeout = bounds.fast_timeout_sec if kind == "fast" else bounds.full_timeout_sec
     ts_b, body_b = wait_for_timestamp_advance(
         path,
         ts_a,

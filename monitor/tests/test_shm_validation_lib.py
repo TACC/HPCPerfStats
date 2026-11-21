@@ -1361,6 +1361,23 @@ class Round2ShmChecksTests(unittest.TestCase):
                                  schema_body=None, no_freshness=True, strict=False)[1]
         self.assertEqual(got, ["WARN plausibility type 'host_vm' missing from full payload"])
 
+    def test_probe_scoped_port_types_absent_without_collectible_port(self) -> None:
+        """No collectible IB / OPA port (Ethernet or down) -> no rows, not 'missing from full'."""
+        schema = {"host_ib": ["port_rcv_packets,E"], "host_opa": ["port_rcv_pkts,E"],
+                  "host_vm": ["x"]}
+        manifest = _round2_manifest(schema)
+        manifest["types"]["host_ib"]["devices"] = []
+        manifest["types"]["host_opa"]["devices"] = []
+        body = "1234567890.0 - h\nhost_vm - @full 1\n"
+
+        def warns(m):
+            return check_plausibility(m, schema, full_body=body, fast_body=None,
+                                      schema_body=None, no_freshness=True, strict=False)[1]
+
+        self.assertEqual(warns(manifest), [])
+        manifest["types"]["host_ib"]["devices"] = ["mlx5_0.1"]
+        self.assertEqual(warns(manifest), ["WARN plausibility type 'host_ib' missing from full payload"])
+
     def test_live_nvidia_gpu_rows_and_mem_total(self) -> None:
         schema = {"nvidia_gpu": GPU_KEYS}
         body = "NOW - h\nnvidia_gpu 0 @full 0 189471 600 188300\n"
@@ -2206,29 +2223,48 @@ class IndependentReadTests(unittest.TestCase):
         self.assertEqual(live[("host_mem", "0", "mem_total")], 8000000)
         self.assertEqual(live[("host_power_socket", "0", "cpu_power_w")], 100)
 
-    def test_capture_pair_runs_between_on_a_stable_capture(self) -> None:
-        import threading
-
+    def test_capture_pair_runs_between_right_after_a_fresh_capture(self) -> None:
+        """A capture read at an arbitrary point can be almost one interval old, so a live read
+        run on it can overlap collect B; between() must wait for the next sample and run on it."""
         from lib.daemon_conf import DaemonTiming
         from lib.shm_snapshot import capture_pair
 
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "full"
+            stamps = [1000.0]
             path.write_text(self._body(1000.0, 1, 1, 1), encoding="utf-8")
+
+            def land_next_sample(_sec: float = 0.0) -> None:
+                stamps.append(stamps[-1] + 30.0)
+                n = len(stamps)
+                path.write_text(self._body(stamps[-1], n, n, n), encoding="utf-8")
+
             seen: list[str] = []
 
             def between(body: str) -> None:
                 seen.append(body)
                 if len(seen) == 1:  # a sample lands during the first call: it must be retried
-                    path.write_text(self._body(1030.0, 2, 2, 2), encoding="utf-8")
+                    land_next_sample()
 
-            later = threading.Timer(0.3, lambda: path.write_text(self._body(1060.0, 3, 3, 3), encoding="utf-8"))
-            later.start()
-            pair = capture_pair(Path(td), "full", timing=DaemonTiming(30.0, 60.0, 300.0, False), between=between)
-            later.join()
-        self.assertEqual(len(seen), 2)
-        self.assertEqual(pair.ts_a, 1030.0)
-        self.assertEqual(pair.ts_b, 1060.0)
+            with patch("lib.shm_snapshot.time.sleep", side_effect=land_next_sample):
+                pair = capture_pair(Path(td), "full", timing=DaemonTiming(30.0, 60.0, 300.0, False),
+                                    between=between)
+        self.assertEqual(seen, [self._body(1030.0, 2, 2, 2), self._body(1090.0, 4, 4, 4)])
+        self.assertEqual(pair.ts_a, 1090.0)
+        self.assertEqual(pair.ts_b, 1120.0)
+
+    def test_read_independent_sources_time_is_taken_after_the_reads(self) -> None:
+        """The bracket needs the whole read window before collect B: t_read is the end time."""
+        from lib.independent_read import read_independent_sources
+
+        ticks = iter(range(100))
+        read_at: list[int] = []
+        with patch("lib.independent_read.time.time", side_effect=lambda: next(ticks)), \
+                patch("lib.independent_read._read_proc_stat",
+                      side_effect=lambda _root: read_at.append(next(ticks)) or {}):
+            t_read, _ = read_independent_sources({"host_cpu": ["user"]}, "1.0 j h\n",
+                                                 require_tier=False, allowed_tier=None)
+        self.assertGreater(t_read, read_at[0])
 
 
 class IndependentReadIbMadTests(unittest.TestCase):
