@@ -154,25 +154,52 @@ class Memory(unittest.TestCase):
         self.assertEqual(r["mem_write"]["status"], "PASS")
         self.assertEqual(set(r), {"mem_write"})
 
-    def test_amd_df_read_pass_and_write_not_run(self):
-        def df(v):
-            return {"amd_x86_uncore_df_turin": {"df": {
-                "dram_chan0_bytes": v, "dram_chan1_bytes": v,
-                "dram_chan2_bytes": v, "dram_chan3_bytes": v}}}
-        r = by_name(ca.check_memory(snap(df(0)), snap(df(100)), "read", 400 * 64))
+    def test_amd_df_zen4_rows_split_read_and_write(self):
+        """Genoa / Turin: one chan<N> row per channel with read and write beats, so both kernels
+        have a single-direction counter; rows 4-11 carry NOT_BUILT and are left out."""
+        def df(rd, wr):
+            rows = {"chan%d" % n: {"dram_data_beats": -2, "dram_read_beats": rd,
+                                   "dram_write_beats": wr} for n in range(4)}
+            rows.update({"chan%d" % n: {"dram_data_beats": -2, "dram_read_beats": -10,
+                                        "dram_write_beats": -10} for n in range(4, 12)})
+            return {"amd_x86_uncore_df_turin": rows}
+        r = by_name(ca.check_memory(snap(df(0, 0)), snap(df(100, 7)), "read", 400 * 64))
         self.assertEqual(r["mem_read"]["status"], "PASS")
-        w = by_name(ca.check_memory(snap(df(0)), snap(df(100)), "write", 400 * 64))
-        self.assertEqual(w["mem_write"]["status"], "NOT_RUN")
-        self.assertIn("read + write", w["mem_write"]["reason"])
+        self.assertAlmostEqual(r["mem_read"]["ratio"], 1.0)
+        self.assertIn("8 row(s) NOT_BUILT", r["mem_read"]["reason"])
+        w = by_name(ca.check_memory(snap(df(0, 0)), snap(df(100, 25)), "write", 100 * 64))
+        self.assertEqual(w["mem_write"]["status"], "PASS")
 
-    def test_not_built_everywhere_is_excluded(self):
+    def test_amd_df_milan_rows_count_all_eight_channels(self):
+        """Milan: one chan<N> row per channel (8), combined read + write beats; no write split."""
         def df(v):
-            return {"amd_x86_uncore_df_rome": {"df": {
-                "dram_chan0_bytes": v, "dram_chan1_bytes": v,
-                "dram_chan2_bytes": -10, "dram_chan3_bytes": -10}}}
+            return {"amd_x86_uncore_df_milan": {
+                "chan%d" % n: {"dram_data_beats": v, "dram_read_beats": -2,
+                               "dram_write_beats": -2} for n in range(8)}}
+        r = by_name(ca.check_memory(snap(df(0)), snap(df(100)), "read", 800 * 64))
+        self.assertEqual(r["mem_read"]["status"], "PASS")
+        self.assertAlmostEqual(r["mem_read"]["ratio"], 1.0)
+        w = by_name(ca.check_memory(snap(df(0)), snap(df(100)), "write", 800 * 64))
+        self.assertEqual(w["mem_write"]["status"], "NOT_RUN")
+        self.assertIn("dram_write_beats NOT_PRESENT", w["mem_write"]["reason"])
+
+    def test_not_built_rows_are_excluded(self):
+        """Rome: channels 2-7 have no verified code; their rows emit NOT_BUILT."""
+        def df(v):
+            return {"amd_x86_uncore_df_rome": {
+                "chan%d" % n: {"dram_data_beats": v if n < 2 else -10} for n in range(8)}}
         r = by_name(ca.check_memory(snap(df(0)), snap(df(100)), "read", 200 * 64))
         self.assertEqual(r["mem_read"]["status"], "PASS")
-        self.assertIn("NOT_BUILT", r["mem_read"]["reason"])
+        self.assertIn("6 row(s) NOT_BUILT", r["mem_read"]["reason"])
+
+    def test_runtime_sentinel_row_is_still_a_problem(self):
+        """Only the structural codes drop a row: a READ_FAILED row still stops the check."""
+        def df(v):
+            return {"amd_x86_uncore_df_milan": {
+                "chan0": {"dram_data_beats": v}, "chan1": {"dram_data_beats": -3}}}
+        r = by_name(ca.check_memory(snap(df(0)), snap(df(100)), "read", 100 * 64))
+        self.assertEqual(r["mem_read"]["status"], "NOT_RUN")
+        self.assertIn("sentinel -3", r["mem_read"]["reason"])
 
     def test_not_present_hbm_on_ddr_spr_is_excluded(self):
         """SPR with DDR: the imc_spr schema carries hbm_cas_* and the monitor reports them

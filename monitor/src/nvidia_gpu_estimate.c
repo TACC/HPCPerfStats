@@ -195,18 +195,21 @@ int nvidia_gpu_estimate_miss_list(const dcgm_data_t *row,
   return n;
 }
 
-unsigned long long nvidia_gpu_link_rate_integrate(uint64_t rate_bps, long long delta_us,
-                                                  unsigned long long *acc)
+unsigned long long nvidia_gpu_rate_integrate(double rate_per_s, long long delta_us,
+                                             unsigned long long *acc)
 {
   double add;
-  unsigned long long bytes;
+  unsigned long long inc = ULLONG_MAX;
 
   if (acc == NULL || delta_us <= 0)
     return 0ULL;
-  add = (double)rate_bps * ((double)delta_us / 1000000.0);
-  bytes = (add >= (double)ULLONG_MAX) ? ULLONG_MAX : (unsigned long long)(add + 0.5);
-  *acc = (ULLONG_MAX - *acc < bytes) ? ULLONG_MAX : *acc + bytes;
-  return bytes;
+  add = rate_per_s * ((double)delta_us / 1000000.0);
+  if (add <= 0.0)
+    return 0ULL;
+  if (add < (double)ULLONG_MAX)
+    inc = (unsigned long long)(add + 0.5);
+  *acc += inc;
+  return inc;
 }
 
 #define NVIDIA_GPU_APPROX_PEAK_MEM_BW_BYTES_PER_S 1000000000000.0

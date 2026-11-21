@@ -38,6 +38,12 @@ void(stats_set_missing_all)(struct stats *stats, enum stats_sentinel code)
   test_stats_missing_record(TEST_STATS_MISSING_ALL_KEY, code);
 }
 
+void(stats_type_set_missing_all)(struct stats_type *type, enum stats_sentinel code)
+{
+  (void)type;
+  test_stats_missing_record(TEST_STATS_MISSING_ALL_KEY, code);
+}
+
 void test_stats_missing_reset(void)
 {
   g_n = 0;

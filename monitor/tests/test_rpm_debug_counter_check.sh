@@ -68,7 +68,7 @@ intel)
   rapl='!intel_x86_rapl pkg_energy,E,W=32,U=mJ pp0_energy,E,W=32,U=mJ pp1_energy,E,W=32,U=mJ dram_energy,E,W=32,U=mJ' ;;
 amd)
   hw='!host_cpu_hw instr_retired,E,W=48 cpu_util_total_accum_us,E,W=64,R=S fp_ops_retired,E,W=64,U=FLOP amd_fp_dp_ops,E,W=64,U=FLOP'
-  mem='!amd_x86_uncore_df_turin dram_chan0_bytes,E,W=48 dram_chan1_bytes,E,W=48 dram_chan2_bytes,E,W=48 dram_chan3_bytes,E,W=48'
+  mem='!amd_x86_uncore_df_turin dram_data_beats,E,W=48 dram_read_beats,E,W=48 dram_write_beats,E,W=48'
   rapl='!amd_x86_rapl core_energy,E,W=32,U=mJ pkg_energy,E,W=32,U=mJ' ;;
 grace)
   hw='!host_cpu_hw instr_retired,E,W=48 cpu_util_total_accum_us,E,W=64,R=S arm_fp_dp_spec,E,W=64 arm_fp_sp_spec,E,W=64 arm_fp_hp_spec,E,W=64'
@@ -95,7 +95,11 @@ while :; do
     esac ;;
   write)
     wr=$((wr + 1000000))
-    case $A in intel) tr_write=$((tr_write + 128000000)) ;; *) tr_write=$((tr_write + 64000000)) ;; esac ;;
+    case $A in
+    intel) tr_write=$((tr_write + 128000000)) ;;
+    amd) tr_write=$((tr_write + 4 * 64000000)) ;;
+    *) tr_write=$((tr_write + 64000000)) ;;
+    esac ;;
   dp)
     fd=$((fd + 1000)); f2=$((f2 + 100)); ins=$((ins + 50000)); tr_instr=$((tr_instr + 100000))
     case $A in intel) tr_dp=$((tr_dp + 8200)) ;; amd) tr_dp=$((tr_dp + 12000)) ;; grace) tr_dp=$((tr_dp + 8000)) ;; esac ;;
@@ -133,8 +137,9 @@ while :; do
       echo "intel_x86_uncore_imc_spr hbm0 @fast 0 0 $hr 0"
       for s in 0 1; do echo "intel_x86_rapl $s @fast $pkg 0 0 $dram"; done ;;
     amd)
-      v=$((rd + wr))
-      echo "amd_x86_uncore_df_turin df @fast $v $v $v $v"
+      # Turin: chan<N> rows split read / write beats; channels 4-11 have no verified code.
+      for n in 0 1 2 3; do echo "amd_x86_uncore_df_turin chan$n @fast -2 $rd $wr"; done
+      for n in 4 5 6 7 8 9 10 11; do echo "amd_x86_uncore_df_turin chan$n @fast -2 -10 -10"; done
       for s in 0 1; do echo "amd_x86_rapl $s @fast 0 $pkg"; done ;;
     grace)
       echo "arm_aarch64_imc scf0 @fast $rd $wr"
@@ -272,11 +277,11 @@ set -e
 [ "${src}" -eq 1 ] || fail "summary with FAILs exit ${src}, want 1: ${sout}"
 grep -q 'overall=FAIL' <<<"${sout}" || fail "summary did not say overall=FAIL: ${sout}"
 
-# --- AMD (Turin): DF read PASS, write NOT_RUN (combined beats), no DRAM RAPL ---
+# --- AMD (Turin): DF chan<N> rows split read / write beats, both PASS; no DRAM RAPL ---
 start_writer amd
 accuracy amd-pass
-for c in mem_read flops_dp flops_sp instructions energy_pkg; do want "${c}" PASS; done
-for c in mem_write mem_socket0 energy_dram; do want "${c}" NOT_RUN; done
+for c in mem_read mem_write flops_dp flops_sp instructions energy_pkg; do want "${c}" PASS; done
+for c in mem_socket0 energy_dram; do want "${c}" NOT_RUN; done
 stop_writer
 FAKE_PC_PCT=110 start_writer amd
 FAKE_MEM_PCT=40 FAKE_FLOP_PCT=125 accuracy amd-fail

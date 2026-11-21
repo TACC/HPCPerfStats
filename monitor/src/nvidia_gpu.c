@@ -47,11 +47,6 @@ static unsigned long long clamp_double_to_ull(double v)
   return (unsigned long long)(v + 0.5);
 }
 
-static unsigned long long ull_add_sat(unsigned long long a, unsigned long long b)
-{
-  return (ULLONG_MAX - a < b) ? ULLONG_MAX : (a + b);
-}
-
 /* Integrate each link rate; the link total only grows on a tick where every rate was read. */
 static void nvidia_gpu_io_link_accumulate(unsigned int gid, const dcgm_data_t *row,
                                           long long delta_us, int total_ok)
@@ -65,10 +60,10 @@ static void nvidia_gpu_io_link_accumulate(unsigned int gid, const dcgm_data_t *r
     return;
   for (k = 0; k < NVIDIA_GPU_LINK_COUNT; k++) {
     unsigned long long add =
-        nvidia_gpu_link_rate_integrate(rates[k], delta_us, &g_gpu_link_bytes[gid][k]);
+        nvidia_gpu_rate_integrate((double)rates[k], delta_us, &g_gpu_link_bytes[gid][k]);
 
     if (total_ok)
-      g_gpu_io_link_total_bytes[gid] = ull_add_sat(g_gpu_io_link_total_bytes[gid], add);
+      g_gpu_io_link_total_bytes[gid] += add;
   }
 }
 
@@ -99,21 +94,16 @@ static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row, u
 
   nvidia_gpu_io_link_accumulate(gid, row, delta_us, est_codes.link == STATS_SENTINEL_OK);
 
-  if (delta_us > 0) {
-    double dt_sec = (double)delta_us / 1000000.0;
-    unsigned long long delta_mem_bytes = clamp_double_to_ull(mem_bw_rate * dt_sec);
-    unsigned long long delta_mem_read_bytes = delta_mem_bytes / 2ULL;
+  /* W=64 lifetime counters: they wrap modulo 2^64, never saturate (a saturated counter's delta
+   * reads 0 for good). */
+  if (est_codes.flops == STATS_SENTINEL_OK)
+    nvidia_gpu_rate_integrate(flops_rate, delta_us, &g_gpu_est_flops[gid]);
+  if (est_codes.mem == STATS_SENTINEL_OK) {
+    unsigned long long mem =
+        nvidia_gpu_rate_integrate(mem_bw_rate, delta_us, &g_gpu_est_mem_total_bytes[gid]);
 
-    if (est_codes.flops == STATS_SENTINEL_OK)
-      g_gpu_est_flops[gid] =
-          ull_add_sat(g_gpu_est_flops[gid], clamp_double_to_ull(flops_rate * dt_sec));
-    if (est_codes.mem == STATS_SENTINEL_OK) {
-      g_gpu_est_mem_total_bytes[gid] = ull_add_sat(g_gpu_est_mem_total_bytes[gid], delta_mem_bytes);
-      g_gpu_est_mem_read_bytes[gid] =
-          ull_add_sat(g_gpu_est_mem_read_bytes[gid], delta_mem_read_bytes);
-      g_gpu_est_mem_write_bytes[gid] =
-          ull_add_sat(g_gpu_est_mem_write_bytes[gid], delta_mem_bytes - delta_mem_read_bytes);
-    }
+    g_gpu_est_mem_read_bytes[gid] += mem / 2ULL;
+    g_gpu_est_mem_write_bytes[gid] += mem - mem / 2ULL;
   }
 
   stats_set(stats, "temperature", I64_TO_LLU(row->temperature));
@@ -258,6 +248,13 @@ static void nvidia_gpu_collect(struct stats_type *type)
   if (rc != DCGM_ST_OK) {
     fail_stage = NVIDIA_GPU_FAIL_FETCH;
     ERROR("DCGM fetch latest values failed: %s\n", nvidia_gpu_dcgm_err(rc));
+    /* A fetch that fails from startup still shows its GPUs: the code lands on rows 0..ndev-1. */
+    for (i = 0; i < g_nvidia_gpu_runtime_ndev; i++) {
+      char dev[16];
+
+      snprintf(dev, sizeof(dev), "%d", i);
+      (void)get_current_stats(type, dev);
+    }
     nvidia_gpu_runtime_cleanup();
     goto out;
   }

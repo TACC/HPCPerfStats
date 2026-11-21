@@ -429,11 +429,15 @@ static void test_not_built_keys(void)
   assert(code_of("mbox0", "dram_pre_count_miss") == STATS_SENTINEL_NOT_BUILT);
   x86_uncore_perf_close(&u);
   u = make_reader(&x86_uncore_profile_df_zen2);
-  assert(x86_uncore_perf_attach(&u) == 1 && u.n_open == 2);
+  /* Rome: a row per DRAM channel (8); only channels 0-1 have verified codes. */
+  assert(x86_uncore_perf_attach(&u) == 8 && u.n_open == 2);
   assert(fake_perf_find(11, 0x3807, 0) >= 0 && fake_perf_find(11, 0x3847, 0) >= 0);
   read_and_publish(&u);
-  assert(code_of("df", "dram_chan2_bytes") == STATS_SENTINEL_NOT_BUILT);
-  assert(code_of("df", "dram_chan3_bytes") == STATS_SENTINEL_NOT_BUILT);
+  assert(code_of("chan2", "dram_data_beats") == STATS_SENTINEL_NOT_BUILT);
+  assert(code_of("chan7", "dram_data_beats") == STATS_SENTINEL_NOT_BUILT);
+  assert(code_of("chan7", "pmu_enabled_time") == STATS_SENTINEL_NOT_BUILT);
+  assert(code_of("chan0", "dram_read_beats") == STATS_SENTINEL_NOT_PRESENT);
+  assert(code_of("chan8", "dram_data_beats") == -1); /* no such row */
   tree_done(&u);
   printf("test_not_built_keys passed\n");
 }
@@ -452,7 +456,8 @@ static void test_df_zen4_read_plus_write_beats(void)
   add_cpu(0, 0);
   add_cpu(64, 1);
   u = make_reader(&x86_uncore_profile_df_zen4);
-  assert(x86_uncore_perf_attach(&u) == 1 && strcmp(u.dev[0].name, "df") == 0);
+  /* Genoa / Turin: 12 channel rows; channels 0-3 have verified read and write codes. */
+  assert(x86_uncore_perf_attach(&u) == 12 && strcmp(u.dev[0].name, "chan0") == 0);
   assert(u.packages == 2 && u.n_open == 16);
   for (i = 0; i < g_fake_perf_n; i++)
     fake_perf_push(i, 0, 0, 0);
@@ -465,10 +470,14 @@ static void test_df_zen4_read_plus_write_beats(void)
     if (g_fake_perf_calls[i].config != rd0 && g_fake_perf_calls[i].config != wr0)
       fake_perf_push(i, 5, 10, 10);
   read_and_publish(&u);
-  /* A channel key is read + write beats over both sockets. */
-  assert(val_of("df", "dram_chan0_bytes") == 3100);
-  assert(val_of("df", "dram_chan3_bytes") == 20);
+  /* Each row splits read and write beats, each summed over both sockets. */
+  assert(val_of("chan0", "dram_read_beats") == 3000);
+  assert(val_of("chan0", "dram_write_beats") == 100);
+  assert(val_of("chan3", "dram_read_beats") == 10);
+  assert(code_of("chan0", "dram_data_beats") == STATS_SENTINEL_NOT_PRESENT);
   assert(fake_perf_find(11, 0xdf | (0xffULL << 8) | (0xfULL << 24), 64) >= 0);
+  assert(code_of("chan4", "dram_read_beats") == STATS_SENTINEL_NOT_BUILT);
+  assert(code_of("chan11", "dram_write_beats") == STATS_SENTINEL_NOT_BUILT);
   tree_done(&u);
   printf("test_df_zen4_read_plus_write_beats passed\n");
 }
@@ -483,11 +492,46 @@ static void test_df_zen3_single_socket(void)
   add_cpu(0, 0);
   add_cpu(1, 1);
   u = make_reader(&x86_uncore_profile_df_zen3);
-  /* An el8 amd_df cpumask names one CPU on a two-socket node: one row, one fd per event. */
-  assert(x86_uncore_perf_attach(&u) == 1 && u.packages == 2 && u.dev[0].n_cpus == 1);
-  assert(u.n_open == 4 && fake_perf_find(11, 0x38c7, 0) >= 0);
+  /* An el8 amd_df cpumask names one CPU on a two-socket node: one fd per event and row. */
+  assert(x86_uncore_perf_attach(&u) == 8 && u.packages == 2 && u.dev[0].n_cpus == 1);
+  assert(u.n_open == 8 && fake_perf_find(11, 0x38c7, 0) >= 0);
   tree_done(&u);
   printf("test_df_zen3_single_socket passed\n");
+}
+
+static void test_df_zen3_eight_channels(void)
+{
+  /* Event bit 8 lands in config bit 32 through the amd_df format (channels 4-7). */
+  const uint64_t ch4 = 0x07 | (0x38ULL << 8) | (1ULL << 32);
+  const uint64_t ch7 = 0xc7 | (0x38ULL << 8) | (1ULL << 32);
+  struct x86_uncore_perf u;
+  int i;
+
+  tree_init();
+  add_pmu("amd_df", "11", "0\n");
+  add_file("amd_df", "format/event", "config:0-7,32-35,59-60\n");
+  add_file("amd_df", "format/umask", "config:8-15\n");
+  add_cpu(0, 0);
+  u = make_reader(&x86_uncore_profile_df_zen3);
+  assert(x86_uncore_perf_attach(&u) == 8 && u.n_open == 8);
+  for (i = 0; i < g_fake_perf_n; i++)
+    fake_perf_push(i, 0, 0, 0);
+  x86_uncore_perf_read(&u);
+  for (i = 0; i < g_fake_perf_n; i++)
+    if (g_fake_perf_calls[i].config != ch4 && g_fake_perf_calls[i].config != ch7)
+      fake_perf_push(i, 100, 10, 10);
+  fake_perf_push(fake_perf_find(11, ch4, 0), 4000, 10, 10);
+  fake_perf_push(fake_perf_find(11, ch7, 0), 7000, 10, 10);
+  read_and_publish(&u);
+  /* Each Milan channel is its own row with one combined read + write beat count. */
+  assert(val_of("chan4", "dram_data_beats") == 4000);
+  assert(val_of("chan7", "dram_data_beats") == 7000);
+  assert(val_of("chan0", "dram_data_beats") == 100);
+  assert(code_of("chan0", "dram_write_beats") == STATS_SENTINEL_NOT_PRESENT);
+  assert(val_of("chan7", "pmu_running_time") == 10);
+  assert(code_of("chan8", "dram_data_beats") == -1); /* Milan has 8 channels */
+  tree_done(&u);
+  printf("test_df_zen3_eight_channels passed\n");
 }
 
 static void test_reattach_keeps_lifetimes(void)
@@ -608,6 +652,7 @@ int main(void)
   test_not_built_keys();
   test_df_zen4_read_plus_write_beats();
   test_df_zen3_single_socket();
+  test_df_zen3_eight_channels();
   test_reattach_keeps_lifetimes();
   test_count_packages();
   test_begin_gating();

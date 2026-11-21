@@ -30,20 +30,24 @@ printf '%s\n' '$hpcperfstats 3.1' '$hostname h1' '$sentinels 1' \
   '!host_ps ctxt,E processes,E load_1, load_5, load_15, nr_running, nr_threads,' >"${SHM}/schema"
 
 # Fake daemon: one `full` sample per second (slower than the capture poll, so no sample is
-# skipped); while the conf holds debug_fault_inject, the first
-# two samples carry the injected code (and, in "leak" mode, a second key the plan never named).
+# skipped); while the conf holds debug_fault_inject, samples 1 and 2 (one clean cycle, then
+# FAULT_INJECT_TICKS=2) carry the injected code (and, in "leak" mode, a second key the plan never
+# named).
 cat >"${WORK}/writer.sh" <<'W'
 conf="$1"; shm="$2"; mode="$3"; i=0
 while test "$i" -lt 200; do
   load="11 12 13 2 300"; ctxt=$((1000 + i))
-  if grep -q '^debug_fault_inject' "$conf" && test "$i" -lt 2; then
+  if grep -q '^debug_fault_inject' "$conf" && test "$i" -ge 1 && test "$i" -lt 3; then
     load="-3 -3 -3 -3 -3"
     test "$mode" = leak && ctxt=-7
   fi
   printf '%s j1 h1\nhost_ps - %s 50 %s\n' "$(date +%s.%N)" "$ctxt" "$load" >"$shm/full.tmp"
   mv "$shm/full.tmp" "$shm/full"
-  printf '%s\n' 'ps.c:54 3' 'tmpfs.c:47 0' >"$shm/sentinel_sites"
-  test "$mode" = uncovered && printf '%s\n' 'hps_new_collector.c:12 0' >>"$shm/sentinel_sites"
+  # One atomic replace: a reader between a truncate and an append missed the uncovered site
+  # (seen under qemu on the aarch64 cross run).
+  printf '%s\n' 'ps.c:54 3' 'tmpfs.c:47 0' >"$shm/sites.tmp"
+  test "$mode" = uncovered && printf '%s\n' 'hps_new_collector.c:12 0' >>"$shm/sites.tmp"
+  mv "$shm/sites.tmp" "$shm/sentinel_sites"
   i=$((i + 1)); sleep 1
 done
 W
@@ -63,7 +67,8 @@ run_verify() {
 }
 
 run_verify clean >"${WORK}/clean.txt" 2>&1 || { cat "${WORK}/clean.txt" >&2; exit 1; }
-grep -q '^PASS fault_inject open:/proc/loadavg@2' "${WORK}/clean.txt"
+grep -q '^PASS fault_inject open:/proc/loadavg@1+2' "${WORK}/clean.txt"
+grep -q '^fault injection: debug_fault_inject open:/proc/loadavg@1+2$' "${WORK}/clean.txt"
 grep -q '^NOTE fault_inject site tmpfs.c:47 never fired (covered by CI matrix)' "${WORK}/clean.txt"
 grep -q '^fault_inject: PASS' "${WORK}/clean.txt"
 if grep -q debug_fault_inject "${WORK}/conf"; then

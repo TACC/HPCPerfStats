@@ -11,6 +11,8 @@ int ib_sysfs_has_opa_hfi(void);
 int opa_hfi_unit_from_name(const char *hca);
 
 int ib_port_collectible(const char *hca, int port);
-void ib_foreach_hca_port(ib_hca_port_fn fn, void *ctx);
+/* Calls fn for each collectible non-HFI port. Returns 0, or -1 with errno when fn is NULL
+ * (EINVAL) or /sys/class/infiniband cannot be opened (sys_iter_for_each). */
+int ib_foreach_hca_port(ib_hca_port_fn fn, void *ctx);
 
 #endif

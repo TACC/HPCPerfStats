@@ -1,5 +1,5 @@
 /* nvidia_gpu_estimate: per-compute-capability FLOP peaks, gpu_flops_rate, sentinel codes of the
- * derived keys, nvidia_gpu_link_rate_integrate. */
+ * derived keys, nvidia_gpu_rate_integrate. */
 #include <assert.h>
 #include <limits.h>
 #include <math.h>
@@ -306,34 +306,50 @@ static void test_link_rate_integrate_accumulates(void)
   unsigned long long acc = 0ULL;
 
   /* c122-018 idle PCIe TX 175 B/s over a 60 s collect = 10500 B. */
-  assert(nvidia_gpu_link_rate_integrate(175ULL, 60000000LL, &acc) == 10500ULL);
+  assert(nvidia_gpu_rate_integrate(175.0, 60000000LL, &acc) == 10500ULL);
   /* The rate dropped (175 -> 157) but the counter still grows (was "decreased"). */
-  assert(nvidia_gpu_link_rate_integrate(157ULL, 60000000LL, &acc) == 9420ULL);
+  assert(nvidia_gpu_rate_integrate(157.0, 60000000LL, &acc) == 9420ULL);
   assert(acc == 19920ULL);
   /* 2.653e11 B/s NvLink for 0.5 s. */
   acc = 0ULL;
-  assert(nvidia_gpu_link_rate_integrate(265333528373ULL, 500000LL, &acc) == 132666764187ULL);
+  assert(nvidia_gpu_rate_integrate(265333528373.0, 500000LL, &acc) == 132666764187ULL);
 }
 
 static void test_link_rate_integrate_first_collect_and_null(void)
 {
   unsigned long long acc = 42ULL;
 
-  assert(nvidia_gpu_link_rate_integrate(1000ULL, 0LL, &acc) == 0ULL);
-  assert(nvidia_gpu_link_rate_integrate(1000ULL, -5LL, &acc) == 0ULL);
+  assert(nvidia_gpu_rate_integrate(1000.0, 0LL, &acc) == 0ULL);
+  assert(nvidia_gpu_rate_integrate(1000.0, -5LL, &acc) == 0ULL);
   assert(acc == 42ULL);
-  assert(nvidia_gpu_link_rate_integrate(1000ULL, 1000000LL, NULL) == 0ULL);
+  assert(nvidia_gpu_rate_integrate(1000.0, 1000000LL, NULL) == 0ULL);
 }
 
-static void test_link_rate_integrate_saturates(void)
+static void test_rate_integrate_wraps_like_a_counter(void)
 {
   unsigned long long acc = ULLONG_MAX - 10ULL;
 
-  assert(nvidia_gpu_link_rate_integrate(100ULL, 1000000LL, &acc) == 100ULL);
-  assert(acc == ULLONG_MAX);
+  /* W=64 lifetime counters wrap modulo 2^64 (the consumer undoes the wrap); saturating at
+   * 2^64 - 1 froze gpu_flops after about 1.8e19 FLOPs and its delta read 0 from then on. */
+  assert(nvidia_gpu_rate_integrate(100.0, 1000000LL, &acc) == 100ULL);
+  assert(acc == 89ULL);
+  assert(nvidia_gpu_rate_integrate(100.0, 1000000LL, &acc) == 100ULL);
+  assert(acc == 189ULL);
+  /* An increment above 2^64 is clamped, never undefined. */
   acc = 0ULL;
-  assert(nvidia_gpu_link_rate_integrate(UINT64_MAX, 3600000000LL, &acc) == ULLONG_MAX);
+  assert(nvidia_gpu_rate_integrate(1e30, 3600000000LL, &acc) == ULLONG_MAX);
   assert(acc == ULLONG_MAX);
+}
+
+static void test_rate_integrate_takes_fractional_rates(void)
+{
+  unsigned long long acc = 0ULL;
+
+  /* gpu_flops: 4.95e14 FLOP/s over 30 s; mem bytes from a double rate too. */
+  assert(nvidia_gpu_rate_integrate(4.95e14, 30000000LL, &acc) == 14850000000000000ULL);
+  assert(nvidia_gpu_rate_integrate(0.4, 1000000LL, &acc) == 0ULL);
+  assert(nvidia_gpu_rate_integrate(-5.0, 1000000LL, &acc) == 0ULL);
+  assert(acc == 14850000000000000ULL);
 }
 
 static unsigned int list_code(const struct nvidia_gpu_row_miss *miss, int n, const char *key)
@@ -425,10 +441,9 @@ static void test_gpm_back_to_back_integrates_real_delta(void)
   nvidia_gpu_estimate_row_codes(&row, &codes);
   assert(codes.flops == STATS_SENTINEL_OK && codes.link == STATS_SENTINEL_OK);
   assert(nvidia_gpu_estimate_miss_list(&row, &codes, miss) == 0);
-  assert(nvidia_gpu_link_rate_integrate(row.prof_nvlink_tx_bytes, 30000000LL, &acc) ==
-         7958691840000ULL);
+  assert(nvidia_gpu_rate_integrate(row.prof_nvlink_tx_bytes, 30000000LL, &acc) == 7958691840000ULL);
   /* Back-to-back tick 40 ms later: + rate x 0.04 s, not another 30 s window. */
-  assert(nvidia_gpu_link_rate_integrate(row.prof_nvlink_tx_bytes, 40000LL, &acc) == 10611589120ULL);
+  assert(nvidia_gpu_rate_integrate(row.prof_nvlink_tx_bytes, 40000LL, &acc) == 10611589120ULL);
   assert(acc == 7958691840000ULL + 10611589120ULL);
 }
 
@@ -447,7 +462,8 @@ int main(void)
   test_mem_util_scales_bandwidth();
   test_link_rate_integrate_accumulates();
   test_link_rate_integrate_first_collect_and_null();
-  test_link_rate_integrate_saturates();
+  test_rate_integrate_wraps_like_a_counter();
+  test_rate_integrate_takes_fractional_rates();
   printf("test_nvidia_gpu_estimate passed\n");
   return 0;
 }

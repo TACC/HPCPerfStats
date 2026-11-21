@@ -30,10 +30,12 @@ unsigned int nvidia_gpu_sm_count(const dcgm_data_t *row);
 void nvidia_gpu_estimate_rates(const dcgm_data_t *row, double *flops_rate_out,
                                double *mem_bw_rate_out);
 
-/* DCGM PROF 1009-1012 and GPM PCIe/NvLink are byte RATES (B/s), not counters: add
- * rate x delta_us into *acc (saturating) and return the bytes added; 0 when delta_us <= 0. */
-unsigned long long nvidia_gpu_link_rate_integrate(uint64_t rate_bps, long long delta_us,
-                                                  unsigned long long *acc);
+/* Integrates a per-second rate (DCGM PROF 1009-1012 / GPM PCIe and NvLink bytes, estimated FLOPs
+ * and memory bytes) over delta_us into the lifetime counter *acc, which wraps modulo 2^64 like
+ * a hardware counter (W=64 keys). Returns the rounded increment, clamped to 2^64 - 1; 0 when
+ * delta_us <= 0 or the rate is not positive. */
+unsigned long long nvidia_gpu_rate_integrate(double rate_per_s, long long delta_us,
+                                             unsigned long long *acc);
 
 /* Sentinel of each derived-key input group of one row: STATS_SENTINEL_OK when every input was
  * read, else the code of the first row->miss entry that names one of the group's inputs. */

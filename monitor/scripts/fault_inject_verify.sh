@@ -2,8 +2,9 @@
 # Live fault-injection step of rpm_debug_shm_verify.sh (DEBUG RPMs only).
 #
 # Restarts the daemon with `debug_fault_inject <spec>` appended to its conf (every injectable
-# point this node has, for FAULT_INJECT_TICKS collect cycles), captures the samples across the
-# window, restores the conf and restarts again, then runs scripts/fault_inject_check.py: codes on
+# point this node has, for FAULT_INJECT_TICKS collect cycles after one clean cycle; the IB
+# opendir fault last, see fault_inject_check.py), captures the samples the plan needs, restores
+# the conf and restarts again, then runs scripts/fault_inject_check.py: codes on
 # exactly the planned keys, values back after release, bridge validity, and every registered
 # failure site fired (NOTE for sites whose collector is not active on this node).
 #
@@ -44,12 +45,12 @@ if test -z "${spec}"; then
   echo "SKIP: fault injection (no injectable fault point on this node)"
   exit 0
 fi
-echo "fault injection: debug_fault_inject ${spec} (${ticks} cycles)"
+echo "fault injection: debug_fault_inject ${spec}"
 
 cp -p "${conf}" "${backup}"
 printf '\ndebug_fault_inject %s\n' "${spec}" >>"${conf}"
 "${PY}" "${CHECK}" capture --shm-dir "${SHM_DIR}" --out-dir "${work}/cap" --restart-cmd "${restart}" \
-  --count "$((ticks + 3))" --timeout "$((freq * 3 + 30))"
+  --plan "${work}/plan.json" --timeout "$((freq * 3 + 30))"
 
 # Restore before judging, so a failed check still leaves the node on its real conf.
 cp -p "${backup}" "${conf}"
@@ -61,4 +62,4 @@ if test -n "${FAULT_INJECT_REPORT:-}"; then
   report_args=(--report "${FAULT_INJECT_REPORT}")
 fi
 "${PY}" "${CHECK}" check --plan "${work}/plan.json" --manifest "${MANIFEST}" \
-  --capture-dir "${work}/cap" --ticks "${ticks}" --sample-freq "${freq}" "${report_args[@]}"
+  --capture-dir "${work}/cap" --sample-freq "${freq}" "${report_args[@]}"

@@ -3,11 +3,17 @@
 
 plan     pick the injectable fault points this node has, write the plan JSON and print the
          debug_fault_inject spec (empty when none applies)
-capture  copy the current shm sample as the baseline, run the restart command, then copy
-         --count consecutive samples and the sentinel_sites file
+capture  copy the current shm sample as the baseline, run the restart command, then copy as
+         many consecutive samples as the plan needs and the sentinel_sites file
 check    the forced codes appear on exactly the planned keys, values resume after release
          where the read path does not latch, bridgeable gaps keep their counters monotonic,
          and every registered failure site fired unless its collector is inactive here
+
+Sample i of a capture is collect cycle i after the restart. A collect-time fault arms after
+ARM_DELAY clean cycles (`@delay+ticks`), so the rows it must mark already exist; perf_open faults
+act at begin and hold for the whole run. The opendir fault on /sys/class/infiniband runs last:
+it stops the port walk (no MAD query is reached) and the directory latch holds it until the
+restart, so it starts after every other host_ib fault has been checked for resume.
 
 Output is bounded (--max-lines); the full report goes to --report.
 """
@@ -40,7 +46,10 @@ READ_FAILED = _code("READ_FAILED")
 BACKEND_ERROR = _code("BACKEND_ERROR")
 BACKOFF = _code("BACKOFF")
 PMU_BUSY = _code("PMU_BUSY")
+NOT_PRESENT = _code("NOT_PRESENT")
 EBUSY = 16
+ARM_DELAY = 1  # clean collect cycles before a collect-time fault fires
+RESUME_AFTER = 2  # released cycles before the resume check
 
 _IB_MAD_KEYS = (
     "port_select counter_select port_xmit_pkts port_rcv_pkts port_unicast_xmit_pkts "
@@ -90,31 +99,63 @@ def build_plan(caps: dict, manifest: dict, *, ticks: int, sys_root: Path) -> lis
     has_ib = ib_dir.is_dir() and any(not d.name.startswith("hfi1") for d in ib_dir.iterdir())
     plan: list[dict] = []
 
-    def add(spec: str, type_name: str, keys: list[str], codes: list[int], resume: bool) -> None:
-        plan.append({"spec": spec, "type": type_name, "keys": keys, "codes": codes, "resume": resume})
+    def add(point: str, type_name: str, keys: list[str], codes: list[int], resume: bool, *,
+            delay: int | None = ARM_DELAY, n: int = ticks, also: tuple[int, ...] = ()) -> None:
+        """delay None: active from begin until the restart (perf_open). `also`: codes the
+        fault's aftermath may leave on its keys besides the forced ones."""
+        spec = point if delay is None else f"{point}@{delay}+{n}" if delay else f"{point}@{n}"
+        plan.append({"spec": spec, "type": type_name, "keys": keys, "codes": codes, "resume": resume,
+                     "delay": delay, "ticks": n, "also": list(also)})
 
     if "host_ps" in schema:
-        add(f"open:/proc/loadavg@{ticks}", "host_ps",
+        add("open:/proc/loadavg", "host_ps",
             ["load_1", "load_5", "load_15", "nr_running", "nr_threads"], [READ_FAILED], True)
-    if "host_ib" in schema and has_ib:
-        sysfs = [schema_key_name(k) for k in schema["host_ib"] if schema_key_name(k) not in _IB_MAD_KEYS]
-        # path_opendir_or_record_fail latches the directory until restart: no resume check.
-        add(f"opendir:/sys/class/infiniband@{ticks}", "host_ib", sysfs, [READ_FAILED], False)
-        if tokens & {"ib", "ibdyn"}:
-            # Fewer ticks than the MAD fail threshold: BACKEND_ERROR, BACKOFF only on a long run.
-            add(f"mad_query@{ticks}", "host_ib", list(_IB_MAD_KEYS), [BACKEND_ERROR, BACKOFF], True)
+    if "host_ib" in schema and has_ib and tokens & {"ib", "ibdyn"}:
+        # Fewer ticks than the MAD fail threshold: BACKEND_ERROR, BACKOFF only on a long run.
+        add("mad_query", "host_ib", list(_IB_MAD_KEYS), [BACKEND_ERROR, BACKOFF], True)
     if "nvidia_gpu" in schema:
-        add(f"dcgm_fetch@{ticks}", "nvidia_gpu", ["*"], [BACKEND_ERROR], True)
+        add("dcgm_fetch", "nvidia_gpu", ["*"], [BACKEND_ERROR], True)
     if "host_power_socket" in schema:
-        add(f"hwmon_read@{ticks}", "host_power_socket", ["*"], [READ_FAILED], True)
+        add("hwmon_read", "host_power_socket", ["*"], [READ_FAILED], True)
     if "host_cpu_hw" in schema and backend == "arm":
         # Opens happen at begin / SIGHUP only, so the code holds until the restart that ends the run.
-        add(f"perf_open:fp_dp_spec!{EBUSY}", "host_cpu_hw", ["arm_fp_dp_spec"], [PMU_BUSY], False)
+        add(f"perf_open:fp_dp_spec!{EBUSY}", "host_cpu_hw", ["arm_fp_dp_spec"], [PMU_BUSY], False,
+            delay=None)
     if "host_cpu_hw" in schema and backend == "x86":
-        # x86_core_perf "instructions" (instr_retired; also instr_retired_any on Intel).
-        add(f"perf_open:instructions!{EBUSY}", "host_cpu_hw", ["instr_retired", "instr_retired_any"],
-            [PMU_BUSY], False)
+        # x86_core_perf "instructions": instr_retired (+ instr_retired_any on Intel). On AMD the
+        # sysfs alias resolves to the retired_instructions raw event, which inherits the failed open.
+        add(f"perf_open:instructions!{EBUSY}", "host_cpu_hw",
+            ["instr_retired", "instr_retired_any", "retired_instructions"], [PMU_BUSY], False,
+            delay=None)
+    if "host_ib" in schema and has_ib:
+        # The failed walk marks every host_ib key; the directory latch then answers ENOENT
+        # (NOT_PRESENT) until the restart, so the fault needs one cycle and has no resume check.
+        # It starts two cycles after the last host_ib resume check, past that window's slack.
+        start = max((resume_index(e) for e in plan if e["type"] == "host_ib"), default=0) + 2
+        add("opendir:/sys/class/infiniband", "host_ib", ["*"], [READ_FAILED], False,
+            delay=max(start, ARM_DELAY), n=1, also=(NOT_PRESENT,))
     return plan
+
+
+def fault_window(entry: dict) -> tuple[int, int | None]:
+    """Capture indices [lo, hi) where the fault fires, one cycle of slack on each side for a
+    collect the capture did not see (perf_open entries: lo 0, hi None = the whole run)."""
+    delay = entry.get("delay", 0)
+    if delay is None:
+        return 0, None
+    return max(0, delay - 1), delay + entry["ticks"] + 1
+
+
+def resume_index(entry: dict) -> int:
+    """Capture index of the resume check: RESUME_AFTER cycles after release."""
+    return (entry.get("delay") or 0) + entry["ticks"] + RESUME_AFTER
+
+
+def capture_count(plan: list[dict]) -> int:
+    """Samples a capture needs so every window and resume check falls inside it."""
+    ends = [resume_index(e) + 1 for e in plan if e["resume"]]
+    ends += [fault_window(e)[1] for e in plan if fault_window(e)[1] is not None]
+    return max(ends, default=RESUME_AFTER + 1)
 
 
 def capture(shm_dir: Path, out_dir: Path, *, restart_cmd: str, count: int, timeout: float) -> None:
@@ -139,7 +180,7 @@ def _keys_of(entry: dict, schema: dict[str, list[str]]) -> set[str]:
     return set(entry["keys"])
 
 
-def check(plan: list[dict], manifest: dict, cap_dir: Path, *, ticks: int, sample_freq: float) -> tuple[list[str], list[str]]:
+def check(plan: list[dict], manifest: dict, cap_dir: Path, *, sample_freq: float) -> tuple[list[str], list[str]]:
     """Notes and errors for one captured run."""
     notes: list[str] = []
     errors: list[str] = []
@@ -148,8 +189,9 @@ def check(plan: list[dict], manifest: dict, cap_dir: Path, *, ticks: int, sample
     schema.update({t: k for t, k in parse_schema_counts(schema_body).items() if t in schema})
     paths = sorted(cap_dir.glob("t[0-9]*"), key=lambda p: int(p.name[1:]))
     bodies = [p.read_text(encoding="utf-8") for p in paths]
-    if len(bodies) < ticks + 2:
-        return notes, [f"FAIL fault_inject: {len(bodies)} captures, need {ticks + 2}"]
+    need = capture_count(plan)
+    if len(bodies) < need:
+        return notes, [f"FAIL fault_inject: {len(bodies)} captures, need {need}"]
     req = False
     tier = None
     if any(" @full" in ln for ln in bodies[0].splitlines()):
@@ -157,15 +199,16 @@ def check(plan: list[dict], manifest: dict, cap_dir: Path, *, ticks: int, sample
     maps = [sentinel_keys(b, schema, require_tier=req, allowed_tier=tier) for b in bodies]
     baseline = sentinel_keys((cap_dir / "baseline").read_text(encoding="utf-8"), schema,
                              require_tier=req, allowed_tier=tier)
-    window, after = maps[:ticks], maps[-1]
+    window = maps[:max([hi for _, hi in map(fault_window, plan) if hi is not None], default=0)]
 
     expected: dict[tuple[str, str], set[int]] = {}
     for entry in plan:
         for key in _keys_of(entry, schema):
-            expected.setdefault((entry["type"], key), set()).update(entry["codes"])
+            expected.setdefault((entry["type"], key), set()).update(entry["codes"] + entry.get("also", []))
     for entry in plan:
         keys = _keys_of(entry, schema)
-        hit = {(t, d, k) for m in window for (t, d, k), c in m.items()
+        lo, hi = fault_window(entry)
+        hit = {(t, d, k) for m in maps[lo:hi] for (t, d, k), c in m.items()
                if t == entry["type"] and k in keys and c in entry["codes"]}
         if not hit:
             errors.append(f"FAIL fault_inject {entry['spec']}: no {entry['type']} key carried "
@@ -173,7 +216,7 @@ def check(plan: list[dict], manifest: dict, cap_dir: Path, *, ticks: int, sample
         else:
             notes.append(f"PASS fault_inject {entry['spec']}: {len(hit)} key(s)")
         if entry["resume"]:
-            stuck = sorted(f"{d} {k}" for (t, d, k), c in after.items()
+            stuck = sorted(f"{d} {k}" for (t, d, k), c in maps[resume_index(entry)].items()
                            if t == entry["type"] and k in keys and c in entry["codes"])
             if stuck:
                 errors.append(f"FAIL fault_inject {entry['spec']}: no value after release: " + ", ".join(stuck[:8]))
@@ -228,13 +271,12 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--shm-dir", type=Path, required=True)
     c.add_argument("--out-dir", type=Path, required=True)
     c.add_argument("--restart-cmd", required=True)
-    c.add_argument("--count", type=int, required=True)
+    c.add_argument("--plan", type=Path, required=True)
     c.add_argument("--timeout", type=float, default=120.0)
     k = sub.add_parser("check")
     k.add_argument("--plan", type=Path, required=True)
     k.add_argument("--manifest", type=Path, required=True)
     k.add_argument("--capture-dir", type=Path, required=True)
-    k.add_argument("--ticks", type=int, default=3)
     k.add_argument("--sample-freq", type=float, default=30.0)
     k.add_argument("--report", type=Path, default=None)
     k.add_argument("--max-lines", type=int, default=40)
@@ -249,15 +291,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "capture":
         try:
-            capture(args.shm_dir, args.out_dir, restart_cmd=args.restart_cmd, count=args.count,
+            plan = json.loads(args.plan.read_text(encoding="utf-8"))
+            capture(args.shm_dir, args.out_dir, restart_cmd=args.restart_cmd, count=capture_count(plan),
                     timeout=args.timeout)
-        except (OSError, TimeoutError, subprocess.CalledProcessError) as exc:
+        except (OSError, TimeoutError, ValueError, subprocess.CalledProcessError) as exc:
             print(f"FAIL fault_inject capture: {exc}")
             return 1
         return 0
     plan = json.loads(args.plan.read_text(encoding="utf-8"))
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-    notes, errors = check(plan, manifest, args.capture_dir, ticks=args.ticks, sample_freq=args.sample_freq)
+    notes, errors = check(plan, manifest, args.capture_dir, sample_freq=args.sample_freq)
     s_notes, s_err = check_sites(args.capture_dir / "sentinel_sites", manifest)
     lines = notes + s_notes + errors + s_err
     if args.report is not None:

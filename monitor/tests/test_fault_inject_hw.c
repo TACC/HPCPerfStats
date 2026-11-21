@@ -1,7 +1,8 @@
 /* Fault-injection matrix for the hardware fault points (built with -DDEBUG in every build):
  * perf_open (EBUSY PMU_BUSY, EACCES PERMISSION_DENIED), mad_query (BACKEND_ERROR, then BACKOFF
  * once the fail streak triggers), dcgm_fetch (BACKEND_ERROR on every GPU row) and hwmon_read
- * (READ_FAILED). Each is forced through the debug_fault_inject table over the existing fakes
+ * (READ_FAILED), plus a failed host_ib port walk (opendir errno code on every row) and a DCGM
+ * fetch that fails from the first cycle (rows still appear). Each is forced through the debug_fault_inject table over the existing fakes
  * (fake perf, MAD and DCGM test hooks, a fake hwmon tree), lands on exactly its keys, and
  * recovers after release; then every registered failure site in this binary must have fired. */
 #include <assert.h>
@@ -19,6 +20,7 @@
 #include "collect.h"
 #include "collect_tier.h"
 #include "dcgm_gpu_dyn.h"
+#include "dict.h"
 #include "ib.h"
 #include "ib_common.h"
 #include "ib_family.h"
@@ -45,9 +47,16 @@ int path_collect_key_value_dir(const char *dir_path, struct stats *stats)
   return 0;
 }
 
-void ib_foreach_hca_port(ib_hca_port_fn fn, void *ctx)
+static int g_ib_walk_errno; /* nonzero: /sys/class/infiniband fails to open with it */
+
+int ib_foreach_hca_port(ib_hca_port_fn fn, void *ctx)
 {
+  if (g_ib_walk_errno != 0) {
+    errno = g_ib_walk_errno;
+    return -1;
+  }
   fn("mlx5_0", 1, ctx);
+  return 0;
 }
 
 int pscanf(const char *path, const char *fmt, ...)
@@ -201,6 +210,15 @@ static void test_mad_query(void)
   ib_mad_test_reset_backoff();
   ib_tick();
   assert(state(s, "port_xmit_pkts") == STATS_SENTINEL_OK);
+
+  /* Regression: a failed port walk left every host_ib key NOT_UPDATED (no code). */
+  g_ib_walk_errno = EIO;
+  ib_tick();
+  assert(state(s, "port_rcv_errors") == STATS_SENTINEL_READ_FAILED);
+  assert(state(s, "port_xmit_pkts") == STATS_SENTINEL_READ_FAILED);
+  g_ib_walk_errno = 0;
+  ib_tick();
+  assert(state(s, "port_rcv_errors") == STATS_SENTINEL_OK);
   ib_mad_dyn_test_set_hooks(NULL);
 }
 
@@ -383,31 +401,54 @@ static void gpu_tick(void)
   stats_fault_inject_tick();
 }
 
+static void set_dcgm_hooks(struct dcgm_gpu_dyn_test_hooks *hooks)
+{
+  memset(hooks, 0, sizeof(*hooks));
+  hooks->dcgmInit = ok0;
+  hooks->dcgmShutdown = ok0;
+  hooks->dcgmStartEmbedded = fake_start;
+  hooks->dcgmStartEmbedded_v2 = fake_start_v2;
+  hooks->dcgmStopEmbedded = fake_handle_only;
+  hooks->dcgmDisconnect = fake_handle_only;
+  hooks->dcgmGetAllDevices = fake_devices;
+  hooks->dcgmGetAllSupportedDevices = fake_devices;
+  hooks->dcgmGetEntityGroupEntities = fake_entities;
+  hooks->dcgmGroupCreate = fake_group_create;
+  hooks->dcgmGroupDestroy = fake_group_destroy;
+  hooks->dcgmGroupAddDevice = fake_group_add;
+  hooks->dcgmFieldGroupCreate = fake_fg_create;
+  hooks->dcgmFieldGroupDestroy = fake_fg_destroy;
+  hooks->dcgmWatchFields = fake_watch;
+  hooks->dcgmUpdateAllFields = fake_update;
+  hooks->dcgmGetLatestValues = fake_latest;
+  dcgm_gpu_dyn_test_set_hooks(hooks);
+}
+
+/* Regression: a fetch failing from the first cycle marked an empty table, so the node showed no
+ * GPU at all instead of BACKEND_ERROR rows. Runs before any row exists. */
+static void test_dcgm_fetch_fails_at_start(void)
+{
+  struct dcgm_gpu_dyn_test_hooks hooks;
+  size_t i = 0;
+  char *key;
+
+  set_dcgm_hooks(&hooks);
+  assert(stats_fault_inject_set("dcgm_fetch@1") == 1);
+  gpu_tick();
+  key = dict_for_each(&nvidia_gpu_stats_type.st_current_dict, &i);
+  assert(key != NULL && strcmp(key_to_stats(key)->s_dev, "0") == 0);
+  assert(dict_for_each(&nvidia_gpu_stats_type.st_current_dict, &i) == NULL);
+  for (size_t k = 0; k < nvidia_gpu_stats_type.st_schema.sc_len; k++)
+    assert(key_to_stats(key)->s_val_state[k] == STATS_SENTINEL_BACKEND_ERROR);
+  dcgm_gpu_dyn_test_set_hooks(NULL);
+}
+
 static void test_dcgm_fetch(void)
 {
   struct dcgm_gpu_dyn_test_hooks hooks;
   struct stats *gpu;
 
-  memset(&hooks, 0, sizeof(hooks));
-  hooks.dcgmInit = ok0;
-  hooks.dcgmShutdown = ok0;
-  hooks.dcgmStartEmbedded = fake_start;
-  hooks.dcgmStartEmbedded_v2 = fake_start_v2;
-  hooks.dcgmStopEmbedded = fake_handle_only;
-  hooks.dcgmDisconnect = fake_handle_only;
-  hooks.dcgmGetAllDevices = fake_devices;
-  hooks.dcgmGetAllSupportedDevices = fake_devices;
-  hooks.dcgmGetEntityGroupEntities = fake_entities;
-  hooks.dcgmGroupCreate = fake_group_create;
-  hooks.dcgmGroupDestroy = fake_group_destroy;
-  hooks.dcgmGroupAddDevice = fake_group_add;
-  hooks.dcgmFieldGroupCreate = fake_fg_create;
-  hooks.dcgmFieldGroupDestroy = fake_fg_destroy;
-  hooks.dcgmWatchFields = fake_watch;
-  hooks.dcgmUpdateAllFields = fake_update;
-  hooks.dcgmGetLatestValues = fake_latest;
-  dcgm_gpu_dyn_test_set_hooks(&hooks);
-
+  set_dcgm_hooks(&hooks);
   gpu_tick();
   gpu = get_current_stats(&nvidia_gpu_stats_type, "0");
   assert(state(gpu, "gpu_util") == STATS_SENTINEL_OK);
@@ -453,6 +494,7 @@ int main(void)
   test_perf_open();
   test_mad_query();
   test_hwmon_read();
+  test_dcgm_fetch_fails_at_start();
   test_dcgm_fetch();
 
   never = stats_sentinel_sites_report(NULL);

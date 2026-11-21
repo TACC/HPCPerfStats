@@ -29,25 +29,25 @@ static const char *const skx_keys[] = {"dram_cas_reads", "dram_cas_writes", "dra
 static const char *const spr_keys[] = {"dram_cas_reads", "dram_cas_writes", "hbm_cas_reads",
                                        "hbm_cas_writes"};
 
-static const struct x86_uncore_event skx_cas[] = {{0, "cas_count_read", 0x04, 0x03},
-                                                  {1, "cas_count_write", 0x04, 0x0c}};
-static const struct x86_uncore_event icx_cas[] = {{0, "cas_count_read", 0x04, 0x0f},
-                                                  {1, "cas_count_write", 0x04, 0x30}};
-static const struct x86_uncore_event spr_cas[] = {{0, "cas_count_read", 0x05, 0xcf},
-                                                  {1, "cas_count_write", 0x05, 0xf0}};
-static const struct x86_uncore_event spr_hbm_cas[] = {{2, "cas_count_read", 0x05, 0xcf},
-                                                      {3, "cas_count_write", 0x05, 0xf0}};
+static const struct x86_uncore_event skx_cas[] = {{0, "cas_count_read", 0x04, 0x03, 0},
+                                                  {1, "cas_count_write", 0x04, 0x0c, 0}};
+static const struct x86_uncore_event icx_cas[] = {{0, "cas_count_read", 0x04, 0x0f, 0},
+                                                  {1, "cas_count_write", 0x04, 0x30, 0}};
+static const struct x86_uncore_event spr_cas[] = {{0, "cas_count_read", 0x05, 0xcf, 0},
+                                                  {1, "cas_count_write", 0x05, 0xf0, 0}};
+static const struct x86_uncore_event spr_hbm_cas[] = {{2, "cas_count_read", 0x05, 0xcf, 0},
+                                                      {3, "cas_count_write", 0x05, 0xf0, 0}};
 
 static const struct x86_uncore_class skx_classes[] = {
-    {"uncore_imc_", 1, "mbox", skx_cas, ARRAY_LEN(skx_cas)}};
+    {"uncore_imc_", 1, "mbox", skx_cas, ARRAY_LEN(skx_cas), 0}};
 /* ICX keeps its historical mdev<N> row names. */
 static const struct x86_uncore_class icx_classes[] = {
-    {"uncore_imc_", 1, "mdev", icx_cas, ARRAY_LEN(icx_cas)}};
+    {"uncore_imc_", 1, "mdev", icx_cas, ARRAY_LEN(icx_cas), 0}};
 static const struct x86_uncore_class spr_classes[] = {
-    {"uncore_imc_", 1, "mbox", spr_cas, ARRAY_LEN(spr_cas)},
-    {"uncore_hbm_", 1, "hbm", spr_hbm_cas, ARRAY_LEN(spr_hbm_cas)}};
+    {"uncore_imc_", 1, "mbox", spr_cas, ARRAY_LEN(spr_cas), 0},
+    {"uncore_hbm_", 1, "hbm", spr_hbm_cas, ARRAY_LEN(spr_hbm_cas), 0}};
 static const struct x86_uncore_class gnr_classes[] = {
-    {"uncore_imc_", 1, "mbox", spr_cas, ARRAY_LEN(spr_cas)}};
+    {"uncore_imc_", 1, "mbox", spr_cas, ARRAY_LEN(spr_cas), 0}};
 
 const struct x86_uncore_profile x86_uncore_profile_imc_skx = {
     skx_keys, ARRAY_LEN(skx_keys), (1U << 2) | (1U << 3), skx_classes, ARRAY_LEN(skx_classes)};
@@ -58,37 +58,42 @@ const struct x86_uncore_profile x86_uncore_profile_imc_spr = {spr_keys, ARRAY_LE
 const struct x86_uncore_profile x86_uncore_profile_imc_gnr = {imc_keys, ARRAY_LEN(imc_keys), 0,
                                                               gnr_classes, ARRAY_LEN(gnr_classes)};
 
-/* AMD DF DRAM data beats (64 bytes each) of channels 0-3, summed over the amd_df cpumask CPUs.
- * Zen2 / Zen3: event 0x07 + 0x40 x N, umask 0x38 (perf dram_channel_data_controller_N; Zen2 has
- * verified codes for channels 0-1 only). Zen4 / Zen5: read beats event 0x1f + 0x40 x N umask
- * 0xffe plus write beats umask 0xfff, so a channel key is read + write traffic. */
-static const char *const df_keys[] = {"dram_chan0_bytes", "dram_chan1_bytes", "dram_chan2_bytes",
-                                      "dram_chan3_bytes"};
+/* AMD DF DRAM data beats (64 bytes each), one row per DRAM channel, summed over the amd_df
+ * cpumask CPUs. Zen2 / Zen3: event 0x07 + 0x40 x N, umask 0x38 (perf
+ * dram_channel_data_controller_N), one combined read + write count (dram_data_beats); Milan
+ * channels 0-7 verified, Rome channels 0-1 only. Zen4 / Zen5: read beats event 0x1f + 0x40 x N
+ * umask 0xffe and write beats umask 0xfff (dram_read_beats / dram_write_beats); channels 0-3
+ * verified, the other rows emit NOT_BUILT. */
+static const char *const df_keys[] = {"dram_data_beats", "dram_read_beats", "dram_write_beats"};
 
 static const struct x86_uncore_event df_zen3_beats[] = {
-    {0, "dram_channel_data_controller_0", 0x07, 0x38},
-    {1, "dram_channel_data_controller_1", 0x47, 0x38},
-    {2, "dram_channel_data_controller_2", 0x87, 0x38},
-    {3, "dram_channel_data_controller_3", 0xc7, 0x38}};
+    {0, "dram_channel_data_controller_0", 0x07, 0x38, 0},
+    {0, "dram_channel_data_controller_1", 0x47, 0x38, 1},
+    {0, "dram_channel_data_controller_2", 0x87, 0x38, 2},
+    {0, "dram_channel_data_controller_3", 0xc7, 0x38, 3},
+    {0, "dram_channel_data_controller_4", 0x107, 0x38, 4},
+    {0, "dram_channel_data_controller_5", 0x147, 0x38, 5},
+    {0, "dram_channel_data_controller_6", 0x187, 0x38, 6},
+    {0, "dram_channel_data_controller_7", 0x1c7, 0x38, 7}};
 static const struct x86_uncore_event df_zen4_beats[] = {
-    {0, "local_or_remote_socket_read_data_beats_dram_0", 0x1f, 0xffe},
-    {0, "local_or_remote_socket_write_data_beats_dram_0", 0x1f, 0xfff},
-    {1, "local_or_remote_socket_read_data_beats_dram_1", 0x5f, 0xffe},
-    {1, "local_or_remote_socket_write_data_beats_dram_1", 0x5f, 0xfff},
-    {2, "local_or_remote_socket_read_data_beats_dram_2", 0x9f, 0xffe},
-    {2, "local_or_remote_socket_write_data_beats_dram_2", 0x9f, 0xfff},
-    {3, "local_or_remote_socket_read_data_beats_dram_3", 0xdf, 0xffe},
-    {3, "local_or_remote_socket_write_data_beats_dram_3", 0xdf, 0xfff}};
+    {1, "local_or_remote_socket_read_data_beats_dram_0", 0x1f, 0xffe, 0},
+    {2, "local_or_remote_socket_write_data_beats_dram_0", 0x1f, 0xfff, 0},
+    {1, "local_or_remote_socket_read_data_beats_dram_1", 0x5f, 0xffe, 1},
+    {2, "local_or_remote_socket_write_data_beats_dram_1", 0x5f, 0xfff, 1},
+    {1, "local_or_remote_socket_read_data_beats_dram_2", 0x9f, 0xffe, 2},
+    {2, "local_or_remote_socket_write_data_beats_dram_2", 0x9f, 0xfff, 2},
+    {1, "local_or_remote_socket_read_data_beats_dram_3", 0xdf, 0xffe, 3},
+    {2, "local_or_remote_socket_write_data_beats_dram_3", 0xdf, 0xfff, 3}};
 
-static const struct x86_uncore_class df_zen2_classes[] = {{"amd_df", 0, "df", df_zen3_beats, 2}};
+static const struct x86_uncore_class df_zen2_classes[] = {
+    {"amd_df", 0, "chan", df_zen3_beats, 2, 8}};
 static const struct x86_uncore_class df_zen3_classes[] = {
-    {"amd_df", 0, "df", df_zen3_beats, ARRAY_LEN(df_zen3_beats)}};
+    {"amd_df", 0, "chan", df_zen3_beats, ARRAY_LEN(df_zen3_beats), 8}};
 static const struct x86_uncore_class df_zen4_classes[] = {
-    {"amd_df", 0, "df", df_zen4_beats, ARRAY_LEN(df_zen4_beats)}};
+    {"amd_df", 0, "chan", df_zen4_beats, ARRAY_LEN(df_zen4_beats), 12}};
 
 const struct x86_uncore_profile x86_uncore_profile_df_zen2 = {
-    df_keys, ARRAY_LEN(df_keys), (1U << 2) | (1U << 3), df_zen2_classes,
-    ARRAY_LEN(df_zen2_classes)};
+    df_keys, ARRAY_LEN(df_keys), 0, df_zen2_classes, ARRAY_LEN(df_zen2_classes)};
 const struct x86_uncore_profile x86_uncore_profile_df_zen3 = {
     df_keys, ARRAY_LEN(df_keys), 0, df_zen3_classes, ARRAY_LEN(df_zen3_classes)};
 const struct x86_uncore_profile x86_uncore_profile_df_zen4 = {
@@ -304,7 +309,7 @@ void x86_uncore_perf_close(struct x86_uncore_perf *u)
   for (i = 0; i < u->n; i++) {
     struct x86_uncore_dev *d = &u->dev[i];
 
-    for (j = 0; d->ctr != NULL && j < d->cls->n_events * d->n_cpus; j++)
+    for (j = 0; d->ctr != NULL && j < d->n_ev * d->n_cpus; j++)
       if (d->ctr[j].fd >= 0)
         close(d->ctr[j].fd);
     free(d->ctr);
@@ -314,7 +319,7 @@ void x86_uncore_perf_close(struct x86_uncore_perf *u)
   u->n_open = 0;
 }
 
-/* Logs a failed event of class @p ci once per attach. */
+/* Logs failed class event @p e of class @p ci once per attach. */
 static void log_open_failure(struct x86_uncore_perf *u, int ci, int e, const char *pmu, int cpu,
                              const char *why)
 {
@@ -331,14 +336,14 @@ static void log_open_failure(struct x86_uncore_perf *u, int ci, int e, const cha
                    u->profile->keys[ev->key]);
 }
 
-/* Opens event @p e of @p d on every cpumask CPU. */
+/* Opens row event @p e of @p d on every cpumask CPU. */
 static void open_event(struct x86_uncore_perf *u, struct x86_uncore_dev *d, int ci, int e,
                        const char *pmu_dir, const char *pmu, uint32_t type)
 {
   perf_open_fn open_fn = (u->open_fn != NULL) ? u->open_fn : perf_open_cpu;
   struct perf_event_attr attr;
-  int resolved = x86_uncore_perf_event_attr(pmu_dir, type, &d->cls->events[e], &attr) == 0;
-  int c;
+  int resolved = x86_uncore_perf_event_attr(pmu_dir, type, &d->ev[e], &attr) == 0;
+  int ce = (int)(d->ev - d->cls->events) + e, c;
 
   for (c = 0; c < d->n_cpus; c++) {
     struct x86_uncore_counter *ctr = &d->ctr[e * d->n_cpus + c];
@@ -346,7 +351,7 @@ static void open_event(struct x86_uncore_perf *u, struct x86_uncore_dev *d, int 
     ctr->fd = -1;
     ctr->open_status = STATS_SENTINEL_NOT_PRESENT;
     if (!resolved) {
-      log_open_failure(u, ci, e, pmu, d->cpus[c], "no sysfs event or format for its terms");
+      log_open_failure(u, ci, ce, pmu, d->cpus[c], "no sysfs event or format for its terms");
       continue;
     }
     errno = 0;
@@ -356,12 +361,14 @@ static void open_event(struct x86_uncore_perf *u, struct x86_uncore_dev *d, int 
       continue;
     }
     ctr->open_status = perf_open_sentinel(errno != 0 ? errno : EINVAL);
-    log_open_failure(u, ci, e, pmu, d->cpus[c], strerror(errno != 0 ? errno : EINVAL));
+    log_open_failure(u, ci, ce, pmu, d->cpus[c], strerror(errno != 0 ? errno : EINVAL));
   }
 }
 
-/* Sets up row @p d for PMU instance @p index of class @p ci: type, cpumask, every event. */
-static void setup_dev(struct x86_uncore_perf *u, struct x86_uncore_dev *d, int ci, int index)
+/* Sets up row @p d for PMU instance @p index of class @p ci (@p row of a rows-split class, else
+ * -1): type, cpumask, every event of the row. */
+static void setup_dev(struct x86_uncore_perf *u, struct x86_uncore_dev *d, int ci, int index,
+                      int row)
 {
   const struct x86_uncore_class *cls = &u->profile->classes[ci];
   char pmu[64], pmu_dir[X86_UNCORE_PATH_MAX], path[X86_UNCORE_PATH_MAX + 16], mask[512];
@@ -370,26 +377,42 @@ static void setup_dev(struct x86_uncore_perf *u, struct x86_uncore_dev *d, int c
 
   memset(d, 0, sizeof(*d));
   d->cls = cls;
+  d->ev = cls->events;
+  d->n_ev = cls->n_events;
+  if (row >= 0) {
+    while (d->n_ev > 0 && d->ev->row < row) {
+      d->ev++;
+      d->n_ev--;
+    }
+    for (e = 0; e < d->n_ev && d->ev[e].row == row; e++)
+      ;
+    d->n_ev = e;
+  }
   if (cls->indexed) {
     snprintf(pmu, sizeof(pmu), "%s%d", cls->pmu, index);
     snprintf(d->name, sizeof(d->name), "%s%d", cls->dev, index);
   } else {
     snprintf(pmu, sizeof(pmu), "%s", cls->pmu);
-    snprintf(d->name, sizeof(d->name), "%s", cls->dev);
+    if (row >= 0)
+      snprintf(d->name, sizeof(d->name), "%s%d", cls->dev, row);
+    else
+      snprintf(d->name, sizeof(d->name), "%s", cls->dev);
   }
+  if (d->n_ev == 0)
+    return; /* no verified event for this row: its keys emit NOT_BUILT */
   snprintf(pmu_dir, sizeof(pmu_dir), "%s/%s", u->devices_dir, pmu);
   snprintf(path, sizeof(path), "%s/cpumask", pmu_dir);
   if (perf_pmu_type(pmu_dir, &type) == 0 && read_small_file(path, mask, sizeof(mask)) == 0)
     d->n_cpus = x86_uncore_perf_parse_cpulist(mask, d->cpus, X86_UNCORE_MAX_CPUS);
   if (d->n_cpus > 0)
-    d->ctr = calloc((size_t)(cls->n_events * d->n_cpus), sizeof(*d->ctr));
+    d->ctr = calloc((size_t)(d->n_ev * d->n_cpus), sizeof(*d->ctr));
   if (d->ctr == NULL) {
     d->n_cpus = 0;
     monitor_log_warn("x86_uncore: %s type or cpumask unreadable; row %s emits READ_FAILED\n", pmu,
                      d->name);
     return;
   }
-  for (e = 0; e < cls->n_events; e++)
+  for (e = 0; e < d->n_ev; e++)
     open_event(u, d, ci, e, pmu_dir, pmu, type);
 }
 
@@ -466,8 +489,11 @@ int x86_uncore_perf_attach(struct x86_uncore_perf *u)
     int idx[X86_UNCORE_MAX_DEVS];
     int n = discover(u, &u->profile->classes[ci], idx, X86_UNCORE_MAX_DEVS - u->n);
 
+    const struct x86_uncore_class *cls = &u->profile->classes[ci];
+
     for (i = 0; i < n; i++)
-      setup_dev(u, &u->dev[u->n++], ci, idx[i]);
+      for (j = 0; j < (cls->n_rows > 0 ? cls->n_rows : 1) && u->n < X86_UNCORE_MAX_DEVS; j++)
+        setup_dev(u, &u->dev[u->n++], ci, idx[i], cls->n_rows > 0 ? j : -1);
   }
   for (i = 0; i < u->n; i++)
     for (j = 0; j < n_saved; j++)
@@ -512,9 +538,9 @@ static void read_dev(struct x86_uncore_dev *d)
 
   for (e = 0; e < X86_UNCORE_MAX_KEYS; e++)
     d->status[e] = (d->n_cpus == 0) ? STATS_SENTINEL_READ_FAILED : STATS_SENTINEL_OK;
-  d->time_status = STATS_SENTINEL_READ_FAILED;
-  for (e = 0; e < d->cls->n_events && d->n_cpus > 0; e++) {
-    enum stats_sentinel *ks = &d->status[d->cls->events[e].key];
+  d->time_status = d->n_ev == 0 ? STATS_SENTINEL_NOT_BUILT : STATS_SENTINEL_READ_FAILED;
+  for (e = 0; e < d->n_ev && d->n_cpus > 0; e++) {
+    enum stats_sentinel *ks = &d->status[d->ev[e].key];
 
     for (c = 0; c < d->n_cpus; c++) {
       struct x86_uncore_counter *ctr = &d->ctr[e * d->n_cpus + c];
@@ -530,7 +556,7 @@ static void read_dev(struct x86_uncore_dev *d)
       any_open = 1;
       read_failed |= perf_read_scaled(ctr->fd, &ctr->prev, &delta, &t, &st) != 0;
       if (delta > 0.0)
-        d->life[d->cls->events[e].key] += (unsigned long long)(delta + 0.5);
+        d->life[d->ev[e].key] += (unsigned long long)(delta + 0.5);
       d->life_enabled_ns += t.enabled; /* times are 0 on a failed read */
       d->life_running_ns += t.running;
       merge_status(ks, st);
@@ -549,14 +575,14 @@ void x86_uncore_perf_read(struct x86_uncore_perf *u)
     read_dev(&u->dev[i]);
 }
 
-/* Bit per profile key that an event of @p cls feeds. */
-static unsigned int fed_keys(const struct x86_uncore_class *cls)
+/* Bit per profile key that one of the @p n events @p ev feeds. */
+static unsigned int fed_keys(const struct x86_uncore_event *ev, int n)
 {
   unsigned int bits = 0;
   int e;
 
-  for (e = 0; e < cls->n_events; e++)
-    bits |= 1U << cls->events[e].key;
+  for (e = 0; e < n; e++)
+    bits |= 1U << ev[e].key;
   return bits;
 }
 
@@ -575,7 +601,8 @@ void x86_uncore_perf_publish(const struct x86_uncore_perf *u, struct stats_type 
 
   for (i = 0; u != NULL && type != NULL && i < u->n; i++) {
     const struct x86_uncore_dev *d = &u->dev[i];
-    unsigned int fed = fed_keys(d->cls);
+    unsigned int fed = fed_keys(d->ev, d->n_ev);
+    unsigned int not_built = u->profile->not_built | fed_keys(d->cls->events, d->cls->n_events);
     struct stats *s = get_current_stats(type, d->name);
 
     if (s == NULL)
@@ -585,8 +612,8 @@ void x86_uncore_perf_publish(const struct x86_uncore_perf *u, struct stats_type 
 
       if (!(fed & (1U << k)))
         stats_set_missing(s, key,
-                          (u->profile->not_built & (1U << k)) ? STATS_SENTINEL_NOT_BUILT
-                                                              : STATS_SENTINEL_NOT_PRESENT);
+                          (not_built & (1U << k)) ? STATS_SENTINEL_NOT_BUILT
+                                                  : STATS_SENTINEL_NOT_PRESENT);
       else
         publish_value(s, key, d->life[k] & X86_UNCORE_W48_MASK, d->status[k]);
     }

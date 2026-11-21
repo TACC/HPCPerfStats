@@ -4,6 +4,7 @@
 #include <string.h>
 #include <limits.h>
 #include <dirent.h>
+#include <errno.h>
 
 #include "path_open_fail_once.h"
 #include "sys_iter.h"
@@ -146,11 +147,13 @@ static void ib_hca_iter_each(const char *base, const char *name, void *ctx)
   sys_iter_for_each(ports_path, ib_port_iter_each, &pc);
 }
 
-void ib_foreach_hca_port(ib_hca_port_fn fn, void *ctx)
+int ib_foreach_hca_port(ib_hca_port_fn fn, void *ctx)
 {
   struct ib_hca_iter_ctx hc = {fn, ctx};
 
-  if (fn == NULL)
-    return;
-  sys_iter_for_each("/sys/class/infiniband", ib_hca_iter_each, &hc);
+  if (fn == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+  return sys_iter_for_each("/sys/class/infiniband", ib_hca_iter_each, &hc);
 }

@@ -5,9 +5,10 @@
  * - each key records the site, errno and run length of its current sentinel (provenance), shown
  * in the /dev/shm "sentinels" file, and each state transition is logged once;
  * - STATS_FAULT(point, subject, &err) lets the debug_fault_inject conf key force a failure at a
- * fault point for N collect cycles: open, opendir (I/O primitives), perf_open (subject: event
- * name), mad_query (HCA), dcgm_fetch, hwmon_read (meter name: CPU, Grace, SysIO, Module),
- * scandir (host_proc), statfs (host_tmpfs mount dir), net_rebuild_slow (host_net).
+ * fault point for N collect cycles, optionally after D clean ones: open, opendir (I/O
+ * primitives), perf_open (subject: event name), mad_query (HCA), dcgm_fetch, hwmon_read (meter
+ * name: CPU, Grace, SysIO, Module), scandir (host_proc), statfs (host_tmpfs mount dir),
+ * net_rebuild_slow (host_net).
  *
  * Collector code uses none of this directly: stats.h maps stats_set_missing* onto the *_at
  * wrappers. The recording functions are weak, so units linked without stats_sentinel_debug.c
@@ -69,8 +70,9 @@ void stats_sentinel_debug_cycle_end(struct stats_type *type, time_t now) __attri
 /* Advance fault-injection tick counters once per collect cycle. */
 void stats_fault_inject_tick(void) __attribute__((weak));
 
-/* "point[:subject][!errno][@ticks],..." (subject: path substring; errno default EIO; ticks:
- * collect cycles, default until cleared). Replaces the table; NULL or "" clears it. Returns the
+/* "point[:subject][!errno][@[delay+]ticks],..." (subject: path substring; errno default EIO;
+ * ticks: collect cycles, default until cleared; delay: collect cycles that run unfaulted first,
+ * so rows exist before the fault fires). Replaces the table; NULL or "" clears it. Returns the
  * entry count, or -1 on a malformed spec (the table is then empty). */
 int stats_fault_inject_set(const char *spec) __attribute__((weak));
 /* Times entry `i` of the table forced a failure (0 for a bad index). */

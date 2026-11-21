@@ -1,4 +1,5 @@
 /* host_ib family - one sysfs walk per cycle for sysfs and MAD collectors. */
+#include <errno.h>
 #include <stdio.h>
 
 #include "collect.h"
@@ -90,11 +91,11 @@ void ib_family_collect_port(const char *hca, int port, void *ctx)
 #endif
 }
 
+/* A failed walk reached no port this cycle: every existing row gets the opendir errno code. */
 void ib_family_collect(struct stats_type *type)
 {
-  if (type == NULL || !type->st_enabled)
-    return;
-  ib_foreach_hca_port(ib_family_collect_port, type);
+  if (type != NULL && type->st_enabled && ib_foreach_hca_port(ib_family_collect_port, type) < 0)
+    stats_type_set_missing_all(type, stats_sentinel_for_errno(errno));
 }
 
 void ib_family_disable_all(void)

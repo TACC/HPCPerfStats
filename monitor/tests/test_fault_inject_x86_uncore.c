@@ -48,6 +48,8 @@ static void test_publish_codes(void)
   u.n = 1;
   snprintf(d->name, sizeof(d->name), "%s", "mbox3");
   d->cls = &k_class;
+  d->ev = k_events; /* the row's own events: the whole class (not rows-split) */
+  d->n_ev = 1;
   d->life[0] = (1ULL << 48) + 7; /* W=48 key: published modulo 2^48 */
   d->status[0] = STATS_SENTINEL_OK;
   d->life_enabled_ns = 2000;

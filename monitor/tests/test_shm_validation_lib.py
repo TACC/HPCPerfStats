@@ -446,7 +446,11 @@ class HostLiveProbeTests(unittest.TestCase):
         names = ["uncore_imc_1", "uncore_imc_0", "uncore_hbm_0", "amd_df"]
         self.assertEqual(self._uncore_devices(names, "intel_x86_uncore_imc_gnr"), ["mbox0", "mbox1"])
         self.assertEqual(self._uncore_devices(names, "intel_x86_uncore_imc_icx"), ["mdev0", "mdev1"])
-        self.assertEqual(self._uncore_devices(names, "amd_x86_uncore_df_turin"), ["df"])
+        # AMD DF: one chan<N> row per DRAM channel of the part (Turin / Genoa 12, Milan / Rome 8).
+        self.assertEqual(self._uncore_devices(names, "amd_x86_uncore_df_turin"),
+                         [f"chan{i}" for i in range(12)])
+        self.assertEqual(self._uncore_devices(names, "amd_x86_uncore_df_milan"),
+                         [f"chan{i}" for i in range(8)])
         self.assertIsNone(self._uncore_devices(["cpu"], "intel_x86_uncore_imc_skx"))
         self.assertIsNone(self._uncore_devices(["cpu"], "amd_x86_uncore_df_milan"))
 
@@ -2636,7 +2640,10 @@ class FaultInjectSitesTests(unittest.TestCase):
         manifest = {"types": {"host_cpu_hw": {"schema_keys": ["instr_retired,E,W=48"]}}}
         with tempfile.TemporaryDirectory() as td:
             for backend, spec, keys in (
-                ("x86", "perf_open:instructions!16", ["instr_retired", "instr_retired_any"]),
+                # AMD: the "instructions" sysfs alias is the retired_instructions raw event, so
+                # that key inherits the failed open (it was reported outside the injected points).
+                ("x86", "perf_open:instructions!16",
+                 ["instr_retired", "instr_retired_any", "retired_instructions"]),
                 ("arm", "perf_open:fp_dp_spec!16", ["arm_fp_dp_spec"]),
             ):
                 plan = fic.build_plan({"configure": {"cpu_backend": backend}}, manifest, ticks=3,
@@ -2666,6 +2673,84 @@ class FaultInjectSitesTests(unittest.TestCase):
 
         with redirect_stdout(io.StringIO()):
             self.assertEqual(c.main(), 0)
+
+
+class FaultInjectScheduleTests(unittest.TestCase):
+    """Collect-time faults arm after rows exist; the IB opendir fault runs after the MAD one."""
+
+    IB_SCHEMA = ["port_rcv_errors,", "port_xmit_pkts,"]
+
+    def _ib_plan(self, ticks: int = 3) -> list[dict]:
+        import fault_inject_check as fic
+
+        manifest = {"types": {"host_ib": {"schema_keys": self.IB_SCHEMA},
+                              "nvidia_gpu": {"schema_keys": ["gpu_util,"]}}}
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "class" / "infiniband" / "mlx5_0").mkdir(parents=True)
+            return fic.build_plan({"capability_slug": "x86_64-ver3.1-debug-hw-ib-x86perf"}, manifest,
+                                  ticks=ticks, sys_root=Path(td))
+
+    def test_collect_faults_arm_after_one_clean_cycle(self) -> None:
+        # Regression: every fault was armed from daemon start, before any row existed, so
+        # dcgm_fetch / opendir / mad_query marked empty tables.
+        plan = {e["spec"].split("@")[0]: e for e in self._ib_plan()}
+        self.assertEqual(plan["mad_query"]["spec"], "mad_query@1+3")
+        self.assertEqual(plan["dcgm_fetch"]["spec"], "dcgm_fetch@1+3")
+
+    def test_opendir_runs_alone_after_the_mad_resume_check(self) -> None:
+        # Regression: opendir shared the window with mad_query, so the stopped port walk never
+        # reached the MAD query.
+        import fault_inject_check as fic
+
+        plan = self._ib_plan()
+        opendir = plan[-1]
+        mad = next(e for e in plan if e["spec"].startswith("mad_query"))
+        self.assertTrue(opendir["spec"].startswith("opendir:/sys/class/infiniband@"))
+        self.assertEqual((opendir["keys"], opendir["ticks"], opendir["resume"]), (["*"], 1, False))
+        self.assertGreater(fic.fault_window(opendir)[0], fic.resume_index(mad))
+        self.assertEqual(fic.capture_count(plan), fic.fault_window(opendir)[1])
+
+    def _capture(self, td: Path, rows: list[str]) -> Path:
+        cap = td / "cap"
+        cap.mkdir()
+        (cap / "schema").write_text("$hpcperfstats 3.1\n$hostname h1\n$sentinels 1\n!host_ib "
+                                    + " ".join(self.IB_SCHEMA) + "\n", encoding="utf-8")
+        (cap / "baseline").write_text("1.0 j1 h1\nhost_ib mlx5_0.1 5 6\n", encoding="utf-8")
+        for i, row in enumerate(rows):
+            (cap / f"t{i}").write_text(f"{i + 2}.0 j1 h1\nhost_ib mlx5_0.1 {row}\n", encoding="utf-8")
+        return cap
+
+    def _check(self, rows_for) -> list[str]:
+        import fault_inject_check as fic
+
+        plan = [e for e in self._ib_plan() if e["type"] == "host_ib"]
+        manifest = {"enable_slow_tier": False,
+                    "types": {"host_ib": {"schema_keys": self.IB_SCHEMA}}}
+        rows = [rows_for(i, plan) for i in range(fic.capture_count(plan))]
+        with tempfile.TemporaryDirectory() as td:
+            _, errors = fic.check(plan, manifest, self._capture(Path(td), rows), sample_freq=30.0)
+        return errors
+
+    def test_check_passes_the_staggered_ib_schedule(self) -> None:
+        import fault_inject_check as fic
+
+        def rows(i: int, plan: list[dict]) -> str:
+            mad, opendir = plan
+            if fic.fault_window(opendir)[0] < i:  # the walk failed, then the latch: NOT_PRESENT
+                return "-3 -3" if i == opendir["delay"] else "-2 -2"
+            return "5 -7" if mad["delay"] <= i < mad["delay"] + mad["ticks"] else "5 6"
+
+        self.assertEqual(self._check(rows), [])
+
+    def test_check_fails_when_the_walk_failure_carries_no_code(self) -> None:
+        def rows(i: int, plan: list[dict]) -> str:
+            mad = plan[0]
+            return "5 -7" if mad["delay"] <= i < mad["delay"] + mad["ticks"] else "5 6"
+
+        errors = self._check(rows)
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(errors[0].startswith("FAIL fault_inject opendir:/sys/class/infiniband@"))
+        self.assertTrue(errors[0].endswith("no host_ib key carried READ_FAILED"))
 
 
 class EmitBuildCapabilitiesFleetTests(unittest.TestCase):

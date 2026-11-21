@@ -25,7 +25,8 @@ struct stats_fault {
   char point[STATS_FAULT_POINT_MAX];
   char subject[STATS_FAULT_SUBJECT_MAX];
   int err;
-  int ticks; /* collect cycles left; -1 until cleared */
+  int delay; /* collect cycles before the fault arms */
+  int ticks; /* collect cycles left once armed; -1 until cleared */
   unsigned long fired;
 };
 
@@ -250,11 +251,12 @@ void stats_sentinel_debug_write_shm(void)
   free(sites);
 }
 
-/* One "point[:subject][!errno][@ticks]" entry; returns -1 when malformed. */
+/* One "point[:subject][!errno][@[delay+]ticks]" entry; returns -1 when malformed. */
 static int stats_fault_parse_entry(const char *entry, size_t n, struct stats_fault *f)
 {
   char tmp[STATS_FAULT_POINT_MAX + STATS_FAULT_SUBJECT_MAX + 32];
   char *at;
+  char *plus;
   char *bang;
   char *colon;
   char *end;
@@ -268,6 +270,12 @@ static int stats_fault_parse_entry(const char *entry, size_t n, struct stats_fau
   f->ticks = -1;
   if ((at = strrchr(tmp, '@')) != NULL) {
     *at = '\0';
+    if ((plus = strchr(at + 1, '+')) != NULL) {
+      f->delay = (int)strtol(at + 1, &end, 10);
+      if (end == at + 1 || end != plus || f->delay < 0)
+        return -1;
+      at = plus;
+    }
     f->ticks = (int)strtol(at + 1, &end, 10);
     if (end == at + 1 || *end != '\0' || f->ticks <= 0)
       return -1;
@@ -318,7 +326,7 @@ int stats_fault_forced(const char *point, const char *subject, int *err)
   for (int i = 0; i < g_nfaults; i++) {
     struct stats_fault *f = &g_faults[i];
 
-    if (f->ticks == 0 || strcmp(f->point, point) != 0 ||
+    if (f->ticks == 0 || f->delay > 0 || strcmp(f->point, point) != 0 ||
         (f->subject[0] != '\0' && (subject == NULL || strstr(subject, f->subject) == NULL)))
       continue;
     f->fired++;
@@ -332,7 +340,9 @@ int stats_fault_forced(const char *point, const char *subject, int *err)
 void stats_fault_inject_tick(void)
 {
   for (int i = 0; i < g_nfaults; i++)
-    if (g_faults[i].ticks > 0)
+    if (g_faults[i].delay > 0)
+      g_faults[i].delay--;
+    else if (g_faults[i].ticks > 0)
       g_faults[i].ticks--;
 }
 

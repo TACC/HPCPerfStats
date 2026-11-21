@@ -464,8 +464,9 @@ _X86_UNCORE_ROWS = {
     "intel_x86_uncore_imc_gnr": (("uncore_imc_", "mbox"),),
     "intel_x86_uncore_imc_srf": (("uncore_imc_", "mbox"),),
 }
-_AMD_DF_TYPES = ("amd_x86_uncore_df_rome", "amd_x86_uncore_df_milan", "amd_x86_uncore_df_genoa",
-                 "amd_x86_uncore_df_turin")
+# DRAM channels per part: x86_uncore_perf.c df_zen*_classes n_rows (one chan<N> row each).
+_AMD_DF_CHANNELS = {"amd_x86_uncore_df_rome": 8, "amd_x86_uncore_df_milan": 8,
+                    "amd_x86_uncore_df_genoa": 12, "amd_x86_uncore_df_turin": 12}
 
 
 def _perf_devices_dir() -> Path:
@@ -474,15 +475,16 @@ def _perf_devices_dir() -> Path:
 
 def probe_x86_uncore_devices(type_name: str) -> list[str]:
     """Rows of an x86_uncore_perf collector: <dev><N> per <pmu><N> PMU of each class (SPR / EMR:
-    uncore_imc_<N> -> mbox<N> and uncore_hbm_<N> -> hbm<N>; ICX rows are mdev<N>), or "df" when the
-    amd_df PMU exists. Ascending index per class, classes in collector order."""
+    uncore_imc_<N> -> mbox<N> and uncore_hbm_<N> -> hbm<N>; ICX rows are mdev<N>), or chan<N> per
+    DRAM channel of the part when the amd_df PMU exists. Ascending index per class, classes in
+    collector order."""
     root = _perf_devices_dir()
     try:
         names = [p.name for p in root.iterdir()]
     except OSError:
         return []
-    if type_name in _AMD_DF_TYPES:
-        return ["df"] if "amd_df" in names else []
+    if type_name in _AMD_DF_CHANNELS:
+        return [f"chan{i}" for i in range(_AMD_DF_CHANNELS[type_name])] if "amd_df" in names else []
     rows: list[str] = []
     for prefix, dev in _X86_UNCORE_ROWS.get(type_name, ()):
         pat = re.compile(re.escape(prefix) + r"([0-9]+)")
@@ -546,7 +548,7 @@ def default_devices_for_type(type_name: str) -> list[str] | None:
     if type_name == "host_power_socket":
         devs = probe_power_socket_devices()
         return devs if devs else None
-    if type_name in _X86_UNCORE_ROWS or type_name in _AMD_DF_TYPES:
+    if type_name in _X86_UNCORE_ROWS or type_name in _AMD_DF_CHANNELS:
         devs = probe_x86_uncore_devices(type_name)
         return devs if devs else None
     if type_name == "amd_gpu":

@@ -35,23 +35,26 @@ struct stats_type;
   X(pmu_enabled_time, "E,W=64,U=ns", ""), X(pmu_running_time, "E,W=64,U=ns", "")
 
 /** One counted event: sysfs events/<sysfs_name> first, else the raw terms placed by
- * format/event and format/umask. Several events may add to one key (AMD DF read + write beats
- * of a channel). */
+ * format/event and format/umask. Several events may add to one key. */
 struct x86_uncore_event {
   int key; /* index into the profile's keys */
   const char *sysfs_name;
   uint64_t event;
   uint64_t umask;
+  int row; /* rows-split classes: the row (DRAM channel) it feeds; events sorted by row */
 };
 
 /** One kind of uncore PMU. indexed: every `<pmu><N>` is the row `<dev><N>`; else the PMU named
- * exactly `<pmu>` is the row `<dev>`. */
+ * exactly `<pmu>` is the row `<dev>`, or with n_rows > 0 its events split by row into the rows
+ * `<dev>0` .. `<dev><n_rows - 1>` (AMD DF: one PMU, one row per DRAM channel). A row with no
+ * event emits NOT_BUILT for the keys other rows feed. */
 struct x86_uncore_class {
   const char *pmu;
   int indexed;
   const char *dev;
   const struct x86_uncore_event *events;
   int n_events;
+  int n_rows;
 };
 
 /** What one collector reads. A key no event of a row's class feeds emits NOT_PRESENT on that
@@ -73,6 +76,8 @@ struct x86_uncore_counter {
 struct x86_uncore_dev {
   char name[24];
   const struct x86_uncore_class *cls;
+  const struct x86_uncore_event *ev; /* this row's events: all of cls, or one row's slice */
+  int n_ev;
   int n_cpus; /* CPUs of the PMU's cpumask; 0 when type or cpumask was unreadable */
   int cpus[X86_UNCORE_MAX_CPUS];
   struct x86_uncore_counter *ctr; /* [event * n_cpus + cpu] */

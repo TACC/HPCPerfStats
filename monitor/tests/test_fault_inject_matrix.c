@@ -157,6 +157,32 @@ static void test_ps_loadavg_resumes(void)
   assert(state(s, "load_1") == STATS_SENTINEL_OK);
 }
 
+/* "@delay+ticks": the first `delay` cycles run clean (rows exist), the next `ticks` fail, then
+ * the fault is released. Malformed delay forms reject the whole spec. */
+static void test_delayed_arm(void)
+{
+  struct stats *s;
+
+  assert(stats_fault_inject_set("open:/proc/loadavg@1+2") == 1);
+  collect(&ps_stats_type);
+  s = get_current_stats(&ps_stats_type, NULL);
+  assert(state(s, "load_1") == STATS_SENTINEL_OK);
+  collect(&ps_stats_type);
+  assert(state(s, "load_1") == STATS_SENTINEL_READ_FAILED);
+  collect(&ps_stats_type);
+  assert(state(s, "load_1") == STATS_SENTINEL_READ_FAILED);
+  collect(&ps_stats_type);
+  assert(state(s, "load_1") == STATS_SENTINEL_OK);
+  assert(stats_fault_inject_fired(0) == 2);
+  assert(stats_fault_inject_set("open:/proc/loadavg@0+1") == 1);
+  assert(stats_fault_inject_set("open:x@+1") == -1);
+  assert(stats_fault_inject_set("open:x@-1+1") == -1);
+  assert(stats_fault_inject_set("open:x@1+") == -1);
+  assert(stats_fault_inject_set("open:x@1+0") == -1);
+  assert(stats_fault_inject_set("open:x@1x+2") == -1);
+  assert(stats_fault_inject_set(NULL) == 0);
+}
+
 /* /proc/stat: host_cpu marks its rows with the open errno, then (path latched) the skip code;
  * host_ps then cannot open /proc/stat either. */
 static void test_proc_stat(void)
@@ -222,6 +248,7 @@ int main(void)
   test_collect_helpers();
   test_vfs();
   test_ps_loadavg_resumes();
+  test_delayed_arm();
   test_proc_stat();
   test_lustre_obd();
 

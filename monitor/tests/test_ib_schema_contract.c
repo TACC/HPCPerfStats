@@ -17,10 +17,12 @@ static void assert_present(const char *schema, const char *frag)
 
 int main(void)
 {
-  assert_present(ib_schema_def, " port_rcv_data,E,W=32,U=4B");
-  assert_present(ib_schema_def, " port_xmit_data,E,W=32,U=4B");
-  assert_present(ib_schema_def, " port_rcv_packets,E,W=32");
-  assert_present(ib_schema_def, " port_xmit_packets,E,W=32");
+  /* Data and packet counters come from 64-bit sources (PortCountersExtended over MAD, the
+   * kernel's extended sysfs counters): declaring W=32 made a counter reset look like a wrap. */
+  assert_present(ib_schema_def, " port_rcv_data,E,W=64,U=4B");
+  assert_present(ib_schema_def, " port_xmit_data,E,W=64,U=4B");
+  assert_present(ib_schema_def, " port_rcv_packets,E,W=64");
+  assert_present(ib_schema_def, " port_xmit_packets,E,W=64");
   assert_present(ib_schema_def, " link_downed,E,W=32");
   assert_present(ib_schema_def, " port_xmit_wait,E,W=32,U=ms");
   assert_present(ib_schema_def, " sw_rx_bytes,E,U=4B");

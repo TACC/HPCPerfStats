@@ -73,9 +73,15 @@ shared `perf_util` helper, the same model as Grace (**`monitor-arm-direct-perf.m
      merged counter pair (`pair_event`, counts two general slots).
    - Uncore: Intel CAS per generation (SKX `0x04/0x03,0x0c`; ICX `0x04/0x0f,0x30`; SPR / EMR / GNR /
      SRF `0x05/0xcf,0xf0`, GNR / SRF scheduler 0 only); SPR HBM CAS (32-byte accesses, D21);
-     AMD DF Zen2 / Zen3 `dram_channel_data_controller_N` (Zen2 channels 0–1 only), Zen4 / Zen5
-     read **plus** write beats per channel.
-5. **Keys, widths and vendor gating.** Existing key names stay (no renames). Shared counter keys
+     AMD DF Zen2 / Zen3 `dram_channel_data_controller_N` (Milan channels 0–7, checked against
+     the read load's bytes on c317-016, campaign finding 26; Rome channels 0–1 only), Zen4 / Zen5
+     read and write beats per channel (channels 0–3; 4–11 wait for a Genoa check).
+   - **AMD DF is one `chan<N>` row per DRAM channel** (rows-split class, `n_rows` 8 Rome / Milan,
+     12 Genoa / Turin), never one key per channel and never channels folded together: Zen2 /
+     Zen3 `dram_data_beats` (combined), Zen4 / Zen5 `dram_read_beats` / `dram_write_beats`. A
+     row with no verified event emits `NOT_BUILT`.
+5. **Keys, widths and vendor gating.** Existing key names stay (no renames; the one exception,
+   AMD DF `dram_chanN_bytes` -> per-row beat keys, went through the consumer migration). Shared counter keys
    are `W=48` and carry the software lifetime **modulo 2^48** (O11); `fp_ops_retired`,
    `amd_fp_dp_ops` and the `pmu_*` times are `W=64`. Generic `instructions` → `instr_retired_any` +
    `instr_retired`, `cycles` → `cycles_unhalted_core` + `aperf`, `ref-cycles` →
@@ -93,9 +99,10 @@ shared `perf_util` helper, the same model as Grace (**`monitor-arm-direct-perf.m
    `ENOENT`/`EINVAL`/`EOPNOTSUPP` or no row → `NOT_PRESENT`, `EBUSY` → `PMU_BUSY`); a failed read
    is `READ_FAILED`, `Δrunning == 0` with `Δenabled > 0` is `NOT_SCHEDULED`, a re-seed is
    `COUNTER_RESET`. An uncore key summed over several fds emits its sentinel rather than a
-   partial sum. A key no event of the row's class feeds is `NOT_PRESENT`, or `NOT_BUILT` when the
-   profile lists it in `not_built` (SKX `dram_act_count` / `dram_pre_count_miss`, Zen2 DF
-   channels 2–3). One log line per event (not per CPU). Every failure site goes through
+   partial sum. A key no event of the row feeds is `NOT_PRESENT`, or `NOT_BUILT` when the
+   profile lists it in `not_built` (SKX `dram_act_count` / `dram_pre_count_miss`) or another row
+   of the class feeds it (DF rows of Rome channels 2–7, Genoa / Turin channels 4–11). One log
+   line per event (not per CPU). Every failure site goes through
    `stats_set_missing`, so the fault-injection matrix reaches it.
 8. **D6 sharing keys on x86.** `host_cpu_hw` publishes `pmu_enabled_time`, `pmu_running_time`
    and (with a class row) `pmu_solo_running_time`; every IMC / HBM / DF row publishes

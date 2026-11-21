@@ -8,7 +8,8 @@ snapshot is the first sample written after the load ended, so the daemon delta c
 load. Checks per window (``WINDOW_CHECKS``):
 
 - memory: read / write kernel exact bytes vs ``dram_cas_*`` (64 B) + ``hbm_cas_*`` (32 B) on the
-  Intel IMC / HBM rows, AMD DF ``dram_chanN_bytes`` beats (64 B, read + write combined) or the
+  Intel IMC / HBM rows, AMD DF ``chan<N>`` row beats (64 B; Zen2 / Zen3 read + write combined,
+  Zen4 / Zen5 split) or the
   Grace SCF ``dram_cas_*`` (64 B), summed over every row; on Grace the ``scf0`` share of a
   socket-0 pinned read (x86 rows sum every socket, so there is no per-socket row);
 - FLOPs: GEMM exact FLOPs vs Intel ``fp_arith_inst_retired_*`` lane-weighted, AMD
@@ -63,12 +64,13 @@ INTEL_FP_WEIGHTS = {
     },
 }
 
-# (type prefix, {"read": ((key, bytes per count), ...), "write": ...}); write None = no split.
+# (type prefix, {"read": ((key, bytes per count), ...), "write": ...}). Rows whose key carries a
+# structural code (NOT_BUILT / NOT_PRESENT) in both snapshots are left out of the sum.
 MEMORY_SOURCES = (
     ("intel_x86_uncore_imc_", {"read": (("dram_cas_reads", 64), ("hbm_cas_reads", 32)),
                                "write": (("dram_cas_writes", 64), ("hbm_cas_writes", 32))}),
-    ("amd_x86_uncore_df_", {"read": tuple(("dram_chan%d_bytes" % n, 64) for n in range(4)),
-                            "write": None}),
+    ("amd_x86_uncore_df_", {"read": (("dram_data_beats", 64), ("dram_read_beats", 64)),
+                            "write": (("dram_write_beats", 64),)}),
     ("arm_aarch64_imc", {"read": (("dram_cas_reads", 64),), "write": (("dram_cas_writes", 64),)}),
 )
 RAPL_TYPES = ("intel_x86_rapl", "amd_x86_rapl")
@@ -236,15 +238,15 @@ def read_powercap(root):
 
 
 
-def sum_delta(a, b, type_name, key):
-    """(sum over rows of the mod-2^W delta, None) or (None, problem)."""
+def sum_delta(a, b, type_name, key, skip=()):
+    """(sum over rows of the mod-2^W delta, None) or (None, problem); rows in @skip are left out."""
     rows_b = b["rows"].get(type_name)
     if not rows_b:
         return None, "no %s rows" % type_name
     rows_a = a["rows"].get(type_name, {})
     width = b["widths"].get(type_name, {}).get(key, 64)
     total = 0
-    for dev in sorted(rows_b):
+    for dev in sorted(set(rows_b) - set(skip)):
         vb = rows_b[dev].get(key)
         va = rows_a.get(dev, {}).get(key)
         if vb is None or va is None:
@@ -259,20 +261,28 @@ def sum_delta(a, b, type_name, key):
 
 def _memory_bytes(a, b, types, kernel):
     """(bytes, notes, None) over every matching row and key, or (None, None, problem)."""
-    total, notes = 0, []
+    total, notes, used = 0, [], 0
+    structural = (-NOT_BUILT, -NOT_PRESENT)
     for t, src in types:
+        rows_a, rows_b = a["rows"].get(t, {}), b["rows"][t]
         for key, scale in src[kernel]:
-            vals = [row.get(key) for row in b["rows"][t].values()]
-            if key not in b["widths"].get(t, {}) or all(v is None for v in vals):
+            if key not in b["widths"].get(t, {}) or all(r.get(key) is None for r in rows_b.values()):
                 continue
-            if all(v in (-NOT_BUILT, -NOT_PRESENT) for v in vals):
-                code = "NOT_PRESENT" if -NOT_PRESENT in vals else "NOT_BUILT"
-                notes.append("%s %s %s, excluded" % (t, key, code))
-                continue
-            d, problem = sum_delta(a, b, t, key)
+            skip = {d for d, r in rows_b.items()
+                    if r.get(key) in structural and rows_a.get(d, {}).get(key) in structural}
+            if skip:
+                code = "NOT_BUILT" if any(rows_b[d][key] == -NOT_BUILT for d in skip) else "NOT_PRESENT"
+                if len(skip) == len(rows_b):
+                    notes.append("%s %s %s, excluded" % (t, key, code))
+                    continue
+                notes.append("%s %s: %d row(s) %s, excluded" % (t, key, len(skip), code))
+            d, problem = sum_delta(a, b, t, key, skip)
             if problem:
                 return None, None, problem
             total += d * scale
+            used += 1
+    if not used:
+        return None, None, "no counted %s key (%s)" % (kernel, "; ".join(notes) or "none in schema")
     return total, notes, None
 
 
@@ -302,9 +312,6 @@ def check_memory(a, b, kernel, oracle_bytes):
         main = result(name, "NOT_RUN", reason="no memory-controller type in the fast payload")
     elif oracle_bytes is None or oracle_bytes <= 0:
         main = result(name, "NOT_RUN", reason="load printed no exact byte total")
-    elif any(src[kernel] is None for _, src in types):
-        main = result(name, "NOT_RUN", reason="%s counts read + write combined (no split): the "
-                      "write kernel has no single-direction oracle" % types[0][0])
     else:
         total, notes, problem = _memory_bytes(a, b, types, kernel)
         if problem:
