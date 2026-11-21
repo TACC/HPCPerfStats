@@ -103,6 +103,14 @@ if grep -q 'systemctl restart' "${verify}"; then
   echo "rpm_debug_shm_verify.sh must not call systemctl restart (spec %post)" >&2; exit 1
 fi
 
+# perf_raw_flops reads <not counted> while the daemon holds the FP counters: stop before it,
+# start and wait for a fresh full payload after it.
+canary_order="$(awk '/^run_canary_checks\(\)/,/^}/' "${verify}" \
+  | grep -o 'systemctl stop hpcperfstats.service\|perf_raw_flops_check.sh\|systemctl start hpcperfstats.service\|wait_full_payload' \
+  | tr '\n' ' ')"
+test "${canary_order}" = "systemctl stop hpcperfstats.service perf_raw_flops_check.sh systemctl start hpcperfstats.service wait_full_payload " \
+  || { echo "perf_raw_flops must run between service stop and start+wait_full_payload: ${canary_order}" >&2; exit 1; }
+
 grep -q 'RPM %post' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must not restart daemon (spec %post handles it)" >&2; exit 1; }
 

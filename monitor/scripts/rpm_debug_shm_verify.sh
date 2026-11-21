@@ -316,18 +316,28 @@ run_extra_check() {
   record_check "${results}" "${name}" "${status}" - "exit ${rc}: ${reason}"
 }
 
-# run_canary_checks PY RESULTS: the standalone counter checks that run unattended as root in
+# run_canary_checks PY RESULTS SHM_DIR: the standalone counter checks that run unattended as root in
 # bounded time (README "Correctness check inventory").
 run_canary_checks() {
-  local py="$1" results="$2" class grace=0 scf=0
+  local py="$1" results="$2" shm_dir="$3" class grace=0 scf=0 x86 idle_pmu=0
   class="$("${py}" "${SCRIPT_DIR}/lib/counter_accuracy.py" arch --field class)" || class=other
   test "${class}" != grace || grace=1
   if test "${grace}" = 1 && ls -d /sys/bus/event_source/devices/nvidia_scf_pmu_* >/dev/null 2>&1; then
     scf=1
   fi
-  run_extra_check "${results}" perf_raw_flops PERF_RAW_FLOPS_CHECK \
-    "$(test "${class}" = intel || test "${class}" = amd && echo 1)" \
+  x86="$(test "${class}" = intel || test "${class}" = amd && echo 1)"
+  # The running daemon's direct-perf reader holds the core FP counters (every perf_raw_flops
+  # event reads <not counted>), so that canary runs with the service stopped.
+  if test "${x86}" = 1 && env_flag_on "${PERF_RAW_FLOPS_CHECK:-1}"; then
+    idle_pmu=1
+    systemctl stop hpcperfstats.service
+  fi
+  run_extra_check "${results}" perf_raw_flops PERF_RAW_FLOPS_CHECK "${x86}" \
     "x86 perf FLOP events only (arch ${class})" -- "${SCRIPT_DIR}/perf_raw_flops_check.sh"
+  if test "${idle_pmu}" = 1; then
+    systemctl start hpcperfstats.service
+    wait_full_payload "${shm_dir}" "${WAIT_FULL_SECONDS:-900}"
+  fi
   run_extra_check "${results}" scf_perf SCF_PERF_CHECK "${scf}" \
     "needs Grace nvidia_scf_pmu_* PMUs (arch ${class})" -- \
     "${SCRIPT_DIR}/canary_counter_check.sh" --scf --warm 30 --window 60
@@ -578,7 +588,7 @@ PY
   echo "PASS: validate_shm_messages (slug=${slug})"
 
   run_counter_accuracy "${caps}" "${shm_dir}" "${py}" "${results}" "${report_dir}"
-  run_canary_checks "${py}" "${results}"
+  run_canary_checks "${py}" "${results}" "${shm_dir}"
 
   # Live fault injection (DEBUG RPMs; SKIP line otherwise): restarts the daemon twice, so it
   # runs after every check that reads the running daemon.
