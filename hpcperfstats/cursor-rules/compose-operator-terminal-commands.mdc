@@ -374,6 +374,16 @@ podman-compose -p hpcperfstats exec -T db psql -h localhost \
   -U hpcperfstats -P footer=off -c "$Q"
 ```
 
+### Anti-pattern — multi-line `if … then … else … fi` in a long node block (c122-018 2026-11-21)
+
+A monitor correctness block wrapped prep and verify in `if timeout … $PREP …; then … else echo STOP …; fi`. After the copy and paste, bash reported `syntax error near unexpected token 'else'` and then `'fi'`, so nothing ran. The `else` branch's `echo "STOP prep failed rc=$?"` then ran on its own and printed the syntax error's status. The block also printed the `prep.log` tail and the newest fault report from an **earlier** run, which made the paste look like a real failed run. A compound statement fails as a whole when one of its lines is lost or altered in the copy. Artifact pickups by "newest file" read stale results.
+
+| Do | Don't |
+|----|-------|
+| One standalone statement per step: `timeout … >"$L/prep.log" 2>&1`, then `PRC=$?; echo "== prep rc=$PRC"`, then `test "$PRC" -eq 0 && … verify …` and `test "$PRC" -ne 0 && tail -n 20 "$L/prep.log"` | `if …; then …; else …; fi` spanning a long command in a pasted block |
+| Clear the run's own logs at the start (`rm -f "$L/prep.log" "$L/verify.log"`), and pick results with `find "$R" -maxdepth 1 -newer "$L/start" -name …` | `ls -t "$R"/report_*.txt \| head -n 1` (picks an older run's file when this run wrote none) |
+| First line prints a checkout check (`grep -q <new symbol> <file> && echo ok \|\| echo STOP`), so a partial or old paste shows | Starting the block with the run itself |
+
 ### Anti-pattern — monitor unit vs package vs binary name (LS6 c317-016 2026-11-17)
 
 `systemctl is-active` prints `inactive` for a unit that does not exist, so `systemctl is-active hpcperfstatsd` reads like a stopped monitor on every node. The names differ by object:
