@@ -174,6 +174,19 @@ class Memory(unittest.TestCase):
         self.assertEqual(r["mem_read"]["status"], "PASS")
         self.assertIn("NOT_BUILT", r["mem_read"]["reason"])
 
+    def test_not_present_hbm_on_ddr_spr_is_excluded(self):
+        """SPR with DDR: the imc_spr schema carries hbm_cas_* and the monitor reports them
+        NOT_PRESENT (-2) on every row, so the DDR cas keys alone decide mem_read / mem_write."""
+        def spr(reads, writes):
+            return {"intel_x86_uncore_imc_spr": {
+                "mbox0": {"dram_cas_reads": reads, "dram_cas_writes": writes,
+                          "hbm_cas_reads": -2, "hbm_cas_writes": -2}}}
+        r = by_name(ca.check_memory(snap(spr(0, 0)), snap(spr(1000, 0)), "read", 1000 * 64))
+        self.assertEqual(r["mem_read"]["status"], "PASS")
+        self.assertIn("NOT_PRESENT", r["mem_read"]["reason"])
+        w = by_name(ca.check_memory(snap(spr(0, 0)), snap(spr(0, 1000)), "write", 1000 * 64))
+        self.assertEqual(w["mem_write"]["status"], "PASS")
+
     def test_grace_scf_socket0_share(self):
         def scf(r0, r1):
             return {"arm_aarch64_imc": {"scf0": {"dram_cas_reads": r0, "dram_cas_writes": 0},

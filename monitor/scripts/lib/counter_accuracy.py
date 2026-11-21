@@ -73,6 +73,7 @@ MEMORY_SOURCES = (
 )
 RAPL_TYPES = ("intel_x86_rapl", "amd_x86_rapl")
 NOT_BUILT = 10
+NOT_PRESENT = 2
 
 COUNTER_CHECKS = ("mem_read", "mem_write", "mem_socket0", "flops_dp", "flops_sp",
                   "instructions", "energy_pkg", "energy_dram")
@@ -264,8 +265,9 @@ def _memory_bytes(a, b, types, kernel):
             vals = [row.get(key) for row in b["rows"][t].values()]
             if key not in b["widths"].get(t, {}) or all(v is None for v in vals):
                 continue
-            if all(v == -NOT_BUILT for v in vals):
-                notes.append("%s %s NOT_BUILT, excluded" % (t, key))
+            if all(v in (-NOT_BUILT, -NOT_PRESENT) for v in vals):
+                code = "NOT_PRESENT" if -NOT_PRESENT in vals else "NOT_BUILT"
+                notes.append("%s %s %s, excluded" % (t, key, code))
                 continue
             d, problem = sum_delta(a, b, t, key)
             if problem:
