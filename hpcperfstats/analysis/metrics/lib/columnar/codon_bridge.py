@@ -29,7 +29,9 @@ Attributes:
   PYEXT_SO: File name of the pyext.
   _KERNEL_METHODS: Methods the pyext must export to count as loaded.
   RADIX_BUCKETS: Count-array length the kernel's radix sort needs in scratch.
-  BANK_RETAIN_ROWS: Largest per-thread scratch bank kept between calls.
+  BANK_RETAIN_ROWS: Largest per-thread scratch bank kept between calls
+    (64 B per row of scratch and outputs); larger calls allocate a bank
+    for that call only.
   SENTINEL_FOLD_HOST_ROWS: Rows of the ``sentinel_fold`` per-host output
     (host, valid, bridged, gap, bucket offset, bucket count, filled).
   _state: Load cache (module, probe flag, GIL flag, failure reason).
@@ -455,7 +457,7 @@ def call(name: str, *args: Any) -> Any:
 
 
 RADIX_BUCKETS = 1 << 16
-BANK_RETAIN_ROWS = 4_000_000
+BANK_RETAIN_ROWS = 1_000_000
 SENTINEL_FOLD_HOST_ROWS = 7
 _bank = threading.local()
 
@@ -503,7 +505,7 @@ def _thread_bank(rows: int) -> _ScratchBank:
   Bank for the calling thread with capacity for ``rows``.
 
   Banks above :data:`BANK_RETAIN_ROWS` rows are not kept between calls so
-  one huge job does not pin tens of MB per pool thread.
+  one huge job does not pin hundreds of MB per pool thread.
 
   Args:
     rows (int): Rows needed.

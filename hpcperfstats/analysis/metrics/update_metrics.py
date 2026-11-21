@@ -184,6 +184,7 @@ from hpcperfstats.analysis.metrics.lib.metrics import (
 from hpcperfstats.analysis.metrics.lib.metrics_sliding_session import (
   is_backfill_ref,
 )
+from hpcperfstats.dbload.lib import process_memory
 from hpcperfstats.dbload.lib.date_utils import (
   log_date_range,
   parse_start_end_dates,
@@ -1839,11 +1840,10 @@ class _PrewarmPipeline:
       # Ship the decoded frame to the worker process (one memcpy) instead of
       # re-reading host_data there; artifact-only refs have no handoff entry
       # and the child opens the table itself, as the in-thread path does.
-      table = (
-        shared_context.get("jt") if isinstance(shared_context, dict) else None
-      ) or HANDOFF.pop(jid)
+      # The one-slot box is emptied when the frame is sent, so this thread
+      # holds no reference while the child works.
       with phase_profile.job_scope(jid, "prewarm"):
-        result = pool.run(jid, table)
+        result = pool.run(jid, [HANDOFF.pop(jid)])
       # Reads made in the worker process come back with the result.
       consumed_series.merge(jid, result.get("consumed"))
       return float(result["detail_s"]), float(result["plots_s"])
@@ -3670,6 +3670,8 @@ def _job_refs_from_jids(jids: Any) -> Any:
           runtime_s=rt,
           telemetry_first_time=tft,
           telemetry_last_time=tlt,
+          nhosts=getattr(item, "nhosts", None),
+          estimated_sample_count=getattr(item, "estimated_sample_count", None),
           lane=getattr(item, "lane", None),
           metrics_coverage=getattr(item, "metrics_coverage", None),
         )
@@ -5727,7 +5729,7 @@ def _fill_ready_queue(
       return None
     ready_jid = strict_ready[0]
     lookup = candidate_by_jid if candidate_by_jid is not None else {}
-    candidate = lookup.get(ready_jid, _candidate_ref(ready_jid))
+    candidate = lookup.get(ready_jid) or _candidate_ref(ready_jid)
     return _attach_telemetry_bounds_to_candidate(candidate, bounds_by_jid)
 
   def _process_pk_chunk(state: Any, pk_chunk: Any) -> Any:
@@ -6762,7 +6764,13 @@ def _start_readiness_producer(
       jid = getattr(candidate, "jid", candidate)
       ao = getattr(candidate, "artifact_only", False)
       rt = getattr(candidate, "runtime_s", None)
-      ref = _candidate_ref(jid, ao, runtime_s=rt)
+      size = {
+        "nhosts": getattr(candidate, "nhosts", None),
+        "estimated_sample_count": getattr(
+          candidate, "estimated_sample_count", None
+        ),
+      }
+      ref = _candidate_ref(jid, ao, runtime_s=rt, **size)
       jid = ref.jid
       with rescan_lock:
         _add_bounded_seen_jid(
@@ -6780,6 +6788,8 @@ def _start_readiness_producer(
         },
       )
       meta["artifact_only"] = bool(ref.artifact_only)
+      meta["nhosts"] = ref.nhosts
+      meta["estimated_sample_count"] = ref.estimated_sample_count
       if rt is not None:
         meta["runtime_s"] = float(rt)
 
@@ -6898,10 +6908,13 @@ def _start_readiness_producer(
         deferred_candidate_refs = [
           _candidate_ref(
             jid,
-            deferred_meta.get(jid, {}).get("artifact_only", False),
-            runtime_s=deferred_meta.get(jid, {}).get("runtime_s"),
+            meta.get("artifact_only", False),
+            runtime_s=meta.get("runtime_s"),
+            nhosts=meta.get("nhosts"),
+            estimated_sample_count=meta.get("estimated_sample_count"),
           )
           for jid in deferred_due
+          for meta in (deferred_meta.get(jid, {}),)
         ]
         for candidate in deferred_candidate_refs + rescan_due:
           jid = candidate.jid
@@ -7532,6 +7545,116 @@ def _persisted_outcome(outcome: Any) -> Any:
   return outcome
 
 
+class _MemoryHeadroomGate:
+  """
+  Throttled memory-headroom check for the sliding session's admission.
+
+  Reads cgroup (or, when the cgroup is unlimited, host ``MemAvailable``)
+  headroom at most once per ``interval_s`` and reuses the answer in
+  between, so a fill loop does not reread ``/sys`` and ``/proc`` per ref.
+  Refusals are counted and logged at most once per ``log_interval_s``.
+
+  Attributes:
+    headroom_mib: Reserve that must stay free (0 disables the gate).
+    interval_s: Minimum seconds between reads.
+    log_interval_s: Minimum seconds between pause log lines.
+    paused_total: Refused admissions since the gate was created.
+    _checked_at: Monotonic time of the last read (None before the first).
+    _ok: Answer of the last read.
+    _logged_at: Monotonic time of the last pause log line.
+    _lock: Guards the cached answer and counters.
+  """
+
+  def __init__(
+    self,
+    headroom_mib: int,
+    *,
+    interval_s: float = 1.0,
+    log_interval_s: float = 60.0,
+  ) -> None:
+    """
+    Create a gate for ``headroom_mib``.
+
+    Args:
+      headroom_mib (int): Reserve in MiB; 0 always admits.
+      interval_s (float): Minimum seconds between reads.
+      log_interval_s (float): Minimum seconds between pause log lines.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _MemoryHeadroomGate(0)()
+      True
+    """
+    self.headroom_mib = max(0, int(headroom_mib))
+    self.interval_s = float(interval_s)
+    self.log_interval_s = float(log_interval_s)
+    self.paused_total = 0
+    self._checked_at: float | None = None
+    self._ok = True
+    self._logged_at = float("-inf")
+    self._lock = threading.Lock()
+
+  def __call__(self) -> bool:
+    """
+    Return whether a metrics job may start now (cached for ``interval_s``).
+
+    Returns:
+      bool: True when headroom is at least the reserve (or unknown).
+
+    Examples:
+      >>> _MemoryHeadroomGate(0)()
+      True
+    """
+    if not self.headroom_mib:
+      return True
+    now = time.monotonic()
+    with self._lock:
+      if self._checked_at is None or now - self._checked_at >= self.interval_s:
+        self._checked_at = now
+        self._ok = process_memory.cgroup_admit_headroom_ok(
+          self.headroom_mib, unlimited_uses_host=True
+        )
+      if self._ok:
+        return True
+      self.paused_total += 1
+      if now - self._logged_at < self.log_interval_s:
+        return False
+      self._logged_at = now
+      paused = self.paused_total
+    log_print(
+      "metrics scheduler: admit paused reason=memory_headroom "
+      f"reserve_mib={self.headroom_mib} paused_total={paused}",
+      flush=True,
+    )
+    return False
+
+
+def _metrics_memory_budget_bytes() -> int:
+  """
+  Resolve the sliding session's memory budget and log it.
+
+  Returns:
+    int: ``metrics_memory_budget_pct`` of ``memory_admit_base_bytes()``;
+    0 (count cap only) when the percent is 0 or the base is unreadable.
+
+  Examples:
+    >>> _metrics_memory_budget_bytes() >= 0  # doctest: +SKIP
+    True
+  """
+  pct = float(cfg.get_metrics_memory_budget_pct())
+  base = int(process_memory.memory_admit_base_bytes())
+  budget = int(base * pct / 100.0)
+  log_print(
+    f"metrics scheduler: memory budget bytes={budget} base={base} "
+    f"pct={pct:g} headroom_mib={int(cfg.get_metrics_admit_headroom_mib())}"
+    + (" (base unreadable; budget off)" if pct and not base else ""),
+    flush=True,
+  )
+  return budget
+
+
 def _compute_jid_outcomes_sliding(
   *,
   job_refs: Any,
@@ -7678,6 +7801,9 @@ def _compute_jid_outcomes_sliding(
       >>> _on_row({"ref": None})  # doctest: +SKIP
     """
     ref = row["ref"]
+    # Every terminal row lands here; a failed, stalled or interrupted job
+    # would otherwise leave its frame parked in the handoff.
+    HANDOFF.discard(ref.jid)
     base = row.get("base_outcome") or {}
     if prewarm_mode != "inline" and base.get("ok") and "prewarm_ok" in row:
       with contextlib.suppress(Exception):
@@ -7731,6 +7857,9 @@ def _compute_jid_outcomes_sliding(
     continuous=continuous,
     should_stop=should_stop,
     on_refs_taken=on_refs_taken,
+    memory_budget_bytes=_metrics_memory_budget_bytes(),
+    head_wait_s=float(cfg.get_metrics_memory_budget_head_wait_s()),
+    admit_ok=_MemoryHeadroomGate(cfg.get_metrics_admit_headroom_mib()),
   )
   timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
   # Sliding interleaves metrics+prewarm; report full session as batch wall and

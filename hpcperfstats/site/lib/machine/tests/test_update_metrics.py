@@ -6100,6 +6100,47 @@ def test_candidate_ref_attaches_estimated_sample_count(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
+def test_job_refs_from_jids_keeps_size_estimate(monkeypatch):
+  """Regression (hs04 OOM, 2026-11-21): ``_job_refs_from_jids`` rebuilt
+  every primary ref without ``nhosts``, so a 256-host job was costed as one
+  host by memory admission.
+  """
+  monkeypatch.setattr(
+    update_metrics.cfg,
+    "get_metrics_compute_batch_unknown_runtime_s",
+    lambda: 60.0,
+  )
+  listed = update_metrics._candidate_ref(
+    "big", False, runtime_s=3600.0, nhosts=256, lane="backfill"
+  )
+  (ref,) = update_metrics._job_refs_from_jids([listed])
+  assert ref.nhosts == 256
+  assert ref.estimated_sample_count == 256 * 60
+  assert ref.lane == "backfill"
+
+
+@pytest.mark.machine_unit_mock
+def test_deferred_and_remembered_refs_keep_size_estimate():
+  """The producer's deferred / remembered refs and the strict-ready
+  fallback rebuild refs from the listed candidate; each must carry the
+  listed ``nhosts`` and ``estimated_sample_count``.
+  """
+  src = inspect.getsource(update_metrics)
+  remember = src.split("def _remember_candidate", 1)[1].split("\n    def ", 1)[
+    0
+  ]
+  assert '"nhosts": getattr(candidate, "nhosts", None)' in remember
+  assert "_candidate_ref(jid, ao, runtime_s=rt, **size)" in remember
+  assert (
+    'meta["estimated_sample_count"] = ref.estimated_sample_count' in remember
+  )
+  deferred = src.split("deferred_candidate_refs = [", 1)[1].split("]", 1)[0]
+  assert 'nhosts=meta.get("nhosts")' in deferred
+  assert 'estimated_sample_count=meta.get("estimated_sample_count")' in deferred
+  assert "lookup.get(ready_jid) or _candidate_ref(ready_jid)" in src
+
+
+@pytest.mark.machine_unit_mock
 def test_ready_queue_cap_uses_ini_target_not_chunks_product(monkeypatch):
   """prefetch_ready_cap equals ready_queue_target; ignores chunksxCHUNK_SIZE."""
   monkeypatch.setattr(
@@ -6500,6 +6541,166 @@ def test_sliding_stall_reset_rebinds_pool_and_artifact_refs_ride_session(
   assert session_primaries == ["m1", "a1"]
   assert prewarm_pools == []
   assert inflight_caps == [7]
+
+
+@pytest.mark.machine_unit_mock
+def test_sliding_row_discards_handoff_on_failure(monkeypatch):
+  """Regression (hs04 OOM, 2026-11-21): the sliding session parked every
+  decoded table in ``HANDOFF`` and never discarded it when the job failed
+  (worker exception, persist not ok, stall, shutdown), so failed frames
+  stayed in memory up to the 16 GiB cap. Every terminal row discards.
+  """
+  from hpcperfstats.analysis.metrics.lib.columnar.job_table import HANDOFF
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
+
+  statuses = {
+    "w": "sliding_worker_exception",
+    "p": "persist_failed",
+    "s": "sliding_session_stall",
+    "i": "sliding_session_interrupted",
+  }
+  for jid in [*statuses, "ok"]:
+    HANDOFF.put(
+      table_from_records(
+        [(1_000_000, "h1", "host_cpu", "user", None, 1.0, 0.0, 0.0)],
+        jid=jid,
+      )
+    )
+
+  def _fake_sliding(**kwargs):
+    for jid, status in statuses.items():
+      kwargs["on_result"](
+        {
+          "ref": SimpleNamespace(jid=jid),
+          "ok": False,
+          "base_outcome": {"jid": jid, "ok": False, "status": status},
+        }
+      )
+    kwargs["on_result"](
+      {
+        "ref": SimpleNamespace(jid="ok"),
+        "ok": True,
+        "prewarm_ok": True,
+        "base_outcome": {"jid": "ok", "ok": True},
+      }
+    )
+    return []
+
+  class _Mgr:
+    def _worker_thread_count(self):
+      return 2
+
+  class _Pipe:
+    def record_pool_result(self, ok):
+      del ok
+
+  monkeypatch.setattr(
+    update_metrics, "run_metrics_sliding_session", _fake_sliding
+  )
+  try:
+    out = update_metrics._compute_jid_outcomes_sliding(
+      job_refs=[],
+      metrics_job_refs=[SimpleNamespace(jid="w", artifact_only=False)],
+      artifact_only_refs=[],
+      metrics_manager=_Mgr(),
+      prewarm_pipeline=_Pipe(),
+      shared_pool=object(),
+      timing={},
+      t_batch=time.monotonic(),
+      heartbeat=None,
+      progress_callback=None,
+      ready_queue=None,
+      ready_queue_lock=None,
+    )
+    assert len(out) == 5
+    assert all(HANDOFF.pop(jid) is None for jid in [*statuses, "ok"])
+    assert HANDOFF._total_bytes == 0
+  finally:
+    for jid in [*statuses, "ok"]:
+      HANDOFF.discard(jid)
+
+
+@pytest.mark.machine_unit_mock
+def test_headroom_reads_throttled(monkeypatch):
+  """The headroom gate reads cgroup / meminfo at most once per interval,
+  asks for the unlimited-cgroup host fallback, and logs pauses throttled.
+  """
+  reads = []
+  answer = [False]
+
+  def _ok(mib, *, unlimited_uses_host=False):
+    reads.append((mib, unlimited_uses_host))
+    return answer[0]
+
+  monkeypatch.setattr(
+    update_metrics.process_memory, "cgroup_admit_headroom_ok", _ok
+  )
+  logs = []
+  monkeypatch.setattr(
+    update_metrics, "log_print", lambda msg, **_k: logs.append(msg)
+  )
+  clock = [1000.0]
+  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: clock[0])
+  gate = update_metrics._MemoryHeadroomGate(16384)
+  assert [gate() for _ in range(5)] == [False] * 5
+  assert reads == [(16384, True)]
+  assert gate.paused_total == 5
+  assert len(logs) == 1 and "reason=memory_headroom" in logs[0]
+  clock[0] += 1.5
+  answer[0] = True
+  assert gate() is True and len(reads) == 2
+  assert update_metrics._MemoryHeadroomGate(0)() is True and len(reads) == 2
+
+
+@pytest.mark.machine_unit_mock
+def test_sliding_session_gets_memory_admission(monkeypatch):
+  """The scheduler passes the INI budget, head wait and headroom gate."""
+  seen = {}
+
+  def _fake_sliding(**kwargs):
+    seen.update(kwargs)
+    return []
+
+  monkeypatch.setattr(
+    update_metrics, "run_metrics_sliding_session", _fake_sliding
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_memory_budget_pct", lambda: 40.0
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_memory_budget_head_wait_s", lambda: 600.0
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_admit_headroom_mib", lambda: 16384
+  )
+  monkeypatch.setattr(
+    update_metrics.process_memory, "memory_admit_base_bytes", lambda: 100 << 30
+  )
+
+  class _Mgr:
+    def _worker_thread_count(self):
+      return 2
+
+  update_metrics._compute_jid_outcomes_sliding(
+    job_refs=[],
+    metrics_job_refs=[SimpleNamespace(jid="m1", artifact_only=False)],
+    artifact_only_refs=[],
+    metrics_manager=_Mgr(),
+    prewarm_pipeline=SimpleNamespace(),
+    shared_pool=object(),
+    timing={},
+    t_batch=time.monotonic(),
+    heartbeat=None,
+    progress_callback=None,
+    ready_queue=None,
+    ready_queue_lock=None,
+  )
+  assert seen["memory_budget_bytes"] == 40 << 30
+  assert seen["head_wait_s"] == 600.0
+  assert isinstance(seen["admit_ok"], update_metrics._MemoryHeadroomGate)
+  assert seen["admit_ok"].headroom_mib == 16384
 
 
 @pytest.mark.machine_unit_mock

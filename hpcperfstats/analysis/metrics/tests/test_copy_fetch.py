@@ -188,6 +188,58 @@ def test_statement_timeout_bisects_hosts_and_union_equals_unsplit_fetch():
   assert split.hosts == clean.hosts and split.series == clean.series
 
 
+def test_concat_chunks_consumes_inputs():
+  """The merge pops every input column as soon as the combined column
+  exists and clears the list, so a fetch never holds the decoded job
+  twice."""
+  import weakref
+
+  from hpcperfstats.analysis.metrics.lib.columnar.jobframe import NameInterner
+  from hpcperfstats.analysis.metrics.lib.columnar.k0_decode import (
+    concat_chunks,
+    decode_copy_binary,
+    empty_chunk,
+  )
+
+  ni = NameInterner()
+  rows = _rows_for(["a", "b"], {"time__gte": T0, "time__lte": T0})
+  a = decode_copy_binary(encode_copy_binary(rows[:1]), ni)
+  b = decode_copy_binary(encode_copy_binary(rows[1:]), ni)
+  expected_time = np.concatenate([a.time_us, b.time_us])
+  value_refs = [weakref.ref(a.value), weakref.ref(b.value)]
+  parts = [a, empty_chunk(), b]
+  merged = concat_chunks(parts)
+  assert parts == []
+  assert len(a) == 0 and len(b) == 0
+  assert all(ref() is None for ref in value_refs)
+  assert merged.time_us.tolist() == expected_time.tolist()
+  assert merged.value.tolist() == [1.0, 1.0]
+
+
+def test_build_job_frame_consumes_the_merged_chunk():
+  """``_frame_from_chunks`` hands the merged chunk to ``build_job_frame``,
+  which pops each source column once its sorted copy exists."""
+  import weakref
+
+  from hpcperfstats.analysis.metrics.lib.columnar.jobframe import (
+    NameInterner,
+    build_job_frame,
+  )
+  from hpcperfstats.analysis.metrics.lib.columnar.k0_decode import (
+    decode_copy_binary,
+  )
+
+  ni = NameInterner()
+  rows = _rows_for(["b", "a"], {"time__gte": T0, "time__lte": T0})
+  chunk = decode_copy_binary(encode_copy_binary(rows), ni)
+  refs = [weakref.ref(getattr(chunk, c)) for c in ("time_us", "arc")]
+  frame = build_job_frame("77", ni, chunk)
+  frame.check_contract()
+  assert len(chunk) == 0 and chunk.arc.shape == (0,)
+  assert all(ref() is None for ref in refs)
+  assert frame.hosts == ["b", "a"] and frame.host_id.tolist() == [0, 1]
+
+
 def test_non_timeout_errors_propagate():
   def boom(sql, params):
     raise OperationalError("connection reset")

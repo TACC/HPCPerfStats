@@ -341,7 +341,7 @@ def test_copy_decode_empty_and_interner_continuity():
   ni = NameInterner()
   ni.host("pre")
   empty = decode_copy_binary(encode_copy_binary([]), ni)
-  assert len(empty) == 0 and empty.value.dtype == np.float64
+  assert len(empty) == 0 and empty.value.dtype == np.float32
   rows = [(1_700_000_000_000_000, "pre", "t", "e", "0", 1.0, None, 2.0)]
   ch = decode_copy_binary(encode_copy_binary(rows), ni)
   assert ch.host_id.tolist() == [0]

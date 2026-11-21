@@ -27,12 +27,12 @@ from typing import Any
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.analysis.metrics.lib.columnar.jobframe import (
+  DecodedChunk,
   JobFrame,
   NameInterner,
   build_job_frame,
 )
 from hpcperfstats.analysis.metrics.lib.columnar.k0_decode import (
-  DecodedChunk,
   concat_chunks,
   decode_copy_binary,
   empty_chunk,
@@ -343,7 +343,7 @@ def fetch_job_frame(
 
   def merge(left: DecodedChunk, right: DecodedChunk) -> DecodedChunk:
     """
-    Concatenate two decoded chunks after a bisect.
+    Concatenate two decoded chunks after a bisect (both are consumed).
 
     Args:
       left (DecodedChunk): Left half.
@@ -385,10 +385,13 @@ def _frame_from_chunks(
   """
   Concatenate decoded chunks and build the sorted JobFrame.
 
+  Both steps consume their input (``chunks`` is cleared), so the decoded
+  columns are released as the frame columns are built.
+
   Args:
     jid (str): Job id.
     interner (NameInterner): Shared name tables.
-    chunks (list[DecodedChunk]): Decoded chunks.
+    chunks (list[DecodedChunk]): Decoded chunks (cleared in place).
 
   Returns:
     JobFrame: Sorted frame.
@@ -397,17 +400,4 @@ def _frame_from_chunks(
     >>> len(_frame_from_chunks("1", NameInterner(), []))
     0
   """
-  merged = concat_chunks(chunks)
-  return build_job_frame(
-    jid,
-    interner,
-    time_us=merged.time_us,
-    host_id=merged.host_id,
-    type_id=merged.type_id,
-    event_id=merged.event_id,
-    dev_id=merged.dev_id,
-    owned=merged.owned,
-    value=merged.value,
-    arc=merged.arc,
-    delta=merged.delta,
-  )
+  return build_job_frame(jid, interner, concat_chunks(chunks))

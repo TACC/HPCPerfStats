@@ -74,7 +74,7 @@ def _legacy_sum_per_sample(
   if rows.size == 0:
     return kn.AggTable.zero(by_dev=by_dev)
   f = idx.frame
-  vals = idx._col(col)[rows]
+  vals = idx.values_at(col, rows)
   if mode == kn.MODE_SQL and limit is None:
     limit = MAX_SANE_COUNTER_DELTA if col == "delta" else MAX_SANE_COUNTER_RATE
   if mode == kn.MODE_ORM:
@@ -128,7 +128,7 @@ def _legacy_delta_sum_by_event(idx, typ, events):
     rows = idx.scoped_rows(typ, idx.rows_for_series([sid]))
     if rows.size == 0:
       continue
-    vals = f.delta[rows]
+    vals = f.delta[rows].astype(np.float64)
     if idx.host_wide(typ):
       mask = sg.finite_mask(vals, limit=MAX_SANE_COUNTER_DELTA)
       key = sg.composite_key(
@@ -262,7 +262,9 @@ def test_delta_sum_by_event_matches_legacy(seed):
 def test_delta_sum_by_event_sums_in_row_order():
   rng = np.random.default_rng(23)
   n = 400
-  deltas = rng.normal(size=n) * 10.0 ** rng.integers(-6, 15, size=n)
+  # Float4 values (host_data is ``real``), summed as float64.
+  raw = rng.normal(size=n) * 10.0 ** rng.integers(-6, 15, size=n)
+  deltas = raw.astype(np.float32).astype(np.float64)
   recs = [
     (i * US, "h1", "nfs", "normal_read", None, 1, None, None, float(d))
     for i, d in enumerate(deltas)

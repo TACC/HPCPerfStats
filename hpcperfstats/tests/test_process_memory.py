@@ -140,3 +140,47 @@ def test_read_cgroup_memory_stat_parses(monkeypatch, tmp_path):
     lambda: {"anon": 100, "file": 200, "pgfault": 3},
   )
   assert pm.read_cgroup_memory_stat()["file"] == 200
+
+
+GIB = 1 << 30
+
+
+def test_headroom_unlimited_cgroup_uses_memavailable(monkeypatch):
+  """Regression (hs04 OOM, 2026-11-21): with no ``mem_limit`` the cgroup is
+  unlimited and the headroom gate failed open, so update_metrics never
+  paused while the host ran out of memory. update_metrics opts into host
+  ``MemAvailable``; sync_timedb keeps the fail-open default.
+  """
+  monkeypatch.setattr(pm, "read_cgroup_memory_max_bytes", lambda: None)
+  avail = {"MemAvailable": 8 * GIB, "MemTotal": 384 * GIB}
+  monkeypatch.setattr(pm, "read_meminfo_bytes", avail.get)
+  assert pm.cgroup_admit_headroom_ok(16384, unlimited_uses_host=True) is False
+  assert pm.cgroup_admit_headroom_ok(16384) is True
+  avail["MemAvailable"] = 32 * GIB
+  assert pm.cgroup_admit_headroom_ok(16384, unlimited_uses_host=True) is True
+  monkeypatch.setattr(pm, "read_meminfo_bytes", lambda _key: None)
+  assert pm.cgroup_admit_headroom_ok(16384, unlimited_uses_host=True) is True
+
+
+def test_headroom_limited_cgroup_ignores_host(monkeypatch):
+  monkeypatch.setattr(pm, "read_cgroup_memory_max_bytes", lambda: 128 * GIB)
+  monkeypatch.setattr(pm, "read_cgroup_memory_current_bytes", lambda: 120 * GIB)
+  monkeypatch.setattr(pm, "read_cgroup_memory_stat", dict)
+  monkeypatch.setattr(pm, "read_meminfo_bytes", lambda _key: 300 * GIB)
+  assert pm.cgroup_admit_headroom_ok(16384, unlimited_uses_host=True) is False
+  assert pm.cgroup_admit_headroom_ok(4096, unlimited_uses_host=True) is True
+
+
+def test_memory_admit_base_bytes_prefers_cgroup_then_memtotal(monkeypatch):
+  monkeypatch.setattr(pm, "read_cgroup_memory_max_bytes", lambda: 128 * GIB)
+  monkeypatch.setattr(pm, "read_meminfo_bytes", lambda _key: 384 * GIB)
+  assert pm.memory_admit_base_bytes() == 128 * GIB
+  monkeypatch.setattr(pm, "read_cgroup_memory_max_bytes", lambda: None)
+  assert pm.memory_admit_base_bytes() == 384 * GIB
+  monkeypatch.setattr(pm, "read_meminfo_bytes", lambda _key: None)
+  assert pm.memory_admit_base_bytes() == 0
+
+
+def test_read_meminfo_bytes_parses_live_file():
+  total = pm.read_meminfo_bytes("MemTotal")
+  assert total is None or total > 0

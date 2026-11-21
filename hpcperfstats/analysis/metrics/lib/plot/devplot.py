@@ -26,6 +26,8 @@ from hpcperfstats.analysis.metrics.lib.columnar.type_detail_series import (
   TypeDetailSeries,
 )
 from hpcperfstats.analysis.metrics.lib.gen.utils import (
+  PLOT_MAX_POINTS_PER_HOST,
+  decimate_minmax,
   hover_plain_columns,
   non_degenerate_y_range_for_series,
   set_linear_axes_plain_numeric,
@@ -93,6 +95,9 @@ class DevPlot:
     """
     Create one Bokeh figure with continuous lines per host for the given event.
 
+    Each host series is decimated with ``decimate_minmax`` to at most
+    ``PLOT_MAX_POINTS_PER_HOST`` points; hover strings cover kept points only.
+
     Args:
       event (Any): Event column of the series frame.
       unit (Any | None): Unit label.
@@ -134,6 +139,11 @@ class DevPlot:
       with _profile_phase("plot_series"):
         sel = np.nonzero(host_names == str(h))[0]
         order = sel[np.argsort(frame.time_us[sel], kind="stable")]
+        order = order[
+          decimate_minmax(
+            frame.time_us[order], values[order], PLOT_MAX_POINTS_PER_HOST
+          )
+        ]
         data: dict[str, Any] = {
           "host": host_names[order].tolist(),
           "time": times_local[order],

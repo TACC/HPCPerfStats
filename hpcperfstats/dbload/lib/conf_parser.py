@@ -73,6 +73,9 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "metrics_plot_prewarm_mode"),
   ("PIPELINE", "metrics_prewarm_processes"),
   ("PIPELINE", "metrics_prewarm_max_tasks_per_child"),
+  ("PIPELINE", "metrics_memory_budget_pct"),
+  ("PIPELINE", "metrics_memory_budget_head_wait_s"),
+  ("PIPELINE", "metrics_admit_headroom_mib"),
   ("PIPELINE", "metrics_plot_aggregate_time_slice_s"),
   ("PIPELINE", "metrics_plot_aggregate_max_host_time_points"),
   ("PIPELINE", "metrics_run_poll_timeout_s"),
@@ -259,6 +262,15 @@ INI_OPTION_DEFAULTS = {
   "metrics_prewarm_processes": "auto",
   # Tasks a prewarm worker runs before it is recycled (RSS hygiene); 0 = never.
   "metrics_prewarm_max_tasks_per_child": "100",
+  # Percent of cgroup memory.max (host MemTotal when unlimited) that the
+  # estimated memory of in-flight metrics jobs may use; 0 = count cap only.
+  "metrics_memory_budget_pct": "40",
+  # Seconds a ready job refused by the budget may be passed over before
+  # same- or lower-priority-lane jobs stop starting ahead of it.
+  "metrics_memory_budget_head_wait_s": "600",
+  # MiB of memory headroom below which no new metrics job starts while
+  # another is in flight; 0 = off.
+  "metrics_admit_headroom_mib": "16384",
   # Hostxtime SQL chunk wall seconds (1h @ 1-min sample); design 5000x48x60.
   "metrics_plot_aggregate_time_slice_s": "3600",
   # Max hostxtime rows materialized per plot aggregate DF (not 14.4M).
@@ -3351,6 +3363,71 @@ def get_sync_ingest_per_file_timeout_max_s() -> Any:
     )
   except TypeError, ValueError, OverflowError:
     return _SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT
+
+
+def get_metrics_memory_budget_pct() -> float:
+  """
+  Share of the memory base the in-flight metrics jobs may be estimated at.
+
+  The memory base is the cgroup ``memory.max``, or host ``MemTotal`` when
+  the cgroup is unlimited (``process_memory.memory_admit_base_bytes``).
+
+  Returns:
+    float: ``[PIPELINE] metrics_memory_budget_pct`` clamped to 0..100
+    (0 disables the budget; unparsable reads as the registry default).
+
+  Examples:
+    >>> 0.0 <= get_metrics_memory_budget_pct() <= 100.0  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  try:
+    pct = float(_pipeline_get("metrics_memory_budget_pct"))
+  except TypeError, ValueError:
+    pct = float(ini_registry_default("metrics_memory_budget_pct"))
+  return min(100.0, max(0.0, pct))
+
+
+def get_metrics_memory_budget_head_wait_s() -> float:
+  """
+  Seconds a ready job refused by memory admission may be passed over.
+
+  After this wait, ready jobs of the same or a lower-priority lane are no
+  longer started ahead of it (fresh jobs still pass an aged backfill job).
+
+  Returns:
+    float: Non-negative ``[PIPELINE] metrics_memory_budget_head_wait_s``.
+
+  Examples:
+    >>> get_metrics_memory_budget_head_wait_s() >= 0.0  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0.0, float(_pipeline_get("metrics_memory_budget_head_wait_s")))
+  except TypeError, ValueError:
+    return float(ini_registry_default("metrics_memory_budget_head_wait_s"))
+
+
+def get_metrics_admit_headroom_mib() -> int:
+  """
+  Memory headroom (MiB) required to start a metrics job while one runs.
+
+  Headroom is cgroup ``memory.max - (memory.current - inactive_file)``, or
+  host ``MemAvailable`` when the cgroup is unlimited.
+
+  Returns:
+    int: Non-negative ``[PIPELINE] metrics_admit_headroom_mib`` (0 = off).
+
+  Examples:
+    >>> get_metrics_admit_headroom_mib() >= 0  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0, int(_pipeline_get("metrics_admit_headroom_mib")))
+  except TypeError, ValueError:
+    return int(ini_registry_default("metrics_admit_headroom_mib"))
 
 
 def get_metrics_run_stall_timeout_s() -> Any:

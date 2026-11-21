@@ -14,6 +14,10 @@ Subcommands (run ``seed-*`` and ``capture`` inside the dev container through
   in a manifest or discovered under ``--raw-root``.
 * ``seed-job-data``: create ``job_data`` rows for every job id found in
   ``host_data`` for the seeded hosts (start/end from first/last sample).
+* ``reseed-dev-db``: rebuild every corpus job in a reset dev database
+  (``seed-exemplars --ignore-log``, ``rewrite-host-suffix``,
+  ``seed-job-data``, ``seed-edge-jobs``) and check each manifest job has its
+  ``job_data`` and ``host_data`` rows.
 * ``verify``: check the corpus manifest and fixture files.
 
 Attributes:
@@ -205,11 +209,12 @@ def cmd_seed_exemplars(args: argparse.Namespace) -> int:
 
   Runs the production ingest path (Codon parse when the pyext is present) one
   file at a time, archive side effects disabled, recording each ingested path
-  in ``SEEDED_FILES_LOG`` so reruns skip finished files.
+  in ``SEEDED_FILES_LOG`` so reruns skip finished files. ``ignore_log``
+  empties that log first, for a database that was reset after it was written.
 
   Args:
     args (argparse.Namespace): ``raw_root``, ``max_bytes``, ``min_samples``,
-      ``limit``, ``dir``.
+      ``limit``, ``ignore_log``, ``dir``.
 
   Returns:
     int: Process exit code (0 when every attempted file ingested).
@@ -221,12 +226,18 @@ def cmd_seed_exemplars(args: argparse.Namespace) -> int:
     ...     max_bytes=500_000_000,
     ...     min_samples=3,
     ...     limit=0,
+    ...     ignore_log=False,
     ...     dir=None,
     ...   )
     ... )
   """
   corpus_dir = _corpus_dir(args.dir)
   corpus_dir.mkdir(parents=True, exist_ok=True)
+  log = corpus_dir / SEEDED_FILES_LOG
+  if args.ignore_log:
+    # The log describes a database that may since have been reset; start it
+    # over so it lists only what this run ingests.
+    log.write_text("", encoding="utf-8")
   seeded = _load_seeded(corpus_dir)
   candidates: list[Path] = []
   for path in iter_raw_stats_files(Path(args.raw_root), int(args.max_bytes)):
@@ -245,7 +256,6 @@ def cmd_seed_exemplars(args: argparse.Namespace) -> int:
 
   st.should_archive = False
   failed = 0
-  log = corpus_dir / SEEDED_FILES_LOG
   for index, path in enumerate(candidates):
     t0 = time.monotonic()
     result = st.add_stats_file_to_db(str(path))
@@ -544,18 +554,29 @@ def load_frame_npz(path: Path) -> Any:
   """
   Load a JobFrame saved by ``_save_frame_npz``.
 
+  Captures saved while frames stored float64 values are narrowed to
+  ``VALUE_DTYPE``; the narrowing must be exact (the columns are PostgreSQL
+  ``real``), so a capture holding a value float32 cannot represent fails
+  instead of silently changing the golden input.
+
   Args:
     path (Path): ``.npz`` path.
 
   Returns:
     Any: ``JobFrame`` instance.
 
+  Raises:
+    ValueError: A value column does not narrow exactly to ``VALUE_DTYPE``.
+
   Examples:
     >>> load_frame_npz(Path("/tmp/x.npz"))  # doctest: +SKIP
   """
   import numpy as np
 
-  from hpcperfstats.analysis.metrics.lib.columnar.jobframe import JobFrame
+  from hpcperfstats.analysis.metrics.lib.columnar.jobframe import (
+    VALUE_DTYPE,
+    JobFrame,
+  )
 
   with np.load(path, allow_pickle=True) as z:
     # Captures before monitor value sentinels carry none: all-zero codes.
@@ -564,6 +585,12 @@ def load_frame_npz(path: Path) -> Any:
       if "sentinel" in z.files
       else np.zeros(z["value"].shape, dtype=np.int16)
     )
+    cols = {}
+    for name in ("value", "arc", "delta"):
+      raw = z[name]
+      cols[name] = raw.astype(VALUE_DTYPE)
+      if not np.array_equal(cols[name], raw, equal_nan=True):
+        raise ValueError(f"{path}: {name} is not exact in {VALUE_DTYPE}")
     return JobFrame(
       jid=str(z["jid"]),
       time_us=z["time_us"],
@@ -571,9 +598,9 @@ def load_frame_npz(path: Path) -> Any:
       series_id=z["series_id"],
       dev_id=z["dev_id"],
       owned=z["owned"],
-      value=z["value"],
-      arc=z["arc"],
-      delta=z["delta"],
+      value=cols["value"],
+      arc=cols["arc"],
+      delta=cols["delta"],
       sentinel=sentinel,
       hosts=[str(h) for h in z["hosts"].tolist()],
       series=list(
@@ -1392,6 +1419,110 @@ def cmd_verify(args: argparse.Namespace) -> int:
   return 0
 
 
+def manifest_jobs_missing_from_db(corpus_dir: Path) -> list[str]:
+  """
+  Manifest jobs the dev database cannot serve to a metrics run.
+
+  A job needs its ``job_data`` row, and when the manifest frame has rows it
+  also needs ``host_data`` rows tagged with its jid (or ``dev = 'j:<jid>'``
+  on shared nodes); a ``no_data`` edge job only needs ``job_data``.
+
+  Args:
+    corpus_dir (Path): Corpus directory holding ``manifest.json``.
+
+  Returns:
+    list[str]: ``<jid>:job_data`` / ``<jid>:host_data`` for each gap, in
+    manifest order.
+
+  Examples:
+    >>> manifest_jobs_missing_from_db(Path("/corpus"))  # doctest: +SKIP
+    []
+  """
+  _ensure_django()
+  from django.db import connection
+
+  from hpcperfstats.site.lib.machine.models import job_data
+
+  jobs = _read_manifest(corpus_dir).get("jobs", [])
+  jids = [str(job["jid"]) for job in jobs]
+  with_job = set(
+    job_data.objects.filter(jid__in=jids).values_list("jid", flat=True)
+  )
+  with connection.cursor() as cursor:
+    cursor.execute(
+      "SELECT jid FROM host_data WHERE jid = ANY(%s) "
+      "UNION SELECT substr(dev, 3) FROM host_data WHERE dev = ANY(%s)",
+      [jids, [f"j:{jid}" for jid in jids]],
+    )
+    with_rows = {str(row[0]) for row in cursor.fetchall()}
+  gaps = []
+  for job in jobs:
+    jid = str(job["jid"])
+    if jid not in with_job:
+      gaps.append(f"{jid}:job_data")
+    if int(job.get("n_rows") or 0) > 0 and jid not in with_rows:
+      gaps.append(f"{jid}:host_data")
+  return gaps
+
+
+def cmd_reseed_dev_db(args: argparse.Namespace) -> int:
+  """
+  Rebuild the corpus jobs in an emptied or reset dev database.
+
+  Runs ``seed-exemplars`` (ignoring the stale seeded-files log), then
+  ``rewrite-host-suffix``, ``seed-job-data`` and ``seed-edge-jobs``, stopping
+  at the first failing step, and finally checks that every manifest job is
+  servable (``manifest_jobs_missing_from_db``). The golden fixtures are not
+  touched; this restores the database the A/B report
+  (``scripts/metrics_columnar_ab_report.py``) and DB-backed metrics tests
+  read.
+
+  Args:
+    args (argparse.Namespace): ``raw_root``, ``max_bytes``, ``min_samples``,
+      ``username``, ``work_dir``, ``dir``.
+
+  Returns:
+    int: 0 when every step succeeded and no manifest job is missing.
+
+  Examples:
+    >>> cmd_reseed_dev_db(
+    ...   argparse.Namespace(  # doctest: +SKIP
+    ...     raw_root="/corpus/raw",
+    ...     max_bytes=500_000_000,
+    ...     min_samples=3,
+    ...     username="corpus",
+    ...     work_dir="/tmp/edge",
+    ...     dir=None,
+    ...   )
+    ... )
+  """
+  common = {"dir": args.dir, "username": args.username}
+  steps = (
+    (
+      "seed-exemplars",
+      cmd_seed_exemplars,
+      {
+        "raw_root": args.raw_root,
+        "max_bytes": args.max_bytes,
+        "min_samples": args.min_samples,
+        "limit": 0,
+        "ignore_log": True,
+      },
+    ),
+    ("rewrite-host-suffix", cmd_rewrite_host_suffix, {}),
+    ("seed-job-data", cmd_seed_job_data, {"min_samples": args.min_samples}),
+    ("seed-edge-jobs", cmd_seed_edge_jobs, {"work_dir": args.work_dir}),
+  )
+  for name, step, extra in steps:
+    rc = int(step(argparse.Namespace(**common, **extra)))
+    print(f"reseed-dev-db: step={name} rc={rc}", flush=True)
+    if rc:
+      return rc
+  gaps = manifest_jobs_missing_from_db(_corpus_dir(args.dir))
+  print(f"reseed-dev-db: missing={len(gaps)} {' '.join(gaps)}".rstrip())
+  return 1 if gaps else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
   """
   Build the CLI parser with the corpus subcommands.
@@ -1412,7 +1543,24 @@ def build_parser() -> argparse.ArgumentParser:
   seed.add_argument("--max-bytes", default=500_000_000)
   seed.add_argument("--min-samples", default=MIN_SAMPLES_PER_JOB)
   seed.add_argument("--limit", default=0, type=int)
+  seed.add_argument(
+    "--ignore-log",
+    action="store_true",
+    help="empty the seeded-files log first (database was reset)",
+  )
   seed.set_defaults(func=cmd_seed_exemplars)
+
+  reseed = sub.add_parser(
+    "reseed-dev-db", help="rebuild every corpus job in a reset dev database"
+  )
+  reseed.add_argument("--raw-root", required=True)
+  reseed.add_argument("--max-bytes", default=500_000_000)
+  reseed.add_argument("--min-samples", default=MIN_SAMPLES_PER_JOB)
+  reseed.add_argument("--username", default="corpus")
+  reseed.add_argument(
+    "--work-dir", default="/tmp/hpcperfstats-edge-jobs", help="staging dir"
+  )
+  reseed.set_defaults(func=cmd_reseed_dev_db)
 
   jobs = sub.add_parser("seed-job-data", help="synthesize job_data rows")
   jobs.add_argument("--min-samples", default=MIN_SAMPLES_PER_JOB)

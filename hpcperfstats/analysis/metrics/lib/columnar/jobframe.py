@@ -1,7 +1,7 @@
 """
 JobFrame: one job's ``host_data`` slice as a sorted structure of arrays.
 
-Layout (decision D11 of the columnar plan):
+Layout:
 
 * ``time_us`` int64 epoch microseconds (UTC);
 * ``host_id`` / ``series_id`` / ``dev_id`` int32 ids into the name tables
@@ -10,7 +10,10 @@ Layout (decision D11 of the columnar plan):
   copies);
 * ``owned`` uint8 (1 when the row belongs to the job: ``jid`` match or
   ``dev = 'j:<jid>'``; 0 for host-wide residual rows of shared-node jobs);
-* ``value`` / ``arc`` / ``delta`` float64 with NaN for SQL NULL.
+* ``value`` / ``arc`` / ``delta`` float32 with NaN for SQL NULL (the
+  ``host_data`` columns are PostgreSQL ``real``, so storage is exact);
+  readers widen the rows they select to float64 before any arithmetic
+  (``kernels.FrameIndex.values_at``).
 
 Rows are sorted by ``(series_id, host_id, dev_id, time_us)`` so every kernel
 can run segment scans without hashing. Names never reach the kernels.
@@ -34,7 +37,7 @@ from hpcperfstats.lib.monitor_sentinel import sentinel_codes
 
 TIME_DTYPE = np.int64
 ID_DTYPE = np.int32
-VALUE_DTYPE = np.float64
+VALUE_DTYPE = np.float32
 JOB_DEV_PREFIX = "j:"
 
 
@@ -167,6 +170,72 @@ class NameInterner:
 
 
 @dataclass
+class DecodedChunk:
+  """
+  Unsorted columns decoded from COPY streams, ids per the shared interner.
+
+  The input of :func:`build_job_frame`, which takes ownership of it.
+
+  Attributes:
+    time_us: int64 epoch microseconds.
+    host_id: int32 host ids.
+    type_id: int32 type ids.
+    event_id: int32 event ids.
+    dev_id: int32 signed device ids.
+    owned: uint8 ownership flags.
+    value: ``VALUE_DTYPE`` values (NaN for NULL).
+    arc: ``VALUE_DTYPE`` arcs (NaN for NULL).
+    delta: ``VALUE_DTYPE`` deltas (NaN for NULL).
+  """
+
+  time_us: np.ndarray
+  host_id: np.ndarray
+  type_id: np.ndarray
+  event_id: np.ndarray
+  dev_id: np.ndarray
+  owned: np.ndarray
+  value: np.ndarray
+  arc: np.ndarray
+  delta: np.ndarray
+
+  def __len__(self) -> int:
+    """
+    Row count.
+
+    Returns:
+      int: Rows in the chunk.
+
+    Examples:
+      >>> e = np.empty(0)
+      >>> len(DecodedChunk(e, e, e, e, e, e, e, e, e))
+      0
+    """
+    return int(self.time_us.shape[0])
+
+  def pop(self, name: str) -> np.ndarray:
+    """
+    Hand column ``name`` to the caller and keep an empty array in its place.
+
+    The chunk then holds no reference to the column, so its memory goes as
+    soon as the caller drops it.
+
+    Args:
+      name (str): Field name.
+
+    Returns:
+      np.ndarray: The column as it was.
+
+    Examples:
+      >>> c = DecodedChunk(*[np.arange(3)] * 9)
+      >>> c.pop("arc").tolist(), c.arc.shape
+      ([0, 1, 2], (0,))
+    """
+    col = getattr(self, name)
+    setattr(self, name, np.empty(0, dtype=col.dtype))
+    return col
+
+
+@dataclass
 class JobFrame:
   """
   Sorted structure of arrays for one job's ``host_data`` rows.
@@ -178,10 +247,10 @@ class JobFrame:
     series_id: int32 ``(type, event)`` series id per row.
     dev_id: int32 signed device id per row.
     owned: uint8 job-ownership flag per row.
-    value: float64 ``value`` column (NaN for NULL and for monitor value
+    value: float32 ``value`` column (NaN for NULL and for monitor value
       sentinels, so every reader sees a sentinel as missing).
-    arc: float64 ``arc`` column (NaN for NULL).
-    delta: float64 ``delta`` column (NaN for NULL).
+    arc: float32 ``arc`` column (NaN for NULL).
+    delta: float32 ``delta`` column (NaN for NULL).
     sentinel: int16 monitor value-sentinel code per row (0 for data and
       NULL); the code that ``build_job_frame`` took out of ``value``.
     hosts: Host names by id.
@@ -285,15 +354,9 @@ class JobFrame:
     return build_job_frame(
       jid,
       interner,
-      time_us=time_us,
-      host_id=host_id,
-      type_id=type_id,
-      event_id=event_id,
-      dev_id=dev_id,
-      owned=owned,
-      value=value,
-      arc=arc,
-      delta=delta,
+      DecodedChunk(
+        time_us, host_id, type_id, event_id, dev_id, owned, value, arc, delta
+      ),
     )
 
   def time_axis(self) -> np.ndarray:
@@ -492,51 +555,30 @@ def _sort_key_matrix(
 
 
 def build_job_frame(
-  jid: str,
-  interner: NameInterner,
-  *,
-  time_us: np.ndarray,
-  host_id: np.ndarray,
-  type_id: np.ndarray,
-  event_id: np.ndarray,
-  dev_id: np.ndarray,
-  owned: np.ndarray,
-  value: np.ndarray,
-  arc: np.ndarray,
-  delta: np.ndarray,
+  jid: str, interner: NameInterner, chunk: DecodedChunk
 ) -> JobFrame:
   """
-  Assemble decoded columns into a sorted JobFrame.
+  Assemble decoded columns into a sorted JobFrame, consuming ``chunk``.
 
   ``(type_id, event_id)`` pairs become series ids in first-seen order of the
   sorted ``(type, event)`` names so series ids are deterministic for a job
-  regardless of chunk order.
+  regardless of chunk order. One ``lexsort`` order gathers every column and
+  each source column is popped from ``chunk`` as its sorted copy is made,
+  so the peak stays near one frame plus one column; ``chunk`` is left with
+  empty columns.
 
   Args:
     jid (str): Job id.
     interner (NameInterner): Name tables used while decoding.
-    time_us (np.ndarray): int64 times.
-    host_id (np.ndarray): int32 host ids.
-    type_id (np.ndarray): int32 type ids.
-    event_id (np.ndarray): int32 event ids.
-    dev_id (np.ndarray): int32 signed device ids.
-    owned (np.ndarray): uint8 ownership flags.
-    value (np.ndarray): float64 values.
-    arc (np.ndarray): float64 arcs.
-    delta (np.ndarray): float64 deltas.
+    chunk (DecodedChunk): Unsorted columns (ownership moves here).
 
   Returns:
     JobFrame: Sorted frame with name tables.
 
   Examples:
-    >>> import numpy as np
     >>> ni = NameInterner()
-    >>> h = ni.host("h")
-    ... t = ni.type("cpu")
-    ... e = ni.event("user")
-    >>> f = build_job_frame(
-    ...   "1",
-    ...   ni,
+    >>> h, t, e = ni.host("h"), ni.type("cpu"), ni.event("user")
+    >>> ch = DecodedChunk(
     ...   time_us=np.array([2, 1]),
     ...   host_id=np.array([h, h], dtype=np.int32),
     ...   type_id=np.array([t, t], dtype=np.int32),
@@ -547,53 +589,70 @@ def build_job_frame(
     ...   arc=np.array([0.0, 0.0]),
     ...   delta=np.array([0.0, 0.0]),
     ... )
-    >>> f.time_us.tolist(), f.series
-    ([1, 2], [('cpu', 'user')])
+    >>> f = build_job_frame("1", ni, ch)
+    >>> f.time_us.tolist(), f.series, len(ch)
+    ([1, 2], [('cpu', 'user')], 0)
   """
-  n = int(time_us.shape[0])
-  type_id = np.asarray(type_id, dtype=np.int64)
-  event_id = np.asarray(event_id, dtype=np.int64)
+  n = len(chunk)
   n_events = max(1, len(interner.events))
-  pair_code = type_id * n_events + event_id
-  present = np.unique(pair_code) if n else np.empty(0, dtype=np.int64)
-  pairs = sorted(
+  pair_code = chunk.pop("type_id").astype(np.int64)
+  pair_code *= n_events
+  pair_code += chunk.pop("event_id")
+  present = (
+    np.flatnonzero(np.bincount(pair_code)) if n else np.empty(0, np.int64)
+  )
+  series = sorted(
     (interner.types[int(c // n_events)], interner.events[int(c % n_events)])
     for c in present.tolist()
   )
-  series: list[tuple[str, str]] = pairs
-  code_to_series = {
-    interner.types.index(t) * n_events + interner.events.index(e): i
-    for i, (t, e) in enumerate(series)
-  }
-  if n:
-    lookup = np.empty(int(present.max()) + 1, dtype=ID_DTYPE)
-    for code, sid in code_to_series.items():
-      lookup[code] = sid
-    series_id = lookup[pair_code].astype(ID_DTYPE)
-  else:
-    series_id = np.empty(0, dtype=ID_DTYPE)
-  time_us = np.asarray(time_us, dtype=TIME_DTYPE)
-  host_id = np.asarray(host_id, dtype=ID_DTYPE)
-  dev_id = np.asarray(dev_id, dtype=ID_DTYPE)
+  lookup = np.empty(int(present.max()) + 1 if n else 0, dtype=ID_DTYPE)
+  for sid, (t, e) in enumerate(series):
+    lookup[interner.types.index(t) * n_events + interner.events.index(e)] = sid
+  series_id = lookup[pair_code]
+  del pair_code
   order = (
-    np.lexsort(_sort_key_matrix(series_id, host_id, dev_id, time_us))
+    np.lexsort(
+      _sort_key_matrix(series_id, chunk.host_id, chunk.dev_id, chunk.time_us)
+    )
     if n > 1
     else np.arange(n)
   )
-  value = np.asarray(value, dtype=VALUE_DTYPE)[order]
+
+  def take(name: str, dtype: Any) -> np.ndarray:
+    """
+    Pop one source column and return its sorted copy.
+
+    Args:
+      name (str): ``chunk`` field name.
+      dtype (Any): Contract dtype of the column.
+
+    Returns:
+      np.ndarray: Column gathered by ``order`` with the contract dtype.
+
+    Examples:
+      >>> take("owned", np.uint8)  # doctest: +SKIP
+    """
+    return chunk.pop(name)[order].astype(dtype, copy=False)
+
+  cols = {
+    "time_us": take("time_us", TIME_DTYPE),
+    "host_id": take("host_id", ID_DTYPE),
+    "series_id": series_id[order],
+    "dev_id": take("dev_id", ID_DTYPE),
+    "owned": take("owned", np.uint8),
+    "arc": take("arc", VALUE_DTYPE),
+    "delta": take("delta", VALUE_DTYPE),
+  }
+  del series_id
+  # Last, once ``chunk`` is empty: the sentinel pass widens ``value``.
+  value = take("value", VALUE_DTYPE)
   codes = sentinel_codes(value)
   value = np.where(codes != 0, np.nan, value)
   return JobFrame(
     jid=str(jid),
-    time_us=np.ascontiguousarray(time_us[order]),
-    host_id=np.ascontiguousarray(host_id[order]),
-    series_id=np.ascontiguousarray(series_id[order]),
-    dev_id=np.ascontiguousarray(dev_id[order]),
-    owned=np.ascontiguousarray(np.asarray(owned, dtype=np.uint8)[order]),
-    value=np.ascontiguousarray(value),
-    arc=np.ascontiguousarray(np.asarray(arc, dtype=VALUE_DTYPE)[order]),
-    delta=np.ascontiguousarray(np.asarray(delta, dtype=VALUE_DTYPE)[order]),
-    sentinel=np.ascontiguousarray(codes),
+    **cols,
+    value=value,
+    sentinel=codes,
     hosts=list(interner.hosts),
     series=series,
     devs=list(interner.devs),

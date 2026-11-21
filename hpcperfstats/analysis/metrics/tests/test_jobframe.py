@@ -124,7 +124,7 @@ def test_check_contract_rejects_unsorted_or_wrong_dtype():
   )
   with pytest.raises(ValueError, match="sorted"):
     bad.check_contract()
-  bad2 = JobFrame(**{**f.__dict__, "value": f.value.astype(np.float32)})
+  bad2 = JobFrame(**{**f.__dict__, "value": f.value.astype(np.float64)})
   with pytest.raises(ValueError, match="dtype"):
     bad2.check_contract()
 

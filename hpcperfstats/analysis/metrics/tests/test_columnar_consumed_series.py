@@ -192,6 +192,10 @@ _REDUCTIONS = {
     lambda ix: ix.metrics_pivot("host_cpu", ["nice", "missing"]),
     {("host_cpu", "nice")},
   ),
+  "has_owned_rows": (
+    lambda ix: ix.has_owned_rows("host_cpu", ["nice", "missing"]),
+    {("host_cpu", "nice")},
+  ),
 }
 
 

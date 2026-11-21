@@ -469,3 +469,209 @@ def test_continuous_session_stop_leaves_queued_work_for_later():
   assert pool.metrics_jids == ["p0"]
   assert [r.jid for r in ready] == ["q1", "q2"]
   assert [r["ref"].jid for r in rows] == ["p0"]
+
+
+# Memory-budget admission (hs04 OOM, 2026-11-21): admission was by count
+# only, so a burst of large backfill jobs (each holding several copies of
+# its frame) took up to 188 GB RSS and the process was OOM-killed.
+
+_C = mss.METRICS_PEAK_BYTES_PER_HOST_MINUTE
+
+
+class _CountdownAsync:
+  """Metrics task that becomes ready after a few ``ready()`` polls."""
+
+  def __init__(self, pool, jid, polls):
+    self._pool, self._jid, self._polls = pool, jid, polls
+
+  def ready(self):
+    self._polls -= 1
+    return self._polls <= 0
+
+  def get(self, timeout=None):
+    del timeout
+    self._pool.inflight.discard(self._jid)
+    return {"jid": self._jid, "status": "ok"}
+
+
+class _TrackPool:
+  """Records, for each metrics submit, which jobs were already in flight."""
+
+  def __init__(self, polls=3):
+    self.polls = polls
+    self.inflight = set()
+    self.submits = []
+
+  def apply_async(self, fn, args):
+    del fn
+    if args and isinstance(args[0], tuple):
+      jid = args[0][1].jid
+      self.submits.append((jid, frozenset(self.inflight)))
+      self.inflight.add(jid)
+      return _CountdownAsync(self, jid, self.polls)
+    return _ReadyAsync({"jid": args[0], "ok": True})
+
+
+def _ref(jid, samples, **kw):
+  return SimpleNamespace(jid=jid, estimated_sample_count=samples, **kw)
+
+
+def _session(pool, primary=(), ready=None, **kw):
+  kw.setdefault("max_inflight", 8)
+  if ready is not None:
+    kw.update(
+      ready_queue=ready,
+      ready_queue_lock=threading.Lock(),
+      continuous=True,
+      should_stop=lambda: not ready,
+    )
+  return mss.run_metrics_sliding_session(
+    primary_refs=list(primary),
+    metrics_obj=None,
+    shared_pool=pool,
+    unwrap_fn=lambda *_a: None,
+    persist_fn=lambda payload: {"jid": payload["jid"], "ok": True},
+    prewarm_worker_fn=lambda jid: {"jid": jid, "ok": True},
+    inline_prewarm_fn=None,
+    prewarm_mode="pipeline_required",
+    poll_timeout_s=0.05,
+    stall_timeout_s=30.0,
+    empty_supplement_sleep_s=0.0,
+    **kw,
+  )
+
+
+def _max_concurrent(pool):
+  return max(len(before) + 1 for _jid, before in pool.submits)
+
+
+@pytest.mark.machine_unit_mock
+def test_primary_fill_respects_memory_budget():
+  pool = _TrackPool()
+  rows = _session(
+    pool,
+    primary=[_ref(j, 10) for j in "abcd"],
+    memory_budget_bytes=25 * _C,
+  )
+  assert sorted(r["ref"].jid for r in rows) == list("abcd")
+  assert _max_concurrent(pool) == 2
+
+
+@pytest.mark.machine_unit_mock
+def test_take_fifo_respects_memory_budget():
+  pool = _TrackPool()
+  ready = deque([_ref(j, 10) for j in "abcde"])
+  rows = _session(pool, ready=ready, memory_budget_bytes=35 * _C)
+  assert sorted(r["ref"].jid for r in rows) == list("abcde")
+  assert _max_concurrent(pool) == 3
+  assert not ready
+
+
+@pytest.mark.machine_unit_mock
+def test_budget_admits_one_when_idle():
+  pool = _TrackPool()
+  rows = _session(
+    pool,
+    primary=[_ref("huge", 10_000), _ref("next", 10_000)],
+    memory_budget_bytes=_C,
+  )
+  assert [r["ref"].jid for r in rows] == ["huge", "next"]
+  assert pool.submits == [("huge", frozenset()), ("next", frozenset())]
+
+
+@pytest.mark.machine_unit_mock
+def test_budget_zero_disables():
+  pool = _TrackPool()
+  _session(
+    pool, primary=[_ref(j, 10**9) for j in "abcd"], memory_budget_bytes=0
+  )
+  assert _max_concurrent(pool) == 4
+
+
+@pytest.mark.machine_unit_mock
+def test_artifact_only_counts_full_cost():
+  compute = _ref("c", 10)
+  artifact = _ref("a", 10, artifact_only=True)
+  assert mss.ref_memory_cost(artifact) == mss.ref_memory_cost(compute)
+
+  class _SlowPrewarmPool(_TrackPool):
+    def apply_async(self, fn, args):
+      if args and not isinstance(args[0], tuple):
+        jid = args[0]
+        self.submits.append((jid, frozenset(self.inflight)))
+        self.inflight.add(jid)
+        return _CountdownAsync(self, jid, self.polls)
+      return super().apply_async(fn, args)
+
+  pool = _SlowPrewarmPool()
+  _session(pool, primary=[artifact, compute], memory_budget_bytes=15 * _C)
+  # The artifact-only prewarm held the budget, so the compute waited.
+  assert pool.submits[0] == ("a", frozenset())
+  assert next(b for j, b in pool.submits if j == "c") == frozenset()
+
+
+@pytest.mark.machine_unit_mock
+def test_aged_backfill_never_blocks_fresh():
+  old = time.monotonic() - 10_000
+  q = deque(
+    [
+      _ref("bigb", 1, lane="backfill"),
+      _ref("b2", 1, lane="backfill"),
+      _ref("f1", 1),
+    ]
+  )
+  skipped = {"bigb": old}
+  taken = mss.pop_fresh_first(
+    q, 8, admit=lambda r: r.jid != "bigb", skipped_since=skipped, head_wait_s=60
+  )
+  # Fresh still passes the aged backfill head; backfill behind it waits.
+  assert [r.jid for r in taken] == ["f1"]
+  assert [r.jid for r in q] == ["bigb", "b2"]
+  # Before the wait has elapsed, backfill may skip ahead of it.
+  q = deque([_ref("bigb", 1, lane="backfill"), _ref("b2", 1, lane="backfill")])
+  skipped = {}
+  taken = mss.pop_fresh_first(
+    q, 8, admit=lambda r: r.jid != "bigb", skipped_since=skipped, head_wait_s=60
+  )
+  assert [r.jid for r in taken] == ["b2"]
+  assert set(skipped) == {"bigb"}
+
+
+@pytest.mark.machine_unit_mock
+def test_aged_fresh_blocks_backfill():
+  old = time.monotonic() - 10_000
+  q = deque([_ref("bigf", 1), _ref("f2", 1), _ref("b1", 1, lane="backfill")])
+  skipped = {"bigf": old, "gone": old}
+  taken = mss.pop_fresh_first(
+    q, 8, admit=lambda r: r.jid != "bigf", skipped_since=skipped, head_wait_s=60
+  )
+  assert taken == []
+  assert [r.jid for r in q] == ["bigf", "f2", "b1"]
+  # Entries for refs that left the queue are dropped.
+  assert set(skipped) == {"bigf"}
+
+
+@pytest.mark.machine_unit_mock
+def test_admit_paused_on_headroom():
+  pool = _TrackPool()
+  calls = []
+
+  def _no_headroom():
+    calls.append(1)
+    return False
+
+  rows = _session(
+    pool,
+    primary=[_ref(j, 1) for j in "abc"],
+    memory_budget_bytes=0,
+    admit_ok=_no_headroom,
+  )
+  assert sorted(r["ref"].jid for r in rows) == list("abc")
+  # Never two at once: with work in flight the gate refused every admit,
+  # and an idle session still admitted one job at a time.
+  assert _max_concurrent(pool) == 1
+  assert calls
+  ready = deque([_ref(j, 1) for j in "xyz"])
+  pool = _TrackPool()
+  _session(pool, ready=ready, admit_ok=_no_headroom)
+  assert _max_concurrent(pool) == 1 and not ready

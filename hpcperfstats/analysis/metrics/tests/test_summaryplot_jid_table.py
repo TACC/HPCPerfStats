@@ -1809,19 +1809,6 @@ def test_summary_allow_partial_null_includes_watts():
   assert "amd_pkg_w" in _SUMMARY_ALLOW_PARTIAL_NULL
 
 
-def test_continuous_polyline_xy_keeps_sample_count():
-  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
-    _continuous_polyline_xy,
-  )
-
-  times = [1, 2, 3, 4]
-  values = [10.0, 20.0, 30.0, 40.0]
-  xs, ys = _continuous_polyline_xy(times, values)
-  assert len(xs) == 4
-  assert len(ys) == 4
-  assert ys == values
-
-
 def test_clamp_summary_gpu_link_rates_drops_poison():
   import numpy as np
 

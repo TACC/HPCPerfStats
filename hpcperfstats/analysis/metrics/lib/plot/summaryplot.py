@@ -56,6 +56,8 @@ from hpcperfstats.analysis.metrics.lib.gen.cpu_fp_events import (
 )
 from hpcperfstats.analysis.metrics.lib.gen.imc_cas_bw import DDR_CAS_GIB
 from hpcperfstats.analysis.metrics.lib.gen.utils import (
+  PLOT_MAX_POINTS_PER_HOST,
+  decimate_minmax,
   hover_plain_columns,
   non_degenerate_y_range_for_series,
   set_linear_axes_plain_numeric,
@@ -826,33 +828,6 @@ def _iter_hardware_error_event_specs() -> Iterator[tuple[str, str, str]]:
   )
 
 
-def _continuous_polyline_xy(times: Any, values: Any) -> Any:
-  """
-  Build x/y lists for a continuous polyline through (time, value) samples.
-
-  NaN values in ``values`` break Bokeh line segments (gaps). Callers that want
-  continuous segments across missing samples should drop NaNs before calling.
-
-  Args:
-    times (Any): Naive cluster-local ``datetime64`` samples.
-    values (Any): Values aligned with ``times``.
-
-  Returns:
-    Any: ``(xs, ys)`` lists, or two empty lists on a length mismatch.
-
-  Examples:
-    >>> _continuous_polyline_xy([], [])
-    ([], [])
-  """
-  if times is None or len(times) == 0:
-    return [], []
-  t = times.tolist() if hasattr(times, "tolist") else list(times)
-  v = values.tolist() if hasattr(values, "tolist") else list(values)
-  if len(t) != len(v):
-    return [], []
-  return t, v
-
-
 def _error_series_frame(
   hosts: list[str], host_id: Any, time_us: Any, rates: Any
 ) -> SeriesFrame:
@@ -984,7 +959,10 @@ class SummaryPlot:
     Create one Bokeh figure with continuous per-host lines and scatter hits.
 
     Uses one multi_line glyph plus one scatter (HoverTool on data) and a
-    separate HoverTool on a small "?" marker for metric documentation.
+    separate HoverTool on a small "?" marker for metric documentation. Each
+    host series is decimated with ``decimate_minmax`` to at most
+    ``PLOT_MAX_POINTS_PER_HOST`` points before it reaches Bokeh, and hover
+    strings are built for kept points only.
 
     Args:
       frame (SeriesFrame): Series frame holding ``metric``.
@@ -1029,23 +1007,35 @@ class SummaryPlot:
     set_linear_axes_plain_numeric(plot)
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
+    # Kept NaN samples stay in the line so multi_line breaks at gaps; the
+    # scatter shows the same kept rows without NaN.
+    shown = np.zeros(values.size, dtype=bool)
+    kept_by_host: dict[str, np.ndarray] = {}
+    ids_by_host: dict[str, list[int]] = {}
+    for host_id, name in enumerate(frame.hosts):
+      ids_by_host.setdefault(str(name), []).append(host_id)
+    with _profile_phase("plot_series"):
+      for host_key, ids in ids_by_host.items():
+        sel = np.flatnonzero(np.isin(frame.host_id, ids))
+        if sel.size == 0:
+          continue
+        order = sel[np.argsort(frame.time_us[sel], kind="stable")]
+        kept = order[
+          decimate_minmax(
+            frame.time_us[order], values[order], PLOT_MAX_POINTS_PER_HOST
+          )
+        ]
+        kept_by_host[host_key] = kept
+        shown[kept] = True
+
     xs_list = []
     ys_list = []
     colors_list = []
-    with _profile_phase("plot_series"):
-      for h in self.host_list:
-        host_key = str(h)
-        sel = np.nonzero(host_names == host_key)[0]
-        if sel.size == 0:
-          xs_list.append([])
-          ys_list.append([])
-        else:
-          order = sel[np.argsort(frame.time_us[sel], kind="stable")]
-          # Keep NaN samples so multi_line breaks segments across gaps.
-          xi, yi = _continuous_polyline_xy(times_local[order], values[order])
-          xs_list.append(xi)
-          ys_list.append(yi)
-        colors_list.append(self.hc[h])
+    for h in self.host_list:
+      kept = kept_by_host.get(str(h))
+      xs_list.append([] if kept is None else times_local[kept])
+      ys_list.append([] if kept is None else values[kept])
+      colors_list.append(self.hc[h])
 
     line_source = ColumnDataSource(
       data={"xs": xs_list, "ys": ys_list, "line_color": colors_list}
@@ -1059,11 +1049,11 @@ class SummaryPlot:
     )
 
     with _profile_phase("plot_series"):
-      keep = ~np.isnan(values)
+      keep = shown & ~np.isnan(values)
       order = np.lexsort((frame.time_us[keep], host_names[keep].astype(str)))
       idx = np.nonzero(keep)[0][order]
       scatter_data: dict[str, Any] = {
-        "host": host_names[idx].tolist(),
+        "host": host_names[idx],
         "time": times_local[idx],
         metric: values[idx],
       }

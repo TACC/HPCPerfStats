@@ -25,11 +25,12 @@ def _table(jid, n_rows):
   return table_from_records(rows, jid=jid)
 
 
+def _arrays_bytes(obj):
+  return sum(v.nbytes for v in vars(obj).values() if isinstance(v, np.ndarray))
+
+
 def _frame_bytes(table):
-  # Row columns plus the frame's cached time axis / index arrays.
-  return sum(
-    v.nbytes for v in vars(table.frame).values() if isinstance(v, np.ndarray)
-  )
+  return _arrays_bytes(table.frame) + _arrays_bytes(table.index)
 
 
 def test_handoff_evicts_oldest_past_byte_cap():
@@ -73,3 +74,16 @@ def test_handoff_count_cap_still_applies():
 
 def test_process_handoff_has_a_byte_cap_below_node_memory():
   assert 0 < HANDOFF.max_bytes <= 32 << 30
+
+
+def test_handoff_put_counts_frame_index_bytes():
+  """Regression (hs04 OOM, 2026-11-21): ``put`` sized a table by its frame
+  arrays only, so the FrameIndex copies (``owned``, time index, ...) were
+  parked in the handoff uncounted against the byte cap.
+  """
+  t = _table("x", 1000)
+  index_bytes = _arrays_bytes(t.index)
+  assert index_bytes > 0
+  h = JobTableHandoff()
+  h.put(t)
+  assert h._total_bytes == _arrays_bytes(t.frame) + index_bytes

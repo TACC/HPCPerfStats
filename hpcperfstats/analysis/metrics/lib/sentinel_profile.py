@@ -694,7 +694,7 @@ def sentinel_samples(
     partial = [r for r in partial if r.event in keep_ev]
   if not code.any() and not partial and not force:
     return None
-  vals = f.arc[rows] if col == "arc" else f.value[rows]
+  vals = index.values_at("arc" if col == "arc" else "value", rows)
   valid = ~np.isnan(vals)
   if limit is not None:
     valid &= np.abs(vals) < float(limit)

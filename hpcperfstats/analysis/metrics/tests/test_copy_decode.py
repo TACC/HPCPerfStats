@@ -58,7 +58,7 @@ def test_decode_matches_values_list_rows_including_nulls_and_nan():
   assert math.isnan(ch.value[2]) and ch.arc[2] == 1.5 and ch.delta[2] == -2.0
   assert ch.value[3] == _as_float4(1e30) and ch.arc[3] == float(2**40)
   assert ch.owned.tolist() == [1, 1, 1, 1]
-  assert ch.value.dtype == np.float64 and ch.owned.dtype == np.uint8
+  assert ch.value.dtype == np.float32 and ch.owned.dtype == np.uint8
 
 
 def test_owned_column_is_decoded_when_present():

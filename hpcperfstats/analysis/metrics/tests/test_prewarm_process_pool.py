@@ -47,6 +47,10 @@ class _FakeSlot:
     self.stopped += 1
 
 
+class _PicklableTable:
+  """Weak-referenceable stand-in for a ``ColumnarJobTable``."""
+
+
 def _pool(slots, stall=0.0, recycle=None):
   it = iter(slots)
   return ppp.PrewarmProcessPool(
@@ -100,9 +104,9 @@ def test_run_ships_table_and_returns_child_timings():
   slot = _FakeSlot([{"ok": True, "detail_s": 1.5, "plots_s": 2.5}])
   pool = _pool([slot], stall=900.0, recycle=100)
   sentinel = object()
-  out = pool.run("42", sentinel)
+  out = pool.run("42", [sentinel])
   assert out["detail_s"] == 1.5 and out["plots_s"] == 2.5
-  assert slot.calls == [("42", sentinel, 900.0, 100)]
+  assert slot.calls == [("42", [sentinel], 900.0, 100)]
   assert pool._free.qsize() == 1  # slot returned to the free list
 
 
@@ -115,7 +119,7 @@ def test_child_db_error_is_raised_as_database_error_for_retry():
     ]
   )
   with pytest.raises(DatabaseError, match="OperationalError"):
-    pool.run("1", None)
+    pool.run("1", [None])
 
 
 def test_child_failure_is_prewarm_child_error():
@@ -123,7 +127,7 @@ def test_child_failure_is_prewarm_child_error():
     [_FakeSlot([{"ok": False, "db_error": False, "error": "ValueError: bad"}])]
   )
   with pytest.raises(ppp.PrewarmChildError, match="ValueError"):
-    pool.run("1", None)
+    pool.run("1", [None])
 
 
 def test_stall_replaces_only_the_stalled_worker():
@@ -132,11 +136,11 @@ def test_stall_replaces_only_the_stalled_worker():
   pool = _pool([stalled, healthy], stall=7.0)
   # Deterministic checkout order: the stalled slot is first in the free list.
   with pytest.raises(ppp.PrewarmChildError, match="exceeded 7s"):
-    pool.run("9", None)
+    pool.run("9", [None])
   assert pool.rebuilds == 1
   assert healthy.calls == []  # neighbour untouched
   assert pool._free.qsize() == 2  # both slots available again
-  out = pool.run("10", None)
+  out = pool.run("10", [None])
   assert out["ok"] is True
   assert healthy.calls or stalled.calls  # a slot served the next job
 
@@ -150,13 +154,13 @@ def test_free_list_bounds_concurrency():
       return {"ok": True, "detail_s": 0.0, "plots_s": 0.0}
 
   pool = _pool([_Blocking([])])
-  first = threading.Thread(target=lambda: pool.run("a", None))
+  first = threading.Thread(target=lambda: pool.run("a", [None]))
   first.start()
   waited = threading.Event()
 
   def second():
     waited.set()
-    pool.run("b", None)
+    pool.run("b", [None])
 
   t2 = threading.Thread(target=second)
   t2.start()
@@ -226,18 +230,58 @@ def test_worker_slot_kill_and_recycle_logic(monkeypatch):
 
   ctx = _Ctx()
   slot = ppp.PrewarmWorker(ctx)
-  assert slot.run("1", None, 900.0, 1)["ok"] is True
+  assert slot.run("1", [None], 900.0, 1)["ok"] is True
   assert slot.generation == 1 and slot.tasks == 1
   # max_tasks=1 reached: the next run stops the old process and starts a new one.
-  assert slot.run("2", None, 900.0, 1)["ok"] is True
+  assert slot.run("2", [None], 900.0, 1)["ok"] is True
   assert slot.generation == 2 and ctx.procs[0].killed == 1
   # A stall kills the current process and raises; the slot restarts next time.
   ctx.conns[-1].replies.clear()
   with pytest.raises(ppp.PrewarmChildError, match="exceeded"):
-    slot.run("3", None, 0.01, None)
+    slot.run("3", [None], 0.01, None)
   assert ctx.procs[1].killed == 1 and slot._proc is None
-  assert slot.run("4", None, 900.0, None)["ok"] is True
+  assert slot.run("4", [None], 900.0, None)["ok"] is True
   assert slot.generation == 3
+
+
+def test_prewarm_caller_keeps_no_table_reference():
+  """Regression (hs04 OOM, 2026-11-21): the parent held the decoded frame
+  for the whole child prewarm (``pool.run`` and ``Connection.send`` kept
+  their ``table`` argument alive), so every large job had two copies.
+  After the send the table must be unreachable from the parent.
+  """
+  import gc
+  import pickle
+  import weakref
+
+  table = _PicklableTable()
+  ref = weakref.ref(table)
+  alive_while_child_runs = []
+
+  class _Conn:
+    def send(self, msg):
+      pickle.dumps(msg)  # what a real Connection does with the message
+
+    def poll(self, timeout=None):
+      gc.collect()
+      alive_while_child_runs.append(ref() is not None)
+      return True
+
+    def recv(self):
+      return {"ok": True, "detail_s": 0.0, "plots_s": 0.0}
+
+  class _Proc:
+    def is_alive(self):
+      return True
+
+  slot = ppp.PrewarmWorker(None)
+  slot._proc, slot._conn = _Proc(), _Conn()
+  pool = _pool([slot], stall=900.0)
+  box = [table]
+  del table
+  assert pool.run("7", box)["ok"] is True
+  assert box == []
+  assert alive_while_child_runs == [False]
 
 
 def test_scheduler_offloads_in_persist_detail_plot_elapsed():
@@ -246,8 +290,12 @@ def test_scheduler_offloads_in_persist_detail_plot_elapsed():
     "def _run_one", 1
   )[0]
   assert "get_prewarm_process_pool(" in body
-  assert "HANDOFF.pop(jid)" in body
-  assert re.search(r"pool\.run\(jid, table\)", body)
+  # The frame goes to the pool in a one-slot box with no local name, so
+  # this thread holds no reference while the child prewarms.
+  assert re.search(r"pool\.run\(jid, \[HANDOFF\.pop\(jid\)\]\)", body)
+  assert not re.search(
+    r"\btable\s*=", body.split("close_old_connections", 1)[0]
+  )
   shutdown = src.split("def _shutdown_db_best_effort", 1)[1].split("\ndef ", 1)[
     0
   ]

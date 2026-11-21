@@ -33,6 +33,9 @@ from hpcperfstats.analysis.metrics.lib.columnar.kernels import (
   MODE_SQL,
   AggTable,
   FrameIndex,
+  HostPivotStats,
+  PivotGrids,
+  TypePivots,
   bucketed_job_value,
 )
 from hpcperfstats.analysis.metrics.lib.columnar.series_frame import inner_join
@@ -1248,6 +1251,11 @@ class ColumnarJobTable:
     """
     ``_JobForMetrics`` replacement: per-host and cluster grids per type.
 
+    ``view.schemas`` lists every type; ``hosts[h].stats`` and the cluster
+    grids are lazy mappings over one :class:`kernels.TypePivots`, so a type
+    is pivoted once, for every host, when a metric first reads it, and types
+    no metric reads are never pivoted.
+
     Returns:
       Any: Object with ``jid``, ``hosts``, ``schemas``, ``times``,
       ``cluster_mean_by_type``, ``cluster_mean_arc_by_type``,
@@ -1276,38 +1284,22 @@ class ColumnarJobTable:
     if not self.has_host_data():
       return view
     view.per_host_distinct_time_sum = self.distinct_time_count()
-    owned_hosts = np.unique(self.frame.host_id[self.index.owned])
-    for hid in owned_hosts:
-      view.hosts[_coerce_metrics_identity_str(self.frame.hosts[int(hid)])] = (
-        _Host()
-      )
-    times_set = False
-    for raw_typename, events in self.schema.items():
+    events: dict[str, list[str]] = {}
+    for raw_typename, raw_events in self.schema.items():
       typename = _coerce_metrics_identity_str(raw_typename)
-      ev_list = [_coerce_metrics_identity_str(e) for e in (events or [])]
-      view.schemas[typename] = _Schema(ev_list)
-      if not ev_list:
-        continue
-      piv = self.index.metrics_pivot(typename, ev_list)
-      if not times_set:
-        view.times = piv["times_s"]
-        times_set = True
-      if piv["host_ids"].shape[0] == 0:
-        continue
-      view.cluster_mean_by_type[typename] = piv["cluster_value"]
-      view.cluster_mean_arc_by_type[typename] = piv["cluster_arc"]
-      for k, hid in enumerate(piv["host_ids"].tolist()):
-        host_obj = view.hosts.get(
-          _coerce_metrics_identity_str(self.frame.hosts[int(hid)])
-        )
-        if host_obj is None:
-          continue
-        host_obj.stats.setdefault(typename, {})["agg"] = np.ascontiguousarray(
-          piv["per_host"][k]
-        )
-    if not times_set:
-      axis = np.unique(self.frame.time_us[self.index.owned])
-      view.times = np.floor_divide(axis, 1_000_000).astype(np.float64)
+      events[typename] = [
+        _coerce_metrics_identity_str(e) for e in (raw_events or [])
+      ]
+      view.schemas[typename] = _Schema(events[typename])
+    pivots = TypePivots(self.index, events)
+    view.cluster_mean_by_type = PivotGrids(pivots, "cluster_value")
+    view.cluster_mean_arc_by_type = PivotGrids(pivots, "cluster_arc")
+    for hid in np.unique(self.frame.host_id[self.index.owned]).tolist():
+      host = _Host()
+      host.stats = HostPivotStats(pivots, hid)
+      view.hosts[_coerce_metrics_identity_str(self.frame.hosts[hid])] = host
+    axis = self.index.owned_time_axis()
+    view.times = np.floor_divide(axis, 1_000_000).astype(np.float64)
     return view
 
 
@@ -1398,11 +1390,14 @@ class _ColumnarMetricsView:
 
   Attributes:
     jid: Job id.
-    hosts: Host name to ``_Host`` (stats by type).
+    hosts: Host name to ``_Host`` (stats by type, a lazy
+      ``kernels.HostPivotStats`` once built).
     schemas: Type name to ``_Schema``.
     times: Sample times (float seconds).
-    cluster_mean_by_type: Type to ``(n_times, n_events)`` value means.
-    cluster_mean_arc_by_type: Type to ``(n_times, n_events)`` arc means.
+    cluster_mean_by_type: Type to ``(n_times, n_events)`` value means (a
+      lazy ``kernels.PivotGrids`` once built).
+    cluster_mean_arc_by_type: Type to ``(n_times, n_events)`` arc means
+      (lazy like ``cluster_mean_by_type``).
     per_host_distinct_time_sum: Sample count for invalidation.
     acct: ``{"cores": 1, "nodes": 1}`` placeholder as in ``_JobForMetrics``.
   """
@@ -1425,8 +1420,8 @@ class _ColumnarMetricsView:
     self.hosts: dict[str, Any] = {}
     self.schemas: dict[str, Any] = {}
     self.times = np.array([], dtype=np.float64)
-    self.cluster_mean_by_type: dict[str, np.ndarray] = {}
-    self.cluster_mean_arc_by_type: dict[str, np.ndarray] = {}
+    self.cluster_mean_by_type: Mapping[str, np.ndarray] = {}
+    self.cluster_mean_arc_by_type: Mapping[str, np.ndarray] = {}
     self.per_host_distinct_time_sum = 0
     self.acct = {"cores": 1, "nodes": 1}
 
@@ -1502,7 +1497,10 @@ class JobTableHandoff:
       '1'
     """
     size = sum(
-      v.nbytes for v in vars(table.frame).values() if isinstance(v, np.ndarray)
+      v.nbytes
+      for part in (table.frame, table.index)
+      for v in vars(part).values()
+      if isinstance(v, np.ndarray)
     )
     with self._lock:
       self._total_bytes -= self._bytes.pop(table.jid, 0)

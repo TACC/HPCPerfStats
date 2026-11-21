@@ -1,15 +1,29 @@
-"""Metrics-local sliding-window feeder with sample-count idle-slot fill."""
+"""
+Metrics-local sliding-window feeder with sample-count idle-slot fill.
+
+Attributes:
+  METRICS_PEAK_BYTES_PER_HOST_MINUTE: Peak process bytes one host-minute
+    of a job costs while it is in flight: golden-corpus p90 frame rows per
+    host-minute times a per-row allowance that covers the consuming
+    fetch/build peak (about 52 B/row measured) and a float32 frame plus its
+    ``FrameIndex`` (about 44 B/row) held by either the metrics thread or the
+    prewarm child. Memory admission multiplies a ref's
+    ``estimated_sample_count`` by it.
+"""
 
 from __future__ import annotations
 
 import contextlib
 import time
 from collections import deque
+from collections.abc import Callable
 from typing import Any
 
 from hpcperfstats.analysis.metrics.lib.metrics_idle_slot_supplement import (
   pop_supplement_refs_from_ready_queue,
 )
+
+METRICS_PEAK_BYTES_PER_HOST_MINUTE = 201 * 100
 
 
 def resolve_metrics_pool_max_inflight(pool: Any, fallback: int = 1) -> int:
@@ -64,15 +78,62 @@ def is_backfill_ref(ref: Any) -> bool:
   return getattr(ref, "lane", None) == "backfill"
 
 
-def pop_fresh_first(ready_queue: Any, max_n: int) -> list[Any]:
+def ref_memory_cost(ref: Any) -> int:
+  """
+  Estimated peak bytes a ref holds while in flight.
+
+  ``artifact_only`` refs cost the same as a compute: the prewarm child
+  re-reads the whole frame inside the same memory cgroup.
+
+  Args:
+    ref (Any): Candidate ref (``estimated_sample_count`` optional, >= 1).
+
+  Returns:
+    int: ``estimated_sample_count x METRICS_PEAK_BYTES_PER_HOST_MINUTE``.
+
+  Examples:
+    >>> from types import SimpleNamespace
+    >>> ref_memory_cost(SimpleNamespace(estimated_sample_count=2)) == (
+    ...   2 * METRICS_PEAK_BYTES_PER_HOST_MINUTE
+    ... )
+    True
+    >>> ref_memory_cost(SimpleNamespace()) == METRICS_PEAK_BYTES_PER_HOST_MINUTE
+    True
+  """
+  try:
+    samples = max(1, int(getattr(ref, "estimated_sample_count", 1) or 1))
+  except TypeError, ValueError:
+    samples = 1
+  return samples * METRICS_PEAK_BYTES_PER_HOST_MINUTE
+
+
+def pop_fresh_first(
+  ready_queue: Any,
+  max_n: int,
+  admit: Callable[[Any], bool] | None = None,
+  skipped_since: dict[Any, float] | None = None,
+  head_wait_s: float = float("inf"),
+) -> list[Any]:
   """
   Pop up to ``max_n`` refs, fresh-lane refs before backfill-lane refs.
 
   Within each lane the queue order is kept. The caller holds the queue lock.
+  With ``admit``, a ref it refuses stays queued and later refs may be taken
+  ahead of it; ``skipped_since`` records when each refused ref was first
+  passed over. Once a refused ref has waited ``head_wait_s``, nothing behind
+  it in fresh-first order is admitted: an aged backfill ref holds back only
+  backfill refs (fresh refs sort ahead of it), an aged fresh ref holds back
+  both lanes.
 
   Args:
     ready_queue (Any): Deque of candidate refs.
     max_n (int): Free slots.
+    admit (Callable[[Any], bool] | None): Admission predicate, called in
+      fresh-first order; True takes the ref. None takes every ref.
+    skipped_since (dict[Any, float] | None): ``jid -> monotonic`` first
+      refusal time, updated in place (entries for refs no longer queued
+      are dropped).
+    head_wait_s (float): Wait after which a refused ref stops skip-ahead.
 
   Returns:
     list[Any]: Refs removed from the queue.
@@ -85,26 +146,38 @@ def pop_fresh_first(ready_queue: Any, max_n: int) -> list[Any]:
     ['f1', 'f2']
     >>> [r.jid for r in q]
     ['b1']
+    >>> q = deque([R(jid="big"), R(jid="small")])
+    >>> [r.jid for r in pop_fresh_first(q, 2, admit=lambda r: r.jid != "big")]
+    ['small']
+    >>> [r.jid for r in q]
+    ['big']
   """
   if ready_queue is None or max_n <= 0 or not ready_queue:
     return []
+  ordered = [r for r in ready_queue if not is_backfill_ref(r)] + [
+    r for r in ready_queue if is_backfill_ref(r)
+  ]
+  now = time.monotonic()
   taken: list[Any] = []
   keep: list[Any] = []
-  deferred_backfill: list[Any] = []
-  for ref in ready_queue:
-    if len(taken) >= max_n:
+  blocked = False
+  for ref in ordered:
+    if blocked or len(taken) >= max_n:
       keep.append(ref)
-    elif is_backfill_ref(ref):
-      deferred_backfill.append(ref)
-    else:
+      continue
+    if admit is None or admit(ref):
       taken.append(ref)
-  while deferred_backfill and len(taken) < max_n:
-    taken.append(deferred_backfill.pop(0))
-  if deferred_backfill or keep:
-    ready_queue.clear()
-    ready_queue.extend(deferred_backfill + keep)
-  else:
-    ready_queue.clear()
+      continue
+    keep.append(ref)
+    if skipped_since is not None:
+      first = skipped_since.setdefault(ref.jid, now)
+      blocked = now - first >= head_wait_s
+  if skipped_since is not None:
+    queued = {r.jid for r in keep}
+    for jid in [j for j in skipped_since if j not in queued]:
+      del skipped_since[jid]
+  ready_queue.clear()
+  ready_queue.extend(keep)
   return taken
 
 
@@ -254,6 +327,9 @@ def run_metrics_sliding_session(
   continuous: bool = False,
   should_stop: Any | None = None,
   on_refs_taken: Any | None = None,
+  memory_budget_bytes: int = 0,
+  head_wait_s: float = float("inf"),
+  admit_ok: Callable[[], bool] | None = None,
 ) -> list[dict[str, Any]]:
   """
   Pool-sized sliding metrics+prewarm session with sample-count idle-slot fill.
@@ -264,6 +340,13 @@ def run_metrics_sliding_session(
   sample caps (RC-E stops when no originals remain in flight). In
   ``continuous`` mode the session instead keeps every slot fed from
   ``ready_queue`` until ``should_stop()`` (no end-of-batch drain).
+
+  Both the primary fill and the continuous refill admit a ref only while
+  its memory cost (``ref_memory_cost``) fits in ``memory_budget_bytes``
+  next to the cost of everything in flight and ``admit_ok()`` reports
+  memory headroom; with nothing in flight one ref is always admitted, so a
+  job larger than the whole budget still runs (alone). The count cap
+  ``max_inflight`` still applies.
 
   Args:
     primary_refs (list[Any]): Original compute-batch candidate refs.
@@ -301,6 +384,13 @@ def run_metrics_sliding_session(
     on_refs_taken (Any | None): Optional ``(refs: list) -> None`` called with
         the refs popped from ``ready_queue`` (lane accounting; fresh-lane
         refs are popped before backfill-lane refs).
+    memory_budget_bytes (int): Summed ``ref_memory_cost`` allowed in
+        flight; 0 disables the budget.
+    head_wait_s (float): Seconds a ready-queue ref refused by admission may
+        be passed over before refs behind it stop being admitted ahead of it
+        (``pop_fresh_first``).
+    admit_ok (Callable[[], bool] | None): Memory headroom check; False
+        pauses admission while work is in flight. None always admits.
 
   Returns:
     list[dict[str, Any]]: Per-ref results with keys ``ref``, ``ok``,
@@ -350,6 +440,34 @@ def run_metrics_sliding_session(
   last_progress_at = time.monotonic()
   completed_total = 0
   session_total = len(primary_refs)
+  budget = max(0, int(memory_budget_bytes))
+  skipped_since: dict[Any, float] = {}
+
+  def _admit(ref: Any, extra_cost: int = 0) -> bool:
+    """
+    Decide whether ``ref`` may start now under the memory budget.
+
+    Args:
+      ref (Any): Candidate ref.
+      extra_cost (int): Cost of refs already taken in the same pop but not
+        yet in ``pending``.
+
+    Returns:
+      bool: True when nothing is in flight, or when the ref fits the
+      budget and the headroom check passes.
+
+    Examples:
+      >>> _admit(None)  # doctest: +SKIP
+      True
+    """
+    if not pending and not extra_cost:
+      return True
+    if budget and (
+      sum(item["cost"] for item in pending) + extra_cost + ref_memory_cost(ref)
+      > budget
+    ):
+      return False
+    return not callable(admit_ok) or bool(admit_ok())
 
   def _shutting_down() -> bool:
     """
@@ -410,6 +528,7 @@ def run_metrics_sliding_session(
     """
     item = {
       "ref": ref,
+      "cost": ref_memory_cost(ref),
       "phase": "metrics",
       "is_original": bool(is_original),
       "t0": time.monotonic(),
@@ -501,13 +620,13 @@ def run_metrics_sliding_session(
 
   def _take_fifo(max_n: int) -> list[Any]:
     """
-    Pop up to ``max_n`` refs from the front of ``ready_queue`` (continuous).
+    Pop up to ``max_n`` admitted refs from ``ready_queue`` (continuous).
 
     Args:
       max_n (int): Free slots.
 
     Returns:
-      list[Any]: Refs taken, in queue order.
+      list[Any]: Refs taken, fresh lane first, queue order within a lane.
 
     Examples:
       >>> _take_fifo(0)  # doctest: +SKIP
@@ -520,14 +639,41 @@ def run_metrics_sliding_session(
       if ready_queue_lock is not None
       else contextlib.nullcontext()
     )
+    taken_cost = [0]
+
+    def _admit_next(ref: Any) -> bool:
+      """
+      Admit ``ref`` counting the refs this pop already took.
+
+      Args:
+        ref (Any): Candidate ref.
+
+      Returns:
+        bool: Whether ``ref`` is taken.
+
+      Examples:
+        >>> _admit_next(None)  # doctest: +SKIP
+        True
+      """
+      if not _admit(ref, taken_cost[0]):
+        return False
+      taken_cost[0] += ref_memory_cost(ref)
+      return True
+
     with lock:
-      return pop_fresh_first(ready_queue, max_n)
+      return pop_fresh_first(
+        ready_queue,
+        max_n,
+        admit=_admit_next,
+        skipped_since=skipped_since,
+        head_wait_s=head_wait_s,
+      )
 
   while (primary or pending or continuous) and not _shutting_down():
     stop = continuous and callable(should_stop) and bool(should_stop())
     was_idle = not pending
     filled = False
-    while len(pending) < cap and primary:
+    while len(pending) < cap and primary and _admit(primary[0]):
       ref = primary.popleft()
       _submit_metrics(ref, is_original=True)
       filled = True
@@ -535,7 +681,7 @@ def run_metrics_sliding_session(
         session_total, completed_total + len(pending) + len(primary)
       )
 
-    while continuous and not stop and len(pending) < cap:
+    while continuous and not stop and not primary and len(pending) < cap:
       taken = _take_fifo(cap - len(pending))
       if not taken:
         break

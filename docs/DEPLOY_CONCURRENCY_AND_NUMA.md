@@ -110,6 +110,18 @@ Also: `docker inspect <pipeline_container> --format '{{.State.OOMKilled}}'` (mai
 
 Tune tree RSS limits to ~**70–80%** of the pipeline cgroup cap; grep kernel logs for `oom-kill` + `sync_timedb.py` and correlate with `pending_stats` / janitor debt in application logs.
 
+## update_metrics memory admission
+
+`update_metrics` runs `metrics_pool_processes` jobs at once, and before 2026-11 it admitted them by count only: a burst of large backfill jobs (each holding its fetch peak, a parked `HANDOFF` frame, a copy shipped to its prewarm worker and the plot objects) drove the process past the host (hpcperfstats04: up to ~188 GB RSS, 49% of 384 GB, OOM kills that also hit other services). Admission is now memory-bounded as well (`docs/UPDATE_METRICS_STATE_MACHINE.md`, sliding session admission):
+
+| Key (`[PIPELINE]`) | Default | Effect |
+|---|---|---|
+| `metrics_memory_budget_pct` | 40 | Estimated memory of all in-flight jobs (`estimated_sample_count` x `METRICS_PEAK_BYTES_PER_HOST_MINUTE`) stays under this percent of the pipeline cgroup `memory.max`, or of host `MemTotal` when the cgroup is unlimited. One job always runs alone. `0` = count cap only. |
+| `metrics_memory_budget_head_wait_s` | 600 | A job too large for the free budget may be passed by smaller jobs for this long; then its lane (both lanes for a fresh job) waits for it. |
+| `metrics_admit_headroom_mib` | 16384 | No new job starts while another runs when headroom is below this: cgroup `memory.max - (current - inactive_file)`, or host `MemAvailable` when unlimited. `0` = off. |
+
+Budget derivation: the per-host-minute cost is the golden-corpus p90 frame rows per host-minute times the fetch/decode peak bytes per row, so the budget is a planning estimate, not a measurement; the headroom gate is the measured backstop (it also covers threads abandoned by a stall reset and the prewarm worker processes, which share the cgroup). Set the keys on the next pipeline redeploy with the release (`deploy-ini-with-code-no-phase-zero.mdc`). Startup logs `metrics scheduler: memory budget bytes= base= pct= headroom_mib=`; pauses log `metrics scheduler: admit paused reason=memory_headroom reserve_mib= paused_total=` (at most once a minute). A site that runs other large services in the same cgroup or host can lower the percent; raising it above ~60 leaves little room for the prewarm workers and PostgreSQL.
+
 ## Archive recovery (operators)
 
 Raw stats on disk remain the **source of truth** until validated archive membership, DB ingest gate (when enabled; **`sync_archive_require_db_ingest=yes`** requires first **and** last digit-leading timestamp seconds in `host_data`, via streaming head + EOF-backward tail reads), and janitor raw removal all succeed.

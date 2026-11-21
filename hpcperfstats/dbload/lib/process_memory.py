@@ -378,16 +378,65 @@ def read_cgroup_memory_stat() -> Any:
   return {}
 
 
-def cgroup_admit_headroom_ok(headroom_mib: Any) -> bool:
+def read_meminfo_bytes(key: str) -> int | None:
+  """
+  Read one ``/proc/meminfo`` field in bytes.
+
+  Args:
+    key (str): Field name such as ``MemTotal`` or ``MemAvailable``.
+
+  Returns:
+    int | None: Bytes, or None when the file or field is unavailable.
+
+  Examples:
+    >>> read_meminfo_bytes("NoSuchField") is None
+    True
+  """
+  try:
+    with open("/proc/meminfo", encoding="utf-8") as fh:
+      for line in fh:
+        name, _sep, rest = line.partition(":")
+        if name == key:
+          return int(rest.split()[0]) * 1024
+  except OSError, ValueError, IndexError:
+    return None
+  return None
+
+
+def memory_admit_base_bytes() -> int:
+  """
+  Memory a memory-admission budget is a share of.
+
+  Returns:
+    int: cgroup ``memory.max`` when limited, else host ``MemTotal``; 0
+    when neither is readable.
+
+  Examples:
+    >>> memory_admit_base_bytes() >= 0
+    True
+  """
+  cgroup_max = read_cgroup_memory_max_bytes()
+  if cgroup_max is not None and int(cgroup_max) > 0:
+    return int(cgroup_max)
+  return int(read_meminfo_bytes("MemTotal") or 0)
+
+
+def cgroup_admit_headroom_ok(
+  headroom_mib: Any, *, unlimited_uses_host: bool = False
+) -> bool:
   """
   Return True when multi-file admit / append may proceed under cgroup headroom.
 
-  When ``headroom_mib <= 0`` or ``memory.max`` is unknown, the gate is off
-  (fail open). When current and max are readable, require
-  ``(max - current + inactive_file) >= headroom_mib`` MiB.
+  When ``headroom_mib <= 0`` the gate is off. When current and max are
+  readable, require ``(max - current + inactive_file) >= headroom_mib`` MiB.
+  When ``memory.max`` is unlimited or unknown the gate is off (fail open),
+  unless ``unlimited_uses_host``: then host ``MemAvailable`` must reach the
+  reserve (still open when ``/proc/meminfo`` is unreadable).
 
   Args:
     headroom_mib (Any): Required free MiB under ``memory.max``.
+    unlimited_uses_host (bool): Use host ``MemAvailable`` when the cgroup is
+      unlimited (update_metrics); sync_timedb keeps the fail-open default.
 
   Returns:
     bool: True when admit/append may proceed.
@@ -401,7 +450,10 @@ def cgroup_admit_headroom_ok(headroom_mib: Any) -> bool:
     return True
   cgroup_max = read_cgroup_memory_max_bytes()
   if cgroup_max is None or int(cgroup_max) <= 0:
-    return True
+    available = read_meminfo_bytes("MemAvailable")
+    if not unlimited_uses_host or available is None:
+      return True
+    return available >= need * _MIB
   current = int(read_cgroup_memory_current_bytes() or 0)
   reclaimable = min(
     current, int(read_cgroup_memory_stat().get("inactive_file", 0) or 0)

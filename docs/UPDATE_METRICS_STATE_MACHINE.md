@@ -71,7 +71,7 @@ flowchart TD
     prod -->|not ready, wait not over| dq[(deferred\n10→300 s backoff)]
     prod -->|not covered after host wait| gf[gate failure\none transaction]
     dq --> prod
-    rq --> slide[one continuous sliding session\nmax_inflight = pool threads]
+    rq --> slide[one continuous sliding session\nmax_inflight = pool threads\nadmit: memory budget + headroom]
     slide --> w1[worker: compute + persist\n_unwrap_and_persist]
     slide --> wa[artifact-only ref:\nprewarm only]
     w1 -->|ok| w2[worker: prewarm\njob detail → type detail → plots]
@@ -83,6 +83,26 @@ flowchart TD
   ingest[sync_timedb ingest] -->|late rows for ended job| dirty[(metrics_dirty_at)]
   dirty --> lst
 ```
+
+**Admission (sliding session).** A job starts only while a pool thread is
+free **and** its estimated memory fits: `ref_memory_cost` =
+`estimated_sample_count` (`max(1, nhosts) x ceil(runtime / 60)`) x
+`METRICS_PEAK_BYTES_PER_HOST_MINUTE` (`lib/metrics_sliding_session.py`), summed
+over every job in flight (metrics or prewarm phase; artifact-only jobs count
+in full), must stay within `metrics_memory_budget_pct` of the memory base
+(cgroup `memory.max`, else host `MemTotal`), and memory headroom (cgroup
+`memory.max - (current - inactive_file)`, else host `MemAvailable`; read at
+most once a second) must be at least `metrics_admit_headroom_mib`. With
+nothing in flight one job always starts, so a job larger than the budget runs
+alone. The same check gates the primary fill and the continuous refill. A
+ready-queue job the check refuses stays queued and smaller jobs behind it may
+start; once it has waited `metrics_memory_budget_head_wait_s`, jobs of its lane
+and lower-priority lanes stop starting ahead of it (an aged backfill job never
+holds back fresh jobs; an aged fresh job holds back both lanes). A pause logs
+`metrics scheduler: admit paused reason=memory_headroom` (throttled) and the
+session start logs `metrics scheduler: memory budget bytes=`. The size
+estimate is carried on every ref rebuild (`_job_refs_from_jids`, deferred and
+remembered candidates). The prewarm process pool itself stays queue-free.
 
 The barrier batch path (`Metrics.run` then prewarm for the whole batch) is
 used only when the sliding session is disabled
@@ -207,8 +227,12 @@ job once (`open_job_table`: `jid_table` metadata + one psycopg `COPY …
 sorted `JobFrame`), computes every metric from `FrameIndex` reductions
 (Codon `group_reduce` / `grid_mean` / `join_sorted`, NumPy reference on
 hosts without the pyext) and leaves the table in `HANDOFF` for the detail
-and plot prewarm of the same job on the same pool thread (review finding
-T4 closed: one fetch per job). Kernels are single-threaded and write into
+and plot prewarm of the same job on the same pool thread (one fetch per
+job). The prewarm pops the table and hands it to the prewarm worker process
+in a one-slot box that the send empties, so the metrics thread holds no copy
+while the child works; every terminal session row (failure, stall, shutdown)
+discards the job's `HANDOFF` entry, and the handoff counts the `FrameIndex`
+arrays as well as the frame against its byte cap. Kernels are single-threaded and write into
 caller buffers; parallelism is jobs across pool threads. With the kernel
 loaded, a kernel failure raises `CodonKernelError`, the job fails into the
 failure memory below and nothing falls back to NumPy. Contract:

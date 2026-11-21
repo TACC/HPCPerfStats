@@ -311,14 +311,19 @@ class PrewarmWorker:
     self.kill()
 
   def run(
-    self, jid: str, table: Any, timeout_s: float, max_tasks: int | None
+    self, jid: str, box: list[Any], timeout_s: float, max_tasks: int | None
   ) -> dict[str, Any]:
     """
     Run one job on this slot's process and return the child result dict.
 
+    The table is taken out of ``box`` as it is sent, so once ``send``
+    returns the caller holds no reference to the frame while the child
+    works on it.
+
     Args:
       jid (str): Job id.
-      table (Any): Handoff table to ship, or None.
+      box (list[Any]): One-slot list holding the handoff table (or None);
+        emptied by the send.
       timeout_s (float): Seconds to wait for the result; 0 waits forever.
       max_tasks (int | None): Recycle the process after this many jobs.
 
@@ -330,7 +335,7 @@ class PrewarmWorker:
         process has been killed and the slot will start a fresh one.
 
     Examples:
-      >>> PrewarmWorker(ctx).run("1", None, 900.0, 100)  # doctest: +SKIP
+      >>> PrewarmWorker(ctx).run("1", [None], 900.0, 100)  # doctest: +SKIP
     """
     if self._proc is not None and max_tasks and self.tasks >= max_tasks:
       self.stop()
@@ -338,8 +343,7 @@ class PrewarmWorker:
       self.kill()
       self._start()
     try:
-      self._conn.send((jid, table))
-      del table
+      self._conn.send((jid, box.pop() if box else None))
       # The child always answers with a dict, so None marks a timeout.
       result = self._conn.recv() if self._conn.poll(timeout_s or None) else None
     except (EOFError, OSError) as exc:  # BrokenPipeError is an OSError
@@ -427,7 +431,7 @@ class PrewarmProcessPool:
       f"stall_timeout_s={self.stall_timeout_s:.0f}"
     )
 
-  def run(self, jid: Any, table: Any) -> dict[str, Any]:
+  def run(self, jid: Any, box: list[Any]) -> dict[str, Any]:
     """
     Run one job's prewarm on a free worker and return its timings.
 
@@ -437,7 +441,9 @@ class PrewarmProcessPool:
 
     Args:
       jid (Any): Job id.
-      table (Any): Handoff table to ship, or None.
+      box (list[Any]): One-slot list holding the handoff table (or None);
+        passed through unread while waiting for a free worker, so the
+        worker's send is what releases it.
 
     Returns:
       dict[str, Any]: ``{"ok": True, "detail_s", "plots_s"}``.
@@ -449,14 +455,14 @@ class PrewarmProcessPool:
     Examples:
       >>> PrewarmProcessPool(
       ...   1, max_tasks_per_child=None, stall_timeout_s=0.0
-      ... ).run("1", None)  # doctest: +SKIP
+      ... ).run("1", [None])  # doctest: +SKIP
     """
     jid = str(jid)
     slot = self._free.get()
     try:
       try:
         result = slot.run(
-          jid, table, self.stall_timeout_s, self.max_tasks_per_child
+          jid, box, self.stall_timeout_s, self.max_tasks_per_child
         )
       except PrewarmChildError as exc:
         self.rebuilds += 1
@@ -466,7 +472,6 @@ class PrewarmProcessPool:
         )
         raise PrewarmChildError(str(exc)) from exc
     finally:
-      del table
       self._free.put(slot)
     if result.get("ok"):
       return result

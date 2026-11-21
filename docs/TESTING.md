@@ -174,6 +174,25 @@ tests skip with a reason when the corpus is absent and fail only with
 rewrite-host-suffix / seed-edge-jobs / tag-edge-jobs / capture / verify
 --min-jobs 27` inside `tests/run_dev_container_pytest.sh --exec`.
 
+The A/B report and DB-backed metrics checks read the corpus jobs from the
+hpcperfstats-dev database, not from the fixtures. If that database has been
+reset or emptied (`job_data` count 0), rebuild every corpus job from the raw
+exemplars and check that each manifest job has its `job_data` and
+`host_data` rows. The exemplars are 7.3 GB under
+`/data/user/sharrell/metrics-corpus/raw`. Mount them read-write, because
+ingest writes `*.fnctl.lock` sidecars beside each file.
+
+```bash
+HPCPERFSTATS_DEV_BASE_IMAGE=<image id> tests/run_dev_container_pytest.sh --ft \
+  --mount /data/user/sharrell/metrics-corpus/raw:/corpus/raw:rw \
+  --exec '$PY scripts/metrics_golden_corpus.py reseed-dev-db --raw-root /corpus/raw'
+```
+
+When a manifest job cannot be served, `reseed-dev-db` exits 1 and prints
+`missing=` followed by each `<jid>:job_data` / `<jid>:host_data` gap.
+It applies no migrations, so run `manage.py migrate` first when the dev
+schema is behind.
+
 Tolerances: base `rtol=1e-9`, `atol=0`, NaN-equal, ints/strings exact. The
 looser per-metric allowances (pandas-path float4 SQL sums `1e-5`, the
 conv-less GPU link/mem-bw cache scale, PostgreSQL float4 text rounding,

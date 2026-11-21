@@ -25,7 +25,7 @@ Attributes:
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass
+from dataclasses import fields
 from typing import Any
 
 import numpy as np
@@ -35,6 +35,7 @@ from hpcperfstats.analysis.metrics.lib.columnar.jobframe import (
   ID_DTYPE,
   TIME_DTYPE,
   VALUE_DTYPE,
+  DecodedChunk,
   NameInterner,
 )
 
@@ -47,47 +48,6 @@ _Q = struct.Struct(">q")
 _F = struct.Struct(">f")
 
 
-@dataclass
-class DecodedChunk:
-  """
-  Columns decoded from one COPY stream, ids per the shared interner.
-
-  Attributes:
-    time_us: int64 epoch microseconds.
-    host_id: int32 host ids.
-    type_id: int32 type ids.
-    event_id: int32 event ids.
-    dev_id: int32 signed device ids.
-    owned: uint8 ownership flags.
-    value: float64 values (NaN for NULL).
-    arc: float64 arcs (NaN for NULL).
-    delta: float64 deltas (NaN for NULL).
-  """
-
-  time_us: np.ndarray
-  host_id: np.ndarray
-  type_id: np.ndarray
-  event_id: np.ndarray
-  dev_id: np.ndarray
-  owned: np.ndarray
-  value: np.ndarray
-  arc: np.ndarray
-  delta: np.ndarray
-
-  def __len__(self) -> int:
-    """
-    Row count.
-
-    Returns:
-      int: Rows in the chunk.
-
-    Examples:
-      >>> len(empty_chunk())
-      0
-    """
-    return int(self.time_us.shape[0])
-
-
 def empty_chunk() -> DecodedChunk:
   """
   Return a zero-row chunk with the contract dtypes.
@@ -97,7 +57,7 @@ def empty_chunk() -> DecodedChunk:
 
   Examples:
     >>> empty_chunk().value.dtype
-    dtype('float64')
+    dtype('float32')
   """
   return DecodedChunk(
     time_us=np.empty(0, dtype=TIME_DTYPE),
@@ -114,37 +74,31 @@ def empty_chunk() -> DecodedChunk:
 
 def concat_chunks(chunks: list[DecodedChunk]) -> DecodedChunk:
   """
-  Concatenate decoded chunks (same interner) into one chunk.
+  Concatenate decoded chunks (same interner) into one chunk, consuming them.
+
+  ``chunks`` is emptied and every input column is popped as soon as its
+  combined column exists, so the peak is the inputs plus one column, not
+  two copies of the job.
 
   Args:
-    chunks (list[DecodedChunk]): Chunks in any order.
+    chunks (list[DecodedChunk]): Chunks in any order (cleared in place).
 
   Returns:
     DecodedChunk: Combined columns (an empty chunk for no input).
 
   Examples:
-    >>> len(concat_chunks([empty_chunk(), empty_chunk()]))
-    0
+    >>> parts = [empty_chunk(), empty_chunk()]
+    >>> len(concat_chunks(parts)), parts
+    (0, [])
   """
   parts = [c for c in chunks if len(c)]
-  if not parts:
-    return empty_chunk()
-  if len(parts) == 1:
-    return parts[0]
+  chunks.clear()
+  if len(parts) <= 1:
+    return parts[0] if parts else empty_chunk()
   return DecodedChunk(
     **{
-      name: np.concatenate([getattr(c, name) for c in parts])
-      for name in (
-        "time_us",
-        "host_id",
-        "type_id",
-        "event_id",
-        "dev_id",
-        "owned",
-        "value",
-        "arc",
-        "delta",
-      )
+      f.name: np.concatenate([c.pop(f.name) for c in parts])
+      for f in fields(DecodedChunk)
     }
   )
 
@@ -217,7 +171,8 @@ def _decode_copy_binary_codon(
 
   The kernel returns table ids plus one distinct-name table for the four
   text columns; only those few names cross into Python and the per-row ids
-  are remapped with one ``take`` per column.
+  are remapped with one ``take`` per column. The kernel writes float64; the
+  ``real`` values narrow to ``VALUE_DTYPE`` exactly, one chunk at a time.
 
   Args:
     data (bytes | bytearray | memoryview): Complete COPY stream.
@@ -266,9 +221,9 @@ def _decode_copy_binary_codon(
     event_id=remap(cols["event"]),
     dev_id=remap(cols["dev"]),
     owned=cols["owned"],
-    value=cols["value"],
-    arc=cols["arc"],
-    delta=cols["delta"],
+    value=cols.pop("value").astype(VALUE_DTYPE),
+    arc=cols.pop("arc").astype(VALUE_DTYPE),
+    delta=cols.pop("delta").astype(VALUE_DTYPE),
   )
 
 

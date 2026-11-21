@@ -7,6 +7,7 @@ host keeps the NumPy reference when the kernel is absent.
 from __future__ import annotations
 
 import sys
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -118,6 +119,27 @@ def test_bridge_wrappers_normalise_dtypes_and_slice_outputs(monkeypatch):
   )
   li, ri = sg.join_keys(np.array([1, 2]), np.array([0, 1]))
   assert li.tolist() == [0] and ri.tolist() == [1]
+
+
+def test_bank_retain_rows_bound(monkeypatch):
+  """A metrics thread keeps at most a ``BANK_RETAIN_ROWS`` scratch bank:
+  32 threads x 4M rows x 64 B pinned ~8 GB; 1M rows keeps ~2 GB."""
+  assert codon_bridge.BANK_RETAIN_ROWS == 1_000_000
+  monkeypatch.setattr(codon_bridge, "BANK_RETAIN_ROWS", 4096)
+  monkeypatch.setattr(codon_bridge, "_bank", threading.local())
+  small = codon_bridge._thread_bank(100)
+  assert codon_bridge._thread_bank(50) is small
+  big = codon_bridge._thread_bank(4097)
+  assert big.rows >= 4097
+  # The oversized bank served one call; the thread still holds the small one.
+  assert codon_bridge._bank.bank is small
+  kept = codon_bridge._thread_bank(4096)
+  assert codon_bridge._bank.bank is kept and kept.rows == 4096
+  per_row = (
+    sum(a.nbytes for a in (kept.scratch, kept.out_i, kept.out_f))
+    - codon_bridge.RADIX_BUCKETS * 8
+  )
+  assert per_row == 64 * kept.rows
 
 
 def test_host_without_kernel_uses_numpy_reference_and_is_not_required(

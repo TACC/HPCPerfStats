@@ -147,6 +147,15 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Tasks a prewarm worker process runs before recycling for RSS hygiene; 0 = never (default 100).
 # metrics_prewarm_max_tasks_per_child = 100
 
+# Percent of the pipeline cgroup memory.max (host RAM when the cgroup is unlimited) that the estimated memory of in-flight metrics jobs may use; one job always runs alone; 0 = count cap only (default 40).
+# metrics_memory_budget_pct = 40
+
+# Seconds a ready metrics job too large for the free budget may be passed over before jobs of its lane (fresh jobs block both lanes) stop starting ahead of it (default 600).
+# metrics_memory_budget_head_wait_s = 600
+
+# MiB of memory headroom (cgroup, or host MemAvailable when unlimited) below which no new metrics job starts while another runs; 0 = off (default 16384).
+# metrics_admit_headroom_mib = 16384
+
 # Plot aggregate SQL time-slice seconds (default 3600); design 5000x48x60.
 # metrics_plot_aggregate_time_slice_s = 3600
 

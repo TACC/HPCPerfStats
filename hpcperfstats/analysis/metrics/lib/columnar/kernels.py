@@ -15,7 +15,8 @@ frame instead of a SQL statement:
   ``sum_per_sample`` (``job_value_mean``);
 * :meth:`FrameIndex.delta_sum_by_event` — ``_scoped_delta_sum_rows``;
 * :meth:`FrameIndex.gpu_group_stats` — ``_collect_gpu_annotate_rows``;
-* :meth:`FrameIndex.metrics_pivot` — the ``_JobForMetrics`` pivots.
+* :meth:`FrameIndex.metrics_pivot` — the ``_JobForMetrics`` pivots, built
+  per type on first use through :class:`TypePivots`.
 
 Every result carries integer ids; names are resolved by the caller.
 
@@ -29,7 +30,7 @@ Attributes:
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -184,8 +185,9 @@ class FrameIndex:
       restricted hosts.
     owned: Boolean ownership mask per row.
     n_rows: Row count of the frame.
-    _time_axis: Sorted distinct times of the frame (int64 µs).
+    _time_axis: Sorted distinct times of the frame (int64 us).
     _time_index: Position of each row's time on ``_time_axis``.
+    _owned_axis: Memoised :meth:`owned_time_axis` or None.
   """
 
   def __init__(
@@ -258,6 +260,7 @@ class FrameIndex:
     self.owned = frame.owned.astype(bool)
     self._time_axis = frame.time_axis()
     self._time_index = frame.time_index().astype(np.int64)
+    self._owned_axis: np.ndarray | None = None
 
   def series_ids(self, typ: str, events: Sequence[str] | None) -> list[int]:
     """
@@ -427,26 +430,36 @@ class FrameIndex:
       keys, self.gpu_allowed_keys
     )
 
-  def _col(self, name: str) -> np.ndarray:
+  def values_at(self, name: str, rows: np.ndarray) -> np.ndarray:
     """
-    Float column by name.
+    Float column ``name`` at ``rows``, widened to float64.
+
+    The frame stores float32 (``jobframe.VALUE_DTYPE``); every reader works
+    on the float64 rows it selects, so masks against the float64 ceilings
+    and every sum, mean and product are the same as on float64 storage
+    (widening is exact).
 
     Args:
       name (str): ``value``, ``arc`` or ``delta``.
+      rows (np.ndarray): Integer row positions.
 
     Returns:
-      np.ndarray: The column.
+      np.ndarray: float64 values aligned with ``rows``.
 
     Raises:
       ValueError: Unknown column name.
 
     Examples:
-      >>> FrameIndex(JobFrame.from_records("1", []))._col("arc").shape
-      (0,)
+      >>> f = JobFrame.from_records(
+      ...   "1", [(1, "h", "cpu", "user", None, 1, 0.1, None, None)]
+      ... )
+      >>> v = FrameIndex(f).values_at("value", np.array([0]))
+      >>> v.dtype, v[0] == np.float32(0.1)
+      (dtype('float64'), np.True_)
     """
     if name not in _COLUMNS:
       raise ValueError(name)
-    return getattr(self.frame, name)
+    return getattr(self.frame, name)[rows].astype(np.float64)
 
   def host_time_keys(self) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -582,7 +595,7 @@ class FrameIndex:
     if rows.size == 0:
       return AggTable.zero(by_dev=by_dev)
     f = self.frame
-    vals = self._col(col)[rows]
+    vals = self.values_at(col, rows)
     if mode == MODE_SQL and limit is None:
       limit = (
         MAX_SANE_COUNTER_DELTA if col == "delta" else MAX_SANE_COUNTER_RATE
@@ -734,7 +747,7 @@ class FrameIndex:
     return (
       self.frame.host_id[rows].astype(np.int64),
       self.frame.time_us[rows].astype(np.int64),
-      self._col(col)[rows],
+      self.values_at(col, rows),
     )
 
   def delta_sum_by_event(
@@ -775,7 +788,7 @@ class FrameIndex:
     rows = self.scoped_rows(
       typ, self.rows_for_series(self._select(typ, events))
     )
-    vals = f.delta[rows]
+    vals = self.values_at("delta", rows)
     sid = f.series_id[rows].astype(np.int64)
     if self.host_wide(typ):
       mask = sg.finite_mask(vals, limit=MAX_SANE_COUNTER_DELTA)
@@ -837,7 +850,7 @@ class FrameIndex:
       typ, self.rows_for_series(self._select(typ, events)), job_only=True
     )
     if rows.size:
-      vals = f.value[rows]
+      vals = self.values_at("value", rows)
       keep = ~np.isnan(vals) & (vals < DCGM_FP64_BLANK)
       keep &= self._dev_allowed_mask(rows)
       rows = rows[keep]
@@ -852,7 +865,7 @@ class FrameIndex:
         e_f,
         e_f,
       )
-    vals = f.value[rows]
+    vals = self.values_at("value", rows)
     host = f.host_id[rows].astype(np.int64)
     dev = (
       f.dev_id[rows].astype(np.int64) + (1 << 15)
@@ -873,6 +886,59 @@ class FrameIndex:
       counts,
       maxima,
       sums / counts,
+    )
+
+  def owned_time_axis(self) -> np.ndarray:
+    """
+    Sorted distinct sample times of the job-owned rows (int64 us), memoised.
+
+    Every :meth:`metrics_pivot` shares this axis, so it is computed once per
+    frame instead of once per type.
+
+    Returns:
+      np.ndarray: int64 times (empty without owned rows).
+
+    Examples:
+      >>> f = JobFrame.from_records(
+      ...   "1",
+      ...   [
+      ...     (5, "h", "cpu", "user", None, 1, 1.0, None, None),
+      ...     (3, "h", "cpu", "user", None, 0, 1.0, None, None),
+      ...   ],
+      ... )
+      >>> FrameIndex(f).owned_time_axis().tolist()
+      [5]
+    """
+    if self._owned_axis is None:
+      self._owned_axis = np.unique(self.frame.time_us[self.owned])
+    return self._owned_axis
+
+  def has_owned_rows(self, typ: str, events: Sequence[str]) -> bool:
+    """
+    True when ``typ`` has a job-owned row of one of ``events``.
+
+    Exactly the types for which :meth:`metrics_pivot` returns hosts, found
+    from the series bounds without pivoting. The series are recorded as
+    consumed like a pivot records them, so a lazily pivoted view leaves the
+    same ``consumed_series`` record as pivoting every type.
+
+    Args:
+      typ (str): Type name.
+      events (Sequence[str]): Event names.
+
+    Returns:
+      bool: Owned rows present.
+
+    Examples:
+      >>> f = JobFrame.from_records(
+      ...   "1", [(1, "h", "cpu", "user", None, 0, 1.0, None, None)]
+      ... )
+      >>> FrameIndex(f).has_owned_rows("cpu", ["user"])
+      False
+    """
+    b = self.series_bounds
+    return any(
+      self.owned[b[s] : b[s + 1]].any() for s in self._select(typ, events)
     )
 
   def metrics_pivot(
@@ -911,12 +977,7 @@ class FrameIndex:
       ([[3.0, nan]], [[2.0, nan]])
     """
     f = self.frame
-    owned_rows = np.nonzero(self.owned)[0]
-    axis_us = (
-      np.unique(f.time_us[owned_rows])
-      if owned_rows.size
-      else np.empty(0, dtype=np.int64)
-    )
+    axis_us = self.owned_time_axis()
     times_s = np.floor_divide(axis_us, 1_000_000).astype(np.float64)
     n_t = axis_us.shape[0]
     n_e = len(events)
@@ -962,11 +1023,12 @@ class FrameIndex:
       size = int(np.prod(shape))
       return sg.grid_mean(keys_flat, vals, size).reshape(shape)
 
-    per_host = _grid(
-      (hinv * n_t + tix) * n_e + eix, (n_h, n_t, n_e), f.value[rows]
+    value = self.values_at("value", rows)
+    per_host = _grid((hinv * n_t + tix) * n_e + eix, (n_h, n_t, n_e), value)
+    cluster_value = _grid(tix * n_e + eix, (n_t, n_e), value)
+    cluster_arc = _grid(
+      tix * n_e + eix, (n_t, n_e), self.values_at("arc", rows)
     )
-    cluster_value = _grid(tix * n_e + eix, (n_t, n_e), f.value[rows])
-    cluster_arc = _grid(tix * n_e + eix, (n_t, n_e), f.arc[rows])
     return {
       "times_s": times_s,
       "host_ids": host_ids,
@@ -974,6 +1036,250 @@ class FrameIndex:
       "cluster_value": cluster_value,
       "cluster_arc": cluster_arc,
     }
+
+
+class TypePivots:
+  """
+  :meth:`FrameIndex.metrics_pivot` per type, computed on first use and kept.
+
+  Complex metrics read a few types; a type nobody reads is never pivoted.
+
+  Attributes:
+    index: FrameIndex the pivots read.
+    events: Event column order per type.
+    types: Types whose pivot has hosts (job-owned rows of their events), in
+      ``events`` order.
+    _known: ``types`` as a set.
+    _cache: Type to ``(pivot, position of each host id in the pivot)``.
+  """
+
+  def __init__(
+    self, index: FrameIndex, events: Mapping[str, Sequence[str]]
+  ) -> None:
+    """
+    Find the pivotable types without pivoting any.
+
+    Args:
+      index (FrameIndex): Frame index of the job.
+      events (Mapping[str, Sequence[str]]): Event column order per type.
+
+    Returns:
+      None
+
+    Examples:
+      >>> f = JobFrame.from_records(
+      ...   "1", [(1, "h", "cpu", "user", None, 1, 1.0, None, None)]
+      ... )
+      >>> TypePivots(FrameIndex(f), {"cpu": ["user"], "mem": ["used"]}).types
+      ['cpu']
+    """
+    self.index = index
+    self.events = {t: list(ev) for t, ev in events.items()}
+    self.types = [
+      t for t, ev in self.events.items() if ev and index.has_owned_rows(t, ev)
+    ]
+    self._known = set(self.types)
+    self._cache: dict[str, tuple[dict[str, object], dict[int, int]]] = {}
+
+  def get(self, typ: str) -> tuple[dict[str, object], dict[int, int]] | None:
+    """
+    Pivot of ``typ`` and its host positions, or None for a type without one.
+
+    Args:
+      typ (str): Type name.
+
+    Returns:
+      tuple[dict[str, object], dict[int, int]] | None: ``(pivot, {host_id:
+      row in per_host})``.
+
+    Examples:
+      >>> f = JobFrame.from_records(
+      ...   "1", [(1, "h", "cpu", "user", None, 1, 1.0, None, None)]
+      ... )
+      >>> TypePivots(FrameIndex(f), {"cpu": ["user"]}).get("cpu")[1]
+      {0: 0}
+    """
+    if typ not in self._known:
+      return None
+    hit = self._cache.get(typ)
+    if hit is None:
+      piv = self.index.metrics_pivot(typ, self.events[typ])
+      pos = {h: k for k, h in enumerate(piv["host_ids"].tolist())}
+      hit = self._cache[typ] = (piv, pos)
+    return hit
+
+
+class PivotGrids(Mapping[str, np.ndarray]):
+  """
+  Read-only type -> cluster grid mapping over :class:`TypePivots`.
+
+  A ``collections.abc.Mapping``: keys are the pivotable types; a value is
+  pivoted on first lookup, so ``get`` / ``in`` touch one type only.
+
+  Attributes:
+    pivots: Shared per-type pivots.
+    field: ``cluster_value`` or ``cluster_arc``.
+  """
+
+  def __init__(self, pivots: TypePivots, field: str) -> None:
+    """
+    Bind the pivots and the grid name.
+
+    Args:
+      pivots (TypePivots): Shared per-type pivots.
+      field (str): ``cluster_value`` or ``cluster_arc``.
+
+    Returns:
+      None
+
+    Examples:
+      >>> f = JobFrame.from_records(
+      ...   "1", [(1, "h", "cpu", "user", None, 1, 1.0, 2.0, None)]
+      ... )
+      >>> p = TypePivots(FrameIndex(f), {"cpu": ["user"]})
+      >>> PivotGrids(p, "cluster_arc")["cpu"].tolist()
+      [[2.0]]
+    """
+    self.pivots = pivots
+    self.field = field
+
+  def __getitem__(self, typ: str) -> np.ndarray:
+    """
+    Cluster grid of ``typ`` (pivots the type on first use).
+
+    Args:
+      typ (str): Type name.
+
+    Returns:
+      np.ndarray: ``(n_times, n_events)`` grid.
+
+    Raises:
+      KeyError: ``typ`` has no owned rows.
+
+    Examples:
+      >>> f = JobFrame.from_records("1", [])
+      >>> PivotGrids(TypePivots(FrameIndex(f), {}), "cluster_value").get("x")
+    """
+    hit = self.pivots.get(typ)
+    if hit is None:
+      raise KeyError(typ)
+    return hit[0][self.field]
+
+  def __iter__(self) -> Iterator[str]:
+    """
+    Pivotable types in schema order (no pivoting).
+
+    Returns:
+      Iterator[str]: Type names.
+
+    Examples:
+      >>> f = JobFrame.from_records("1", [])
+      >>> list(PivotGrids(TypePivots(FrameIndex(f), {}), "cluster_value"))
+      []
+    """
+    return iter(self.pivots.types)
+
+  def __len__(self) -> int:
+    """
+    Number of pivotable types (no pivoting).
+
+    Returns:
+      int: Type count.
+
+    Examples:
+      >>> f = JobFrame.from_records("1", [])
+      >>> len(PivotGrids(TypePivots(FrameIndex(f), {}), "cluster_value"))
+      0
+    """
+    return len(self.pivots.types)
+
+
+class HostPivotStats(Mapping[str, dict[str, np.ndarray]]):
+  """
+  Read-only type -> ``{"agg": grid}`` mapping of one host (``_Host.stats``).
+
+  A ``collections.abc.Mapping`` over :class:`TypePivots`: ``get`` / ``in``
+  / ``[]`` pivot only the type asked for; iterating pivots every type.
+
+  Attributes:
+    pivots: Shared per-type pivots.
+    host_id: Frame host id.
+  """
+
+  def __init__(self, pivots: TypePivots, host_id: int) -> None:
+    """
+    Bind the pivots and the host.
+
+    Args:
+      pivots (TypePivots): Shared per-type pivots.
+      host_id (int): Frame host id.
+
+    Returns:
+      None
+
+    Examples:
+      >>> f = JobFrame.from_records(
+      ...   "1", [(1, "h", "cpu", "user", None, 1, 1.0, None, None)]
+      ... )
+      >>> s = HostPivotStats(TypePivots(FrameIndex(f), {"cpu": ["user"]}), 0)
+      >>> s["cpu"]["agg"].tolist()
+      [[1.0]]
+    """
+    self.pivots = pivots
+    self.host_id = int(host_id)
+
+  def __getitem__(self, typ: str) -> dict[str, np.ndarray]:
+    """
+    ``{"agg": (n_times, n_events) grid}`` of ``typ`` on this host.
+
+    Args:
+      typ (str): Type name.
+
+    Returns:
+      dict[str, np.ndarray]: Device-mean grid under ``agg``.
+
+    Raises:
+      KeyError: The host has no owned rows of ``typ``.
+
+    Examples:
+      >>> f = JobFrame.from_records("1", [])
+      >>> HostPivotStats(TypePivots(FrameIndex(f), {}), 0).get("cpu")
+    """
+    hit = self.pivots.get(typ)
+    k = None if hit is None else hit[1].get(self.host_id)
+    if k is None:
+      raise KeyError(typ)
+    return {"agg": hit[0]["per_host"][k]}
+
+  def __iter__(self) -> Iterator[str]:
+    """
+    Types with rows on this host (pivots every pivotable type).
+
+    Returns:
+      Iterator[str]: Type names in schema order.
+
+    Examples:
+      >>> f = JobFrame.from_records("1", [])
+      >>> list(HostPivotStats(TypePivots(FrameIndex(f), {}), 0))
+      []
+    """
+    return (
+      t for t in self.pivots.types if self.host_id in self.pivots.get(t)[1]
+    )
+
+  def __len__(self) -> int:
+    """
+    Number of types with rows on this host (pivots every pivotable type).
+
+    Returns:
+      int: Type count.
+
+    Examples:
+      >>> f = JobFrame.from_records("1", [])
+      >>> len(HostPivotStats(TypePivots(FrameIndex(f), {}), 0))
+      0
+    """
+    return sum(1 for _ in self)
 
 
 def bucketed_job_value(

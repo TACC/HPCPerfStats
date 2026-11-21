@@ -182,7 +182,11 @@ def _avg_cpuusage_oracle(table, ncores, nhosts):
     ]
     rows = idx.scoped_rows("host_cpu", idx.rows_for_series(sids))
     d = pd.DataFrame(
-      {"h": f.host_id[rows], "t": f.time_us[rows], "v": f.arc[rows]}
+      {
+        "h": f.host_id[rows],
+        "t": f.time_us[rows],
+        "v": f.arc[rows].astype(np.float64),
+      }
     )
     return d.groupby(["h", "t"])["v"].sum()
 
@@ -591,7 +595,8 @@ def _text_rounded_table(
     mapped = np.array(
       [_pg_float4_text(float(u)) for u in uniq], dtype=np.float64
     )
-    out = col.copy()
+    # Decimal text is not float4: keep this oracle frame float64.
+    out = col.astype(np.float64)
     out[finite] = mapped[inverse]
     return out
 

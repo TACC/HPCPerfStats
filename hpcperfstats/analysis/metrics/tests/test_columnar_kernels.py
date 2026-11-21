@@ -58,12 +58,13 @@ def _random_records(seed: int, *, shared: bool = False, n: int = 600):
       if r < 0.08:
         return None
       if r < 0.12:
-        return 1e14  # above the rate ceiling
+        return float(np.float32(1e14))  # above the rate ceiling
       if r < 0.16:
-        return float(-rng.random() * 10)
+        return float(np.float32(-rng.random() * 10))
       if r < 0.19:
         return float(DCGM_FP64_BLANK)
-      return float(rng.random() * 100)
+      # host_data columns are PostgreSQL ``real``: draw float4 values.
+      return float(np.float32(rng.random() * 100))
 
     recs.append((t, host, typ, ev, dev, owned, _val(), _val(), _val()))
   return recs

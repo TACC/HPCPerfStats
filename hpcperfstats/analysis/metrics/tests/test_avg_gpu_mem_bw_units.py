@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import numpy as np
+
 from hpcperfstats.analysis.metrics.lib import metrics as metrics_mod
 from hpcperfstats.analysis.metrics.lib.columnar.testing import (
   table_from_records,
@@ -39,7 +41,8 @@ def test_job_value_mean_applies_bytes_to_gbps_conversion():
     max_sane=_MAX_SANE_GPU_LINK_GBPS,
   )
   assert v is not None
-  assert abs(v - 70.88332569533855) < 1e-6
+  # host_data.value is PostgreSQL ``real``: the frame keeps the float4 value.
+  assert v == float(np.float32(70883325695.33855)) / 1e9
 
 
 def test_job_value_mean_rejects_unconverted_magnitude_as_insane():

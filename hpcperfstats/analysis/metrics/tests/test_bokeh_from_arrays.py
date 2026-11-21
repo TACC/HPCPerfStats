@@ -262,6 +262,10 @@ def normalize_bokeh_doc(item: dict[str, Any]) -> Any:
         # A list and an ndarray of the same values are the same column to
         # BokehJS; compare them as plain lists.
         return decode_ndarray(node)
+      if node.get("type") == "number" and keys == {"type", "value"}:
+        # A list carries NaN / inf as a number node; an ndarray carries
+        # the float itself.
+        return float(node["value"])
       if node.get("type") == "map" and "entries" in node:
         columns = {}
         for k, v in sorted(node["entries"], key=lambda kv: str(kv[0])):
@@ -414,6 +418,24 @@ def test_normalizer_resolves_refs_and_arrays():
   ]["entries"]
   entries.append(["index", [0, 1]])
   assert diff_normalized(norm, normalize_bokeh_doc(item)) == []
+
+
+def test_normalizer_list_nan_number_node_equals_ndarray_nan():
+  """A list column's NaN number node matches a decoded ndarray NaN."""
+  from bokeh.core.serialization import Serializer
+
+  as_list = Serializer(deferred=False).serialize([[1.5, float("nan")]])
+  as_array = Serializer(deferred=False).serialize(
+    [np.array([1.5, float("nan")])]
+  )
+  assert as_list.content != as_array.content
+  assert (
+    diff_normalized(
+      normalize_bokeh_doc(as_list.content),
+      normalize_bokeh_doc(as_array.content),
+    )
+    == []
+  )
 
 
 def test_normalizer_scale_defect_figure_allows_d37_factor_only():

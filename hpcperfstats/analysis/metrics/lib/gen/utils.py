@@ -7,6 +7,10 @@ Attributes:
   jid_table: ``jid_table``.
   job_data: ``job_data``.
   local_timezone: ``local_timezone``.
+  PLOT_MAX_POINTS_PER_HOST: Render resolution of one host series in a
+    Summary or Type Detail plot; longer series go through
+    :func:`decimate_minmax` before Bokeh. Independent of the fetch-side
+    ``metrics_plot_aggregate_max_host_time_points`` budget.
 """
 
 from __future__ import annotations
@@ -37,6 +41,8 @@ job_data = None
 jid_table = None
 
 local_timezone = cfg.get_timezone()
+
+PLOT_MAX_POINTS_PER_HOST = 2000
 
 # Canonical monitor typenames (see hpcperfstats.dbload.lib.monitor_naming); dual-read via resolve.
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
@@ -420,6 +426,73 @@ def timestamps_as_cluster_naive(times: Any) -> np.ndarray:
   )
   local_us = micros + offsets[inverse] * 1_000_000
   return (local_us // 1000).astype("datetime64[ms]")
+
+
+def decimate_minmax(times: Any, values: Any, max_points: int) -> np.ndarray:
+  """
+  Indices of one host series to plot, bounded by ``max_points``.
+
+  A series of at most ``max_points`` samples keeps every index. A longer
+  one is split into ``max_points // 3`` equal time buckets, and each
+  bucket keeps its minimum and its maximum sample, so peaks and the global
+  minimum and maximum stay visible, plus its first NaN sample when it has
+  one, so a NaN gap still breaks the line (an all-NaN bucket keeps exactly
+  one NaN). A tie keeps the earliest minimum and the latest maximum, so
+  a constant bucket keeps its two ends. The caller indexes its time,
+  value and hover columns with the result, which keeps them aligned.
+
+  Args:
+    times (Any): Sample times aligned with ``values``: integers (epoch
+      microseconds) or ``datetime64``. Monotonic UTC times avoid DST
+      folds in the bucketing.
+    values (Any): Sample values (NaN marks a missing sample).
+    max_points (int): Largest number of indices returned; at least 3.
+
+  Returns:
+    np.ndarray: Ascending ``int64`` indices into ``values``, so time order
+    is kept when the input is time sorted.
+
+  Raises:
+    ValueError: ``max_points`` is below 3, or ``times`` and ``values``
+      differ in length.
+
+  Examples:
+    >>> decimate_minmax([0, 1, 2], [5.0, 1.0, 3.0], 3).tolist()
+    [0, 1, 2]
+    >>> decimate_minmax(range(6), [0.0, 9.0, 1.0, 2.0, 8.0, 3.0], 3).tolist()
+    [0, 1]
+  """
+  if max_points < 3:
+    raise ValueError(f"max_points must be at least 3, got {max_points}")
+  v = np.asarray(values, dtype=np.float64).reshape(-1)
+  t = np.asarray(times).reshape(-1)
+  if t.size != v.size:
+    raise ValueError(f"{t.size} times for {v.size} values")
+  n = v.size
+  if n <= max_points:
+    return np.arange(n, dtype=np.int64)
+  if t.dtype.kind == "M":
+    t = t.astype("datetime64[us]").astype(np.int64)
+  t = t.astype(np.float64)
+  n_buckets = max_points // 3
+  t0 = t.min()
+  span = t.max() - t0
+  if span > 0:
+    bucket = ((t - t0) * (n_buckets / span)).astype(np.int64)
+    np.minimum(bucket, n_buckets - 1, out=bucket)
+  else:
+    bucket = np.arange(n, dtype=np.int64) * n_buckets // n
+  # Within a bucket, values ascend and NaN sorts last (stable for ties).
+  order = np.lexsort((v, bucket))
+  sorted_bucket = bucket[order]
+  starts = np.flatnonzero(
+    np.concatenate(([True], sorted_bucket[1:] != sorted_bucket[:-1]))
+  )
+  sizes = np.diff(np.append(starts, n))
+  n_valid = np.add.reduceat((~np.isnan(v[order])).astype(np.int64), starts)
+  max_pos = starts + np.maximum(n_valid - 1, 0)
+  nan_pos = (starts + n_valid)[n_valid < sizes]
+  return np.unique(order[np.concatenate((starts, max_pos, nan_pos))])
 
 
 def hover_plain_columns(

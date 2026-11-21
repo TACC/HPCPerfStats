@@ -211,7 +211,9 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 # host_mem_job falls back to host_mem.
 # 25 (2026-11-18): Summary hover help changed (DFMA is the FP64 FMA pipe,
 # x86 direct-perf FLOP / RAPL series text), embedded in the json_item.
-APP_PLOT_ARTIFACT_SCHEMA_VERSION = 25
+# 26 (2026-11-21): Summary and Type Detail host series longer than
+# PLOT_MAX_POINTS_PER_HOST are min/max decimated; columns ship as arrays.
+APP_PLOT_ARTIFACT_SCHEMA_VERSION = 26
 
 JOB_PLOT_JSON_KEYS: dict[str, tuple[str, str]] = {
   kind: (spec.json_item_key, spec.unavailable_reason_key)
