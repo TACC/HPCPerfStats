@@ -47,12 +47,16 @@ int intel_gpu_xpumcli_parse_discovery(const char *text, int *device_ids, int max
 int intel_gpu_xpumcli_parse_dump_csv(const char *text, struct intel_gpu_xpumcli_sample *samples,
                                      int max_samples);
 
-/*! Publish one sample into collector stats (PCIe/Xe left 0 on xpumcli path). */
+/*! Publish one sample into collector stats (PCIe / Xe Link NOT_BUILT on the xpumcli path). */
 void intel_gpu_xpumcli_publish_sample(struct stats *stats, const struct intel_gpu_xpumcli_sample *s,
                                       int gpu_count);
 
-/*! Collect via xpumcli discovery+dump. Returns 0 if any device published. */
-int intel_gpu_xpumcli_collect(struct stats_type *type);
+/*! Mark the PCIe / Xe Link counter keys NOT_BUILT (the dump has no cumulative counters). */
+void intel_gpu_xpumcli_mark_links_not_built(struct stats *stats);
+
+/*! Collect via xpumcli discovery+dump. Returns 0 if any device published. When discovery lists
+ *  devices, their ids (at most max_ids) go to ids[0..*nids), even if the dump then fails. */
+int intel_gpu_xpumcli_collect(struct stats_type *type, int *ids, int max_ids, int *nids);
 
 #ifdef INTEL_GPU_TEST_BUILD
 typedef int (*intel_gpu_xpumcli_capture_fn)(char *const argv[], char *out, size_t out_cap);

@@ -418,36 +418,43 @@ def probe_nvidia_smi_mem_total_mib(timeout_s: float = 10.0) -> dict[str, int]:
     return res
 
 
-def probe_intel_gpu_devices() -> list[str]:
-    """intel_gpu device ids as decimal strings; count Stampede3 PVC lspci lines.
+# Vendor 8086 Data Center GPU Max (Ponte Vecchio) device ids from the PCI ID database, the same
+# table as intel_gpu_pci.c; a function counts when its base class is display (0x03) or
+# processing accelerator (0x12).
+INTEL_GPU_MAX_DEVICE_IDS = frozenset(
+    {0x0B69, 0x0B6E, 0x0BD0, 0x0BD4, 0x0BD5, 0x0BD6, 0x0BD7, 0x0BD8, 0x0BD9, 0x0BDA, 0x0BDB}
+)
 
-    Mirrors intel_gpu.c XPUM device rows (\"0\"..\"N-1\") when XPUM enumerates
-    one id per Data Center GPU Max / Ponte Vecchio PCI function.
-    """
-    import subprocess
 
+def _sysfs_hex(path: Path) -> int | None:
+    """First line of a hex sysfs attribute (``0x8086``) as an int; None when unreadable."""
+    lines = _read_lines(str(path))
     try:
-        out = subprocess.check_output(["lspci", "-nn"], text=True, stderr=subprocess.DEVNULL)
-    except (OSError, subprocess.CalledProcessError):
+        return int(lines[0].strip(), 16)
+    except (IndexError, ValueError):
+        return None
+
+
+def probe_intel_gpu_devices(sysfs_root: str = "/sys") -> list[str]:
+    """intel_gpu row ids "0".."N-1", N = Data Center GPU Max PCI functions in sysfs.
+
+    Mirrors intel_gpu_pci.c (the rows intel_gpu.c emits, as XPUM ids or backend-failure
+    sentinel rows): ``bus/pci/devices/*/{vendor,device,class}``.
+    """
+    try:
+        fns = list((Path(sysfs_root) / "bus" / "pci" / "devices").iterdir())
+    except OSError:
         return []
     n = 0
-    for line in out.splitlines():
-        low = line.lower()
-        if "matrox" in low:
-            continue
-        class_ok = (
-            "display controller" in low
-            or "3d controller" in low
-            or "vga compatible controller" in low
-            or "[0380]" in low
-            or "accelerator" in low
-        )
-        if not class_ok:
-            continue
+    for fn in fns:
+        vendor = _sysfs_hex(fn / "vendor")
+        device = _sysfs_hex(fn / "device")
+        pci_class = _sysfs_hex(fn / "class")
         if (
-            "ponte vecchio" in low
-            or "data center gpu max" in low
-            or "[8086:0bd5]" in low
+            vendor == 0x8086
+            and device in INTEL_GPU_MAX_DEVICE_IDS
+            and pci_class is not None
+            and pci_class >> 16 in (0x03, 0x12)
         ):
             n += 1
     return [str(i) for i in range(n)]

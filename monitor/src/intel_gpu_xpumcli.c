@@ -403,6 +403,15 @@ int intel_gpu_xpumcli_parse_dump_csv(const char *text, struct intel_gpu_xpumcli_
   return nsamples;
 }
 
+void intel_gpu_xpumcli_mark_links_not_built(struct stats *stats)
+{
+  /* xpumcli dump has throughput only, not the cumulative counters of the libxpum backend. */
+  stats_set_missing(stats, "gpu_pcie_rx_bytes", STATS_SENTINEL_NOT_BUILT);
+  stats_set_missing(stats, "gpu_pcie_tx_bytes", STATS_SENTINEL_NOT_BUILT);
+  stats_set_missing(stats, "gpu_xe_link_rx_bytes", STATS_SENTINEL_NOT_BUILT);
+  stats_set_missing(stats, "gpu_xe_link_tx_bytes", STATS_SENTINEL_NOT_BUILT);
+}
+
 void intel_gpu_xpumcli_publish_sample(struct stats *stats, const struct intel_gpu_xpumcli_sample *s,
                                       int gpu_count)
 {
@@ -431,11 +440,7 @@ void intel_gpu_xpumcli_publish_sample(struct stats *stats, const struct intel_gp
     stats_set(stats, "gpu_dram_active", (unsigned long long)(s->mem_bw + 0.5));
   if (s->has_compute_util)
     stats_set(stats, "compute_engine_util", (unsigned long long)(s->compute_util + 0.5));
-  /* xpumcli dump has throughput only, not the cumulative counters of the libxpum backend. */
-  stats_set_missing(stats, "gpu_pcie_rx_bytes", STATS_SENTINEL_NOT_BUILT);
-  stats_set_missing(stats, "gpu_pcie_tx_bytes", STATS_SENTINEL_NOT_BUILT);
-  stats_set_missing(stats, "gpu_xe_link_rx_bytes", STATS_SENTINEL_NOT_BUILT);
-  stats_set_missing(stats, "gpu_xe_link_tx_bytes", STATS_SENTINEL_NOT_BUILT);
+  intel_gpu_xpumcli_mark_links_not_built(stats);
   if (s->has_throttle)
     stats_set(stats, "clocks_event_reasons", s->throttle_flags);
   stats_set(stats, "gpu_count", (unsigned long long)gpu_count);
@@ -444,7 +449,7 @@ void intel_gpu_xpumcli_publish_sample(struct stats *stats, const struct intel_gp
   stats_set_missing_all(stats, STATS_SENTINEL_NOT_PRESENT);
 }
 
-int intel_gpu_xpumcli_collect(struct stats_type *type)
+int intel_gpu_xpumcli_collect(struct stats_type *type, int *ids, int max_ids, int *nids)
 {
   char disc_buf[65536];
   char dump_buf[262144];
@@ -475,6 +480,10 @@ int intel_gpu_xpumcli_collect(struct stats_type *type)
       ndev <= 0) {
     TRACE("intel_gpu: xpumcli discovery parsed no devices\n");
     return -1;
+  }
+  if (ids != NULL && nids != NULL) {
+    *nids = ndev < max_ids ? ndev : max_ids;
+    memcpy(ids, device_ids, (size_t)*nids * sizeof(*ids));
   }
 
   for (i = 0; i < ndev; i++) {

@@ -346,6 +346,35 @@ class HostLiveProbeTests(unittest.TestCase):
             self.assertEqual(probe_power_socket_devices(tmp), ["0", "1"])
             self.assertEqual(probe_power_socket_devices(str(Path(tmp) / "missing")), [])
 
+    def test_probe_intel_gpu_counts_max_series_pci_functions(self) -> None:
+        """Same fixture shape as tests/test_intel_gpu_fallback.c: four PVC 8086:0bd5 rows."""
+        import re
+
+        from lib.host_live_probes import INTEL_GPU_MAX_DEVICE_IDS, probe_intel_gpu_devices
+
+        fns = [
+            ("0000:18:00.0", "0x8086", "0x0bd5", "0x038000"),
+            ("0000:42:00.0", "0x8086", "0x0bd5", "0x038000"),
+            ("0000:6c:00.0", "0x8086", "0x0bd5", "0x038000"),
+            ("0000:96:00.0", "0x8086", "0x0bd5", "0x038000"),
+            ("0000:00:00.0", "0x8086", "0x09a2", "0x060000"),
+            ("0000:03:00.0", "0x102b", "0x0536", "0x030000"),
+            ("0000:04:00.0", "0x8086", "0x0bd5", "0x060000"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            for bdf, vendor, device, pci_class in fns:
+                d = Path(tmp) / "bus" / "pci" / "devices" / bdf
+                d.mkdir(parents=True)
+                (d / "vendor").write_text(vendor + "\n")
+                (d / "device").write_text(device + "\n")
+                (d / "class").write_text(pci_class + "\n")
+            self.assertEqual(probe_intel_gpu_devices(tmp), ["0", "1", "2", "3"])
+            self.assertEqual(probe_intel_gpu_devices(str(Path(tmp) / "missing")), [])
+        c_src = (MONITOR / "src" / "intel_gpu_pci.c").read_text(encoding="utf-8")
+        table = c_src[c_src.index("intel_gpu_pci_max_ids[]"):].split("};", 1)[0]
+        c_ids = {int(h, 16) for h in re.findall(r"0x([0-9a-fA-F]{4})\b", table)}
+        self.assertEqual(c_ids, set(INTEL_GPU_MAX_DEVICE_IDS))
+
     def test_probe_net_includes_up_lo(self) -> None:
         import tempfile
         from unittest.mock import patch

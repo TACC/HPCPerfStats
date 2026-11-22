@@ -14,6 +14,7 @@
 
 #ifdef INTEL_GPU_TEST_BUILD
 void intel_gpu_test_reset(void);
+void intel_gpu_test_set_sysfs_root(const char *root);
 #endif
 
 /* Linked from intel_gpu.c; default NULL selects xpumcli; tests force libxpum via env. */
@@ -31,6 +32,7 @@ static enum {
   RT_SCENARIO_TILE_POWER_SUM,
   RT_SCENARIO_DEVICE_AVG_VS_TILE_SUM,
   RT_SCENARIO_COMPUTE_TILE_MAX,
+  RT_SCENARIO_FETCH_FAIL,
 } g_rt_scenario = RT_SCENARIO_EMPTY;
 
 static xpum_result_t fake_xpumInit(void)
@@ -211,7 +213,7 @@ static xpum_result_t fake_xpumGetRealtimeMetrics(xpum_device_id_t deviceId,
                                                  uint32_t *count)
 {
   (void)deviceId;
-  if (count == NULL)
+  if (count == NULL || g_rt_scenario == RT_SCENARIO_FETCH_FAIL)
     return XPUM_GENERIC_ERROR;
   if (dataList == NULL) {
     if (g_rt_scenario == RT_SCENARIO_TILE_MERGE || g_rt_scenario == RT_SCENARIO_TILE_POWER_SUM)
@@ -256,7 +258,7 @@ static xpum_result_t fake_xpumGetStats(xpum_device_id_t deviceId, xpum_device_st
   (void)begin;
   (void)end;
   (void)sessionId;
-  if (count == NULL)
+  if (count == NULL || g_rt_scenario == RT_SCENARIO_FETCH_FAIL)
     return XPUM_GENERIC_ERROR;
   if (dataList == NULL) {
     *count = 1;
@@ -435,6 +437,20 @@ static void test_mem_temp_publish(void)
   assert(test_stats_missing_code("compute_engine_util") == STATS_SENTINEL_NOT_PRESENT);
 }
 
+/* libxpum: realtime and stats fetch both fail -> the device row carries BACKEND_ERROR, no value. */
+static void test_fetch_failure_marks_row(void)
+{
+  reset_test_state();
+  test_stats_missing_reset();
+  g_rt_scenario = RT_SCENARIO_FETCH_FAIL;
+  intel_gpu_stats_type.st_enabled = 1;
+  intel_gpu_stats_type.st_collect(&intel_gpu_stats_type);
+  assert(intel_gpu_stats_type.st_enabled);
+  assert(g_stub.n == 0);
+  assert(test_stats_missing_code(TEST_STATS_MISSING_ALL_KEY) == STATS_SENTINEL_BACKEND_ERROR);
+  g_rt_scenario = RT_SCENARIO_EMPTY;
+}
+
 static void test_helper_max_metric_over_tiles(void)
 {
   xpum_device_realtime_metrics_t rows[3];
@@ -607,6 +623,10 @@ static void test_xpumcli_publish_marks(void)
 
 int main(void)
 {
+#ifdef INTEL_GPU_TEST_BUILD
+  /* Failure rows never come from the build host's own PCI devices. */
+  intel_gpu_test_set_sysfs_root("/nonexistent-intel-gpu-sysfs");
+#endif
   test_stats_stub_bind(&g_stub);
   test_helper_tile_merge();
   test_helper_package_power_sum_tiles();
@@ -618,6 +638,7 @@ int main(void)
   test_device_avg_vs_tile_sum_collect();
   test_helper_max_metric_over_tiles();
   test_compute_tile_max_collect();
+  test_fetch_failure_marks_row();
   test_default_xpumcli_skips_xpumInit();
   test_xpumcli_publish_marks();
   test_xpumcli_na_cycles_then_values();

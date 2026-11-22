@@ -26,7 +26,7 @@ alwaysApply: false
 - Parse CSV by header names; publish existing KEYS. Dump power ID **1** → `power_usage` (not API `XPUM_STATS_POWER` = 4). Dump memory used is already **MiB**.
 - PCIe / Xe Link emit the `NOT_BUILT` value sentinel on the xpumcli path (dump exposes throughput, not the cumulative counters used by libxpum); a metric the dump or XPUM did not return emits `NOT_PRESENT`, never 0 (`src/stats_sentinel.h`).
 - **`N/A` sentinel**: a dump field printed `N/A` (or empty) is unparsed and its key is `NOT_PRESENT` for that collect only, so it reports again without a restart. Stampede3 PVC prints `N/A` for EU Array Active (`sm_active`) because its GFX firmware `PVC2_1.23263` is below the XPUM minimum `PVC2_1.23423`; a firmware update fixes it with no code change. Do not substitute 0 or drop the key.
-- Miss-streak then `st_enabled=0`; never crash the daemon.
+- Backend failure (either backend) never disables the type: rows keep emitting, `BACKEND_ERROR` on a failed attempt, `BACKOFF` during the `INTEL_GPU_BACKOFF_SEC` cooldown armed after `INTEL_GPU_MISS_STREAK_MAX` misses; device ids are the last discovered ones, else the sysfs Data Center GPU Max count (`intel_gpu_pci.c`, mirrored by `probe_intel_gpu_devices`); never crash the daemon.
 
 ## Lifecycle (libxpum opt-in)
 

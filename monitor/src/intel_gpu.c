@@ -2,8 +2,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "intel_gpu.h"
+#include "intel_gpu_pci.h"
 #include "intel_gpu_xpum_helpers.h"
 #include "intel_gpu_xpumcli.h"
 #include "monitor_daemon.h"
@@ -12,23 +14,47 @@
 #include "trace.h"
 #include "xpum_gpu_dyn.h"
 
+/* Failed backend attempts in a row before the cooldown. The cooldown is longer than typical
+ * sample cadence (~150 s), so a dead xpumd costs one xpumcli attempt per cooldown. */
 #define INTEL_GPU_MISS_STREAK_MAX 3
+#define INTEL_GPU_BACKOFF_SEC 300
 
 static int g_xpum_ready;
 static int g_miss_streak;
+static long long g_skip_until;
+static int g_backoff_warned;
+/* Last discovered device ids (xpumcli discovery or xpumGetDeviceList); rows on failure. */
 static xpum_device_id_t g_device_ids[XPUM_MAX_NUM_DEVICES];
 static int g_device_count;
+/* sysfs Data Center GPU Max function count, scanned once when no discovery has succeeded. */
+static int g_pci_count = -1;
+static const char *g_sysfs_root = "/sys";
 static unsigned char g_power_warned[XPUM_MAX_NUM_DEVICES];
 
 #ifdef INTEL_GPU_TEST_BUILD
+/* Keeps the sysfs root set by intel_gpu_test_set_sysfs_root. */
 void intel_gpu_test_reset(void)
 {
   g_xpum_ready = 0;
   g_miss_streak = 0;
+  g_skip_until = 0;
+  g_backoff_warned = 0;
   g_device_count = 0;
+  g_pci_count = -1;
   memset(g_device_ids, 0, sizeof(g_device_ids));
   memset(g_power_warned, 0, sizeof(g_power_warned));
   intel_gpu_xpumcli_test_reset();
+}
+
+void intel_gpu_test_set_sysfs_root(const char *root)
+{
+  g_sysfs_root = root;
+  g_pci_count = -1;
+}
+
+void intel_gpu_test_expire_backoff(void)
+{
+  g_skip_until = 0;
 }
 #endif
 
@@ -320,35 +346,23 @@ static int intel_gpu_runtime_prepare(void)
   return 0;
 }
 
-static void intel_gpu_collect(struct stats_type *type)
+/* Every key of a row the backend could not read carries `code`; the xpumcli path never reads
+ * the PCIe / Xe Link counters, so they stay NOT_BUILT as on a good cycle. */
+static void intel_gpu_mark_row(struct stats *stats, enum stats_sentinel code)
+{
+  if (!intel_gpu_use_libxpum())
+    intel_gpu_xpumcli_mark_links_not_built(stats);
+  stats_set_missing_all(stats, code);
+}
+
+/* libxpum backend; 0 when any device row was published. */
+static int intel_gpu_libxpum_collect(struct stats_type *type)
 {
   int i;
   int ok_any = 0;
 
-  if (type == NULL || !type->st_enabled)
-    return;
-
-  if (!intel_gpu_use_libxpum()) {
-    if (intel_gpu_xpumcli_collect(type) == 0) {
-      g_miss_streak = 0;
-      return;
-    }
-    g_miss_streak++;
-    if (g_miss_streak >= INTEL_GPU_MISS_STREAK_MAX) {
-      TRACE("intel_gpu: disabling after xpumcli collect failures\n");
-      type->st_enabled = 0;
-    }
-    return;
-  }
-
-  if (intel_gpu_runtime_prepare() < 0) {
-    g_miss_streak++;
-    if (g_miss_streak >= INTEL_GPU_MISS_STREAK_MAX) {
-      TRACE("intel_gpu: disabling after prepare failures\n");
-      type->st_enabled = 0;
-    }
-    return;
-  }
+  if (intel_gpu_runtime_prepare() < 0)
+    return -1;
 
   for (i = 0; i < g_device_count; i++) {
     char dev[16];
@@ -364,9 +378,10 @@ static void intel_gpu_collect(struct stats_type *type)
     (void)intel_gpu_lookup_mem_total_mb(g_device_ids[i], &mem_total_mb);
     memset(&row, 0, sizeof(row));
     rt_ok = intel_gpu_collect_one_rt(g_device_ids[i], &row);
-    if (rt_ok != 0 || !intel_gpu_row_is_usable(&row)) {
-      if (intel_gpu_collect_one_stats_fallback(g_device_ids[i], &row) != 0)
-        continue;
+    if ((rt_ok != 0 || !intel_gpu_row_is_usable(&row)) &&
+        intel_gpu_collect_one_stats_fallback(g_device_ids[i], &row) != 0) {
+      intel_gpu_mark_row(stats, STATS_SENTINEL_BACKEND_ERROR);
+      continue;
     }
     intel_gpu_publish_from_rt(stats, &row, mem_total_mb, g_device_count);
     intel_gpu_publish_xe_link(stats, g_device_ids[i]);
@@ -378,16 +393,76 @@ static void intel_gpu_collect(struct stats_type *type)
     }
     ok_any = 1;
   }
+  return ok_any ? 0 : -1;
+}
 
-  if (!ok_any) {
-    g_miss_streak++;
-    if (g_miss_streak >= INTEL_GPU_MISS_STREAK_MAX) {
-      TRACE("intel_gpu: disabling after collect failures\n");
-      type->st_enabled = 0;
-    }
-  } else {
-    g_miss_streak = 0;
+static long long intel_gpu_now_sec(void)
+{
+  struct timespec ts;
+
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+    return 0;
+  return (long long)ts.tv_sec;
+}
+
+/* Count a failed attempt. The last one of a streak arms the cooldown and leaves the streak one
+ * short, so one more failure after the cooldown re-arms it. */
+static void intel_gpu_note_failure(void)
+{
+  if (++g_miss_streak < INTEL_GPU_MISS_STREAK_MAX)
+    return;
+  g_miss_streak = INTEL_GPU_MISS_STREAK_MAX - 1;
+  g_skip_until = intel_gpu_now_sec() + INTEL_GPU_BACKOFF_SEC;
+  if (!g_backoff_warned)
+    monitor_log_warn("intel_gpu: %s backend failing, retrying every %d s\n",
+                     intel_gpu_use_libxpum() ? "libxpum" : "xpumcli", INTEL_GPU_BACKOFF_SEC);
+  g_backoff_warned = 1;
+}
+
+/* Each GPU keeps a sentinel row on a cycle the backend did not publish, under the last
+ * discovered ids, else "0".."N-1" for the sysfs Data Center GPU Max functions. */
+static void intel_gpu_publish_failed_rows(struct stats_type *type, enum stats_sentinel code)
+{
+  int n = g_device_count;
+  int i;
+
+  if (n == 0) {
+    if (g_pci_count < 0)
+      g_pci_count = intel_gpu_pci_count(g_sysfs_root, XPUM_MAX_NUM_DEVICES);
+    n = g_pci_count;
   }
+  for (i = 0; i < n; i++) {
+    char dev[16];
+    struct stats *stats;
+
+    snprintf(dev, sizeof(dev), "%d", g_device_count > 0 ? (int)g_device_ids[i] : i);
+    stats = get_current_stats(type, dev);
+    if (stats != NULL)
+      intel_gpu_mark_row(stats, code);
+  }
+}
+
+static void intel_gpu_collect(struct stats_type *type)
+{
+  enum stats_sentinel code = STATS_SENTINEL_BACKOFF;
+  int rc;
+
+  if (type == NULL || !type->st_enabled)
+    return;
+  if (intel_gpu_now_sec() >= g_skip_until) {
+    if (intel_gpu_use_libxpum())
+      rc = intel_gpu_libxpum_collect(type);
+    else
+      rc = intel_gpu_xpumcli_collect(type, g_device_ids, XPUM_MAX_NUM_DEVICES, &g_device_count);
+    if (rc == 0) {
+      g_miss_streak = 0;
+      g_backoff_warned = 0;
+      return;
+    }
+    code = STATS_SENTINEL_BACKEND_ERROR;
+    intel_gpu_note_failure();
+  }
+  intel_gpu_publish_failed_rows(type, code);
 }
 
 struct stats_type intel_gpu_stats_type = {

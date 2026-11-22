@@ -66,7 +66,8 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_ib_hca_is_opa_hfi.c` | HFI vs IB HCA classification |
 | `test_opa_lspci_match.c` | Stampede3 Cornelis/OPA lspci fixture match |
 | `test_intel_gpu_schema_contract.c` | Intel PVC `intel_gpu` KEYS contract (Xe Link, no NvLink, `compute_engine_util`) |
-| `test_intel_gpu_publish.c` | libxpum path publish (tile merge, package power, `compute_engine_util` max over tiles) + default xpumcli skips `xpumInit`; xpumcli publish: `N/A` cycles emit `NOT_PRESENT` and values return on the next dump, PCIe/Xe Link `NOT_BUILT` |
+| `test_intel_gpu_publish.c` | libxpum path publish (tile merge, package power, `compute_engine_util` max over tiles) + default xpumcli skips `xpumInit`; xpumcli publish: `N/A` cycles emit `NOT_PRESENT` and values return on the next dump, PCIe/Xe Link `NOT_BUILT`; libxpum fetch failure marks the row `BACKEND_ERROR` |
+| `test_intel_gpu_fallback.c` | Backend failure keeps one sentinel row per GPU (fake sysfs + fake xpumcli): 4 PVC functions with xpumd down -> rows `"0"`..`"3"` all `BACKEND_ERROR`; after the streak `BACKOFF` and no xpumcli child until the cooldown ends; recovery publishes real values; no PVC function -> no rows; discovered ids win over the sysfs count; libxpum init failure; `intel_gpu_pci` id/class match. Optional argument runs one named test |
 | `test_intel_gpu_xpumcli_parse.c` | xpumcli discovery/dump CSV parse -> KEYS (PVC stress dump, all-`N/A` EU dump, per-tile rows -> max compute engine util); default `-m` list includes 31 |
 | `test_xpum_gpu_dyn.c` | XPUM dlopen stubs / missing-lib / hooks |
 | `test_lnet_schema_contract.c` | LNet collector schema token contract |

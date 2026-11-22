@@ -404,10 +404,12 @@ endif
 if INTEL_GPU
 TYPES += \
 	intel_gpu.c \
+	intel_gpu_pci.c \
 	intel_gpu_xpum_helpers.c \
 	intel_gpu_xpumcli.c
 hpcperfstatsd_SOURCES += \
 	intel_gpu.h \
+	intel_gpu_pci.h \
 	intel_gpu_xpum_helpers.h \
 	intel_gpu_xpumcli.h \
 	xpum_gpu_dyn.c \
