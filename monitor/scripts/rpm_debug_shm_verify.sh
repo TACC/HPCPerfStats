@@ -14,6 +14,7 @@
 #           POST_INSTALL_SLEEP_SECONDS (defaults to FULL; soak via stress-ng --cpu 0),
 #           WAIT_SHM_SECONDS, WAIT_FULL_SECONDS (default 900; 0 = no wait for full rows),
 #           RPM_BUILD=1 (remove stale daemon RPMs and run the debug rpmbuild first),
+#           HPCS_RELEASE (RPM_BUILD only: adds --define "hpc_release N"; default spec Release),
 #           CROSS_SAMPLE_CHECK (default 1; set 0 to disable),
 #           STRICT_LIVE_SPOT_CHECK / STRICT_PLAUSIBILITY / STRICT_CROSS_SAMPLE
 #             (default 1; set 0 to disable),
@@ -136,9 +137,12 @@ build_debug_rpm() {
     return 1
   }
   rm -f "${rpm_topdir}"/RPMS/*/hpcperfstatsd-*.rpm
+  # One-off Release without a spec edit, as in the prepare footer.
+  local release_define=()
+  test -z "${HPCS_RELEASE:-}" || release_define=(--define "hpc_release ${HPCS_RELEASE}")
   echo "Building the debug RPM (rpmbuild -ba, hpc_debug_build 1) ..."
-  rpmbuild -ba --define "_topdir ${rpm_topdir}" --define "hpc_debug_build 1" "${spec}" \
-    </dev/null || {
+  rpmbuild -ba --define "_topdir ${rpm_topdir}" ${release_define[@]+"${release_define[@]}"} \
+    --define "hpc_debug_build 1" "${spec}" </dev/null || {
     echo "ERROR: debug rpmbuild failed" >&2
     return 1
   }

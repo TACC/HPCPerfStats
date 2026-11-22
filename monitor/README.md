@@ -10,6 +10,7 @@ C implementation of the **hpcperfstats** data collector: either a **RabbitMQ dae
 | `tests/` | `check` targets: C unit drivers, shell regression, `Makefile.am`, `run_tests.sh`. Details: [tests/README.md](tests/README.md). |
 | `measurement/` | HUST 2026 **node** measurement kit (cadence, overhead, jitter); [measurement/RUNBOOK.md](measurement/RUNBOOK.md). Site/pipeline kit: `tests/site_measurement/`. |
 | `scripts/` | Static bundle and prefix helpers (`build_static_bundle.sh`, `ensure_dotbuild_prefix_static.sh`); plan-close **`run_valgrind_check.sh`** and **`run_cpp_linter.sh`**. |
+| `site/` | Per-checkout RPM site overrides: untracked `hpcperfstats.site.conf` (broker, credentials), tracked `.example` template ([Site conf](#site-conf-broker-credentials-and-rpm-release)). |
 | `m4/`, `configure.ac` | Autotools. |
 | `README` | Legacy reference for **on-disk stats archive** format (headers, schema lines, record groups). |
 | [`LIKWID_MIGRATION.md`](LIKWID_MIGRATION.md), `VARIORUM_MIGRATION.md` | Historical notes only (LIKWID (3.0) removed in 3.1 Phases 2+3, Variorum earlier); the current x86 counter design is in [x86 counters](#x86-counters-direct-perf-31-phases-23) below. |
@@ -47,6 +48,59 @@ Configure selects optional collectors via Automake conditionals; use **`./config
 - Ports must be ACTIVE or phys LinkUp **and** `link_layer=InfiniBand` when that sysfs file exists (Ethernet-mode mlx HCAs, e.g. Horizon `mlx5_2`, are skipped so MAD is not attempted on them).
 - **`--enable-ib-mad-dlopen`:** compiles MAD against vendored `third_party/ibmad-shim/` and **`dlopen`s `libibmad`** (`HPCPERFSTATS_IBMAD_LIB`). No link-time `-libmad`. Stampede3 fleet default.
 - **`--enable-infiniband` (default, non-fleet):** link-time `-libmad` when devel is present; bundle may pass `--disable-infiniband` when the probe fails (sysfs-only).
+
+### Site conf (broker, credentials) and RPM Release
+
+Node checkouts never edit the tracked `src/hpcperfstats.conf` or `hpcperfstats.spec`. Site
+settings go in **`site/hpcperfstats.site.conf`**: untracked (gitignored), per checkout, same
+`key value` syntax as the conf. Start from the tracked template:
+
+```bash
+cd HPCPerfStats/monitor
+cp site/hpcperfstats.site.conf.example site/hpcperfstats.site.conf
+chmod 600 site/hpcperfstats.site.conf   # then set server/queue/port/user/password
+```
+
+- **How it reaches the RPM:** `make dist` (`dist-hook`) copies the site file into the tarball
+  when it exists; the spec `%build` runs `scripts/site_conf.sh overlay`, which replaces the value
+  of every key the default conf has, appends keys it lacks, and keeps the default's comments and
+  order. No site file: the RPM ships the repo default (`server localhost`). The script prints key
+  names only, never values. The tarball and SRPM under `rpmbuild/` then hold the credentials
+  (`make dist` makes every member world-readable), so keep that tree private.
+- **Fleet broker guard:** a fleet prepare (`prepare_rpmbuild_stampede3.sh` / `_ls6.sh` /
+  `_horizon.sh`, or any `HPCS_BUNDLE_FLEET` / `scripts/fleet/*.force`) runs
+  `scripts/site_conf.sh fleet-guard` before any build step and refuses when the effective
+  `server` is empty, `localhost` or loopback. `HPCS_ALLOW_DEFAULT_BROKER=1` downgrades that to a
+  warning for a deliberate local-broker build. Plain `prepare_rpmbuild_dirs.sh` dev builds need
+  no site file.
+- **Installed conf:** `/etc/hpcperfstats/hpcperfstats.conf` is `%config(noreplace)`, mode
+  `0600`. An upgrade keeps a conf edited on the node and writes the packaged one as
+  `hpcperfstats.conf.rpmnew`; an unedited conf is replaced by the packaged one.
+- **Release:** `Release: %{?hpc_release}%{!?hpc_release:1}%{?dist}`. The committed number is the
+  fleet release for every cluster; it changes only for a user-approved production release
+  (`cursor-rules/monitor-version-and-packaging.mdc`). For a one-off build (debug, canary, a node
+  that needs a higher release) set `HPCS_RELEASE=N` before the prepare script (the printed
+  `rpmbuild` lines gain `--define "hpc_release N"`) or before `RPM_BUILD=1
+  ./scripts/rpm_debug_shm_verify.sh`, or pass `--define "hpc_release N"` to `rpmbuild` yourself.
+
+**Migrating an existing node checkout** (local edits in the tracked conf / spec): copy the broker
+lines into the site file, add any other key you changed (see `git diff`), restore the tracked
+files, then pull and build:
+
+```bash
+cd HPCPerfStats/monitor
+git diff src/hpcperfstats.conf hpcperfstats.spec
+mkdir -p site
+grep -E '^(server|queue|port|user|password)[[:space:]:=]' \
+  src/hpcperfstats.conf > site/hpcperfstats.site.conf
+chmod 600 site/hpcperfstats.site.conf
+git checkout -- src/hpcperfstats.conf hpcperfstats.spec
+git pull
+./scripts/prepare_rpmbuild_stampede3.sh
+```
+
+Use the prepare wrapper for your cluster (`_ls6.sh`, `_horizon.sh`). If the guard refuses, the
+site file does not set a real `server`.
 
 ### Stampede3 one-build RPM
 
@@ -697,7 +751,8 @@ When RabbitMQ send fails, the daemon may spool samples under the configured
 **dumpfile** directory (default **`/var/lib/hpcperfstats/dump`**, mode `0700`
 via `ensure_private_dir` — not world-writable `/tmp`). Append creates use
 `O_NOFOLLOW` and mode `0600`. RPM install places **`hpcperfstats.conf`** mode
-**`0600`** (broker credentials).
+**`0600`** (broker credentials) as `%config(noreplace)`; site values come from
+`site/hpcperfstats.site.conf` (*Site conf (broker, credentials) and RPM Release*).
 
 ### Privilege model
 

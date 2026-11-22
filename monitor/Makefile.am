@@ -35,6 +35,11 @@ dist-hook:
 	  $(MKDIR_P) "$(distdir)/scripts/fleet"; \
 	  cp -p "$(srcdir)/scripts/fleet/horizon.force" "$(distdir)/scripts/fleet/horizon.force"; \
 	fi
+	@if test -f "$(srcdir)/site/hpcperfstats.site.conf"; then \
+	  $(MKDIR_P) "$(distdir)/site"; \
+	  cp -p "$(srcdir)/site/hpcperfstats.site.conf" "$(distdir)/site/hpcperfstats.site.conf"; \
+	  echo "dist-hook: embedded site/hpcperfstats.site.conf (site broker overrides)"; \
+	fi
 
 EXTRA_DIST = README README.md \
 	third_party/nvidia-dcgm/README \

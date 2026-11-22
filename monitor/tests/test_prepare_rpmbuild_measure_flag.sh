@@ -90,7 +90,7 @@ grep -q '^  echo "Build binary and source RPMs with:"$' "${PREP}" || fail "relea
 # shellcheck disable=SC2016  # literal $ text matched in script source
 grep -q '^  echo "  ${release_rpmbuild}"$' "${PREP}" || fail "release footer command changed"
 # shellcheck disable=SC2016  # literal $ text matched in script source
-grep -q '^release_rpmbuild="rpmbuild -ba --define \\"_topdir ${topdir}\\" \\"${specs_dir}/hpcperfstats.spec\\""$' "${PREP}" \
+grep -q '^release_rpmbuild="rpmbuild -ba --define \\"_topdir ${topdir}\\"${rpmbuild_release_define} \\"${specs_dir}/hpcperfstats.spec\\""$' "${PREP}" \
   || fail "release rpmbuild string changed"
 # shellcheck disable=SC2016  # literal $ text matched in script source
 grep -q 'eval "env ${measure_caller_env}${release_rpmbuild}"' "${PREP}" \

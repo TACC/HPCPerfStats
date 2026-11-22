@@ -1,0 +1,24 @@
+#
+# hpcperfstatsd site overrides (example; tracked)
+#
+# Copy to site/hpcperfstats.site.conf in this checkout (gitignored, never committed), set the
+# values for your site, and chmod 0600 it. The RPM build lays these keys over the repo default
+# src/hpcperfstats.conf: a key the default has gets its value replaced in place, any other key
+# is appended. Same syntax as hpcperfstats.conf (`key value`; ':' or '=' also separate).
+#
+# Fleet prepares (prepare_rpmbuild_stampede3.sh / _ls6.sh / _horizon.sh) refuse to build when
+# the effective `server` is empty or localhost (opt out: HPCS_ALLOW_DEFAULT_BROKER=1).
+#
+# Do not edit src/hpcperfstats.conf or hpcperfstats.spec on node checkouts; put site settings
+# here. The file is copied into the source tarball and SRPM under rpmbuild/, so keep that tree
+# private too.
+
+server   rabbitmq.example.org
+queue    CLUSTER_QUEUE
+port     5672
+user     MONITOR_USER
+password MONITOR_PASSWORD
+
+# Any other hpcperfstats.conf key may be overridden the same way, for example:
+# jobid_file /var/run/stats_jobid
+# buffer_hours 6

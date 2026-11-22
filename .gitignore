@@ -93,6 +93,9 @@ test_runs/*
 hpcperfstats/test_runs/
 monitor/test_runs/
 
+# Per-checkout monitor site overrides (broker host / credentials; the .example is tracked).
+monitor/site/hpcperfstats.site.conf
+
 # Frontend build output (Next.js export → copy-next-export.mjs → static/frontend).
 # Orval client under hpcperfstats/site/frontend/src/api/generated/ is gitignored
 # (run npm run generate:api before typecheck/test/build). Never commit static tree.

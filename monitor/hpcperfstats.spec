@@ -13,7 +13,10 @@
 Summary: Job-level Monitoring Client
 Name: hpcperfstatsd
 Version: 3.1
-Release: 1%{?dist}
+# Committed Release is the fleet release (agent-owned; bumped only for a user-approved
+# production release, with a %%changelog entry). One-off builds: --define "hpc_release N"
+# (prepare / rpm_debug_shm_verify.sh pass HPCS_RELEASE through); never edit this line on a node.
+Release: %{?hpc_release}%{!?hpc_release:1}%{?dist}
 License: GPL
 Vendor: Texas Advanced Computing Center
 Group: System Environment/Base
@@ -96,6 +99,9 @@ export HPC_BUNDLE_RELEASE_BUILD=1
 # Third-party .a archives come from the tarball; only hpcperfstatsd is compiled here.
 ./scripts/build_static_bundle.sh
 sed -i 's/CONFIGFILE/\%{_sysconfdir}\/hpcperfstats\/hpcperfstats.conf/' src/hpcperfstats.service
+# Site broker/credential overrides (untracked site/hpcperfstats.site.conf, embedded by dist-hook
+# when present) over the repo default; no site file leaves the default unchanged.
+./scripts/site_conf.sh overlay src/hpcperfstats.conf site/hpcperfstats.site.conf src/hpcperfstats.conf
 %if 0%{?hpc_debug_build}
 # Debug /dev/shm verify: fast tier every 30s, full tier every 60s (see rpm_debug_shm_verify.sh FULL).
 sed -i 's/^sample_freq .*/sample_freq 30/' src/hpcperfstats.conf
@@ -139,7 +145,7 @@ cp -f .build-static/monitor-build-capabilities.json \
 
 %files
 %{_sbindir}/hpcperfstatsd
-%{_sysconfdir}/hpcperfstats/hpcperfstats.conf
+%config(noreplace) %{_sysconfdir}/hpcperfstats/hpcperfstats.conf
 %config(noreplace) %{_sysconfdir}/sysconfig/hpcperfstatsd
 %{_unitdir}/hpcperfstats.service
 %dir %{_sysconfdir}/hpcperfstats
@@ -167,6 +173,15 @@ fi
 
 %changelog
 * Fri Nov 13 2026 sharrell@tacc.utexas.edu - 3.1-1
+- packaging (added 2026-11-22): broker server / queue / port / user / password come from the
+  untracked per-checkout site/hpcperfstats.site.conf, which dist-hook embeds and %%build lays
+  over src/hpcperfstats.conf (scripts/site_conf.sh); the tracked conf keeps the repo default.
+  /etc/hpcperfstats/hpcperfstats.conf is %%config(noreplace) (mode 0600), so an upgrade keeps a
+  node's conf and writes hpcperfstats.conf.rpmnew. Fleet prepares (stampede3, ls6, horizon)
+  refuse a conf whose broker server is empty or localhost unless HPCS_ALLOW_DEFAULT_BROKER=1.
+  Release is %%{?hpc_release}%%{!?hpc_release:1}: the committed value is the fleet release;
+  one-off builds pass --define "hpc_release N" (HPCS_RELEASE in prepare and
+  rpm_debug_shm_verify.sh).
 - x86 (Phases 2 and 3, added 2026-11-18): the PMU library is no longer built or linked on any
   arch. configure --with-cpu-counter-backend={auto|x86|arm} (x86 auto = x86); the
   --with-monitor-arch option is gone (the vendor is the runtime processor). host_cpu_hw reads

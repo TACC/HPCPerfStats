@@ -13,3 +13,8 @@ When multiple markers exist, explicit HPCS_BUNDLE_FLEET wins. Prepare wrappers c
 one marker at a time and export the matching fleet env.
 
 Default prepare_rpmbuild_dirs.sh must not require or ship any force file.
+
+Broker guard: a fleet prepare refuses (before any build step) when the RPM conf would publish to
+an empty or localhost broker server; set it in site/hpcperfstats.site.conf (untracked; see
+site/hpcperfstats.site.conf.example) or opt out with HPCS_ALLOW_DEFAULT_BROKER=1
+(scripts/site_conf.sh fleet-guard).

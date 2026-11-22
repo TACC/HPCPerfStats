@@ -100,7 +100,8 @@ verify_dist_tarball_build_scripts() {
 
   for script in \
     scripts/gpu_lspci_probe.sh \
-    scripts/gpu_lspci_detect.awk
+    scripts/gpu_lspci_detect.awk \
+    scripts/site_conf.sh
   do
     if ! tar tzf "${tarball}" "${tarbase}/${script}" >/dev/null 2>&1; then
       echo "Source tarball missing ${tarbase}/${script}" >&2

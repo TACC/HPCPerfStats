@@ -29,6 +29,14 @@
 #              embedded-static-prefix/ each run; leave unset for normal use.
 #   HPC_BUNDLE_RELEASE_BUILD  Defaults to 1 so dependency builds match release tuning;
 #              set to 0 to override.
+#   HPCS_RELEASE  One-off RPM Release (digits first, then [0-9A-Za-z._]): the printed rpmbuild
+#              lines add --define "hpc_release N". Unset: the committed spec Release.
+#   HPCS_ALLOW_DEFAULT_BROKER  1 lets a fleet prepare build a conf whose broker server is
+#              empty or localhost (scripts/site_conf.sh fleet-guard; refused by default).
+#
+# Site broker settings live in the untracked site/hpcperfstats.site.conf (copy
+# site/hpcperfstats.site.conf.example); dist-hook embeds it and the spec %build lays it over
+# src/hpcperfstats.conf. A fleet prepare checks the effective broker server before any build.
 #
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -99,6 +107,19 @@ if test "${#measure_args[@]}" -gt 0 && test "${measure_overhead}" != "1"; then
   echo "--measure-arg requires --measure-overhead" >&2
   exit 1
 fi
+# A fleet RPM must not ship the repo-default (localhost) broker; checked before any long step.
+"${SCRIPT_DIR}/site_conf.sh" fleet-guard "${MONITOR_DIR}"
+rpmbuild_release_define=""
+if test -n "${HPCS_RELEASE:-}"; then
+  case "${HPCS_RELEASE}" in
+    [0-9]*[!0-9A-Za-z._]* | [!0-9]*)
+      echo "HPCS_RELEASE must start with a digit and use only [0-9A-Za-z._]: ${HPCS_RELEASE}" >&2
+      exit 1
+      ;;
+  esac
+  rpmbuild_release_define=" --define \"hpc_release ${HPCS_RELEASE}\""
+fi
+
 if test "${measure_overhead}" = "1"; then
   measure_overhead_preflight "${MONITOR_DIR}" "${measure_args[@]}" || exit 1
   measure_caller_env="$(measure_overhead_caller_env)"
@@ -166,7 +187,9 @@ for distfile in \
   scripts/prepare_rpmbuild_horizon.sh \
   scripts/gpu_lspci_probe.sh \
   scripts/gpu_lspci_detect.awk \
-  scripts/fleet/README
+  scripts/fleet/README \
+  scripts/site_conf.sh \
+  site/hpcperfstats.site.conf.example
 do
   if test ! -f "${MONITOR_DIR}/${distfile}"; then
     echo "Missing file required for make dist: ${MONITOR_DIR}/${distfile}" >&2
@@ -272,8 +295,8 @@ monitor_tree_clean_post_dist "${MONITOR_DIR}" "${tb}"
 echo "Source tarball: ${sources_dir}/${tb}"
 echo "RPM tree ready under ${topdir}"
 echo ""
-release_rpmbuild="rpmbuild -ba --define \"_topdir ${topdir}\" \"${specs_dir}/hpcperfstats.spec\""
-debug_rpmbuild="rpmbuild -ba --define \"_topdir ${topdir}\" --define \"hpc_debug_build 1\" \"${specs_dir}/hpcperfstats.spec\""
+release_rpmbuild="rpmbuild -ba --define \"_topdir ${topdir}\"${rpmbuild_release_define} \"${specs_dir}/hpcperfstats.spec\""
+debug_rpmbuild="rpmbuild -ba --define \"_topdir ${topdir}\"${rpmbuild_release_define} --define \"hpc_debug_build 1\" \"${specs_dir}/hpcperfstats.spec\""
 if test "${debug_build}" = "1"; then
   echo "Build, install, and validate /dev/shm (from ${MONITOR_DIR}):"
   echo "  ${debug_rpmbuild} && ./scripts/rpm_debug_shm_verify.sh"

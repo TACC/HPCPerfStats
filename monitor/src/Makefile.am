@@ -432,4 +432,6 @@ EXTRA_DIST = hpcperfstats.conf hpcperfstats.service hpcperfstatsd.sysconfig \
 	$(top_srcdir)/scripts/gpu_lspci_probe.sh \
 	$(top_srcdir)/scripts/gpu_lspci_detect.awk \
 	$(top_srcdir)/scripts/fleet/README \
+	$(top_srcdir)/scripts/site_conf.sh \
+	$(top_srcdir)/site/hpcperfstats.site.conf.example \
 	$(top_srcdir)/scripts/lib/monitor_tree_clean.sh

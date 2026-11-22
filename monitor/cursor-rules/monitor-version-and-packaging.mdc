@@ -26,17 +26,20 @@ Commit the updated `configure`, `Makefile.in`, and related generated files if yo
 - **`HPCPerfStats/monitor/hpcperfstats.spec`**
   - **`Version:`** must equal the `AC_INIT` version (e.g. `3.0`).
   - **`Source:`** uses `hpcperfstats-%{version}.tar.gz`; `make dist` / `make distcheck` in `monitor/` produces a tarball whose basename matches that pattern.
-  - **`Release:`** is the **packaging** iteration (`1%{?dist}`, `2%{?dist}`, …). Increment **Release** for spec-only or rebuild changes **without** changing upstream `Version`. When **`Version`** changes, reset **`Release`** to **`1%{?dist}`** unless your distro policy says otherwise.
+  - **`Release:`** is the fleet release `%{?hpc_release}%{!?hpc_release:N}%{?dist}` (section below). When **`Version`** changes, reset the baseline `N` to **`1`**.
   - **`%changelog`**: add a top entry for every **Version** or meaningful packaging change (static build path, BuildRequires, install paths, etc.).
 
-## Release numbers are per cluster and not committed
+## Release numbers: the committed Release is the fleet release (agent-owned)
 
-The committed **`Release:`** in `hpcperfstats.spec` is a **baseline only**. The user bumps **Release locally on each cluster** when building test or deploy RPMs (many iterative builds per cluster, e.g. Vista reached `3.0-15.el9` while the repo spec says `Release: 9`), and those bumps are **not committed** (user, 2026-11-13).
+Policy reversed by the user on 2026-11-22 (previously: per-cluster local bumps, never committed). Three Stampede3 nodes stopped sending data for 3 days because node checkouts carried hand edits of the tracked spec and `src/hpcperfstats.conf`: every `git pull` conflicted, and checkouts without the local edit built RPMs whose conf said `server localhost`.
 
-- **Do not** treat a deployed release higher than the repo spec as drift, a missing commit, or a packaging bug, and do not "fix" it by committing a Release bump.
-- **Do not** bump `Release:` in the repo as part of a code change unless the user asks.
-- **Before an install** on a cluster, check `rpm -q hpcperfstatsd` on that cluster's target node and build with a local release **above** it. Otherwise `dnf` / `rpm -U` keeps the installed build. After the install, confirm with `rpm -q` again.
-- **To tell which code a deployed binary has,** use its **Build Date** (`rpm -qi`) or `strings` markers against `git log` dates, not the release number (release numbers are not comparable across clusters).
+- **`Release: %{?hpc_release}%{!?hpc_release:N}%{?dist}`** — `N` is the committed **fleet release**, one value for every cluster (no per-cluster numbering). The agent owns it.
+- **Bump `N` only when the user approves a production release** — one bump per fleet release, never per code change, each with a `%changelog` entry for that release. Until then keep the committed baseline (currently `1`) and describe packaging changes under the existing top `%changelog` header.
+- **One-off builds** (debug, canary, measurement, a node that needs a release above the cluster manager's) never edit the spec: `rpmbuild --define "hpc_release N"`, or `HPCS_RELEASE=N` with `prepare_rpmbuild_*.sh` (footer) / `RPM_BUILD=1 rpm_debug_shm_verify.sh`. Check `rpm -q hpcperfstatsd` on the target first and pick `N` above it; confirm with `rpm -q` after the install.
+- **Nobody edits the tracked `hpcperfstats.spec` or `src/hpcperfstats.conf` on node checkouts.** Site settings (broker `server` / `queue` / `port` / `user` / `password`, any other conf key) go in the untracked per-checkout **`site/hpcperfstats.site.conf`** (gitignored; template `site/hpcperfstats.site.conf.example`). `dist-hook` embeds it when present and `%build` lays it over `src/hpcperfstats.conf` with `scripts/site_conf.sh overlay` (replace a key the default has, append others, keep comments and order). `tests/test_site_conf.sh` locks the overlay.
+- **The installed conf is `%config(noreplace)`, mode `0600`** — an upgrade never overwrites a node's `/etc/hpcperfstats/hpcperfstats.conf` once it was edited (rpm writes `.rpmnew`). `tests/test_spec_site_conf_contract.sh` locks the `%files` line and the `Release` form.
+- **Fleet broker guard** — a fleet prepare (`HPCS_BUNDLE_FLEET` or `scripts/fleet/*.force`) runs `scripts/site_conf.sh fleet-guard` before any build step and refuses when the effective broker `server` is empty, `localhost` or loopback, unless `HPCS_ALLOW_DEFAULT_BROKER=1`. Non-fleet dev builds need no site file. Never print site-file values in scripts or logs (credentials).
+- **To tell which code a deployed binary has,** use its **Build Date** (`rpm -qi`) or `strings` markers against `git log` dates; a one-off `hpc_release` build can share a release number with another build.
 - **`Version:`** changes still follow `AC_INIT` and are committed (sections above).
 
 ## Docs that embed the RPM filename
@@ -46,11 +49,11 @@ If **`HPCPerfStats/README.md`** (or other docs) mention a concrete RPM like `hpc
 ## Agent checklist when bumping version
 
 1. Edit **`configure.ac`** `AC_INIT` version.
-2. Edit **`hpcperfstats.spec`** **`Version:`** to match; set **`Release:`** as appropriate (usually `1%{?dist}` on a new **Version**).
+2. Edit **`hpcperfstats.spec`** **`Version:`** to match; reset the **`Release:`** baseline to `%{?hpc_release}%{!?hpc_release:1}%{?dist}` on a new **Version**.
 3. Prepend **`%changelog`** entry (e.g. `3.0-1`).
 4. Run **`autoreconf -fi`** in **`monitor/`** and commit regenerated files if applicable.
 5. Grep for stale literals (`hpcperfstats-2.4`, old RPM examples) under **`HPCPerfStats/`** and fix.
-6. Run **`rpmspec -P hpcperfstats.spec`** (and optional **`rpmbuild -ba`**) per **monitor-static-build-verification**.
+6. Run **`rpmspec -P hpcperfstats.spec`** with and without **`--define 'hpc_release 7'`** (and optional **`rpmbuild -ba`**) per **monitor-static-build-verification**.
 
 ## Relation to other rules
 
