@@ -50,6 +50,20 @@ int path_collect_key_value_dir(const char *path, struct stats *stats)
   return 0;
 }
 
+void stats_set(struct stats *stats, const char *key, unsigned long long val)
+{
+  (void)stats;
+  (void)key;
+  (void)val;
+}
+
+int path_collect_single(const char *path, unsigned long long *dest)
+{
+  (void)path;
+  (void)dest;
+  return -1;
+}
+
 static void test_disable_all_clears_enabled(void)
 {
   memset(&g_host_ib, 0, sizeof(g_host_ib));

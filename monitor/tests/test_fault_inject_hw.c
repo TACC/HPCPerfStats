@@ -1,7 +1,8 @@
 /* Fault-injection matrix for the hardware fault points (built with -DDEBUG in every build):
  * perf_open (EBUSY PMU_BUSY, EACCES PERMISSION_DENIED), mad_query (BACKEND_ERROR, then BACKOFF
  * once the fail streak triggers), dcgm_fetch (BACKEND_ERROR on every GPU row) and hwmon_read
- * (READ_FAILED), plus a failed host_ib port walk (opendir errno code on every row), a DCGM
+ * (READ_FAILED), plus a failed host_ib port walk (opendir errno code on every row), a host_ib
+ * port whose extended packet keys sysfs serves (mad_query reaches only the switch query), a DCGM
  * fetch that fails from the first cycle (rows still appear) and nvml_fetch (BACKEND_ERROR for one
  * cycle, then the DCGM path serves the GPU). Each is forced through the debug_fault_inject table
  * over the existing fakes (fake perf, MAD, NVML and DCGM test hooks, a fake hwmon tree), lands on
@@ -52,12 +53,26 @@ static struct stats_type g_power;
 struct stats_type *const stats_type_table[] = {&g_ib, &g_power, &nvidia_gpu_stats_type};
 const size_t stats_type_nr = sizeof(stats_type_table) / sizeof(stats_type_table[0]);
 
-/* Link stubs: the host_ib sysfs side and the MAD lid read are outside this test. */
+/* Link stubs: the host_ib sysfs side and the MAD lid read are outside this test. With
+ * g_ib_sysfs_ext the port has the extended packet keys' counters/ files (one unreadable), so sysfs
+ * serves those keys and the MAD extended query is skipped; otherwise the files are absent. */
+static int g_ib_sysfs_ext;
+
 int path_collect_key_value_dir(const char *dir_path, struct stats *stats)
 {
   (void)dir_path;
   stats_set(stats, "port_rcv_errors", 3);
   return 0;
+}
+
+int path_collect_single(const char *path, unsigned long long *dest)
+{
+  if (!g_ib_sysfs_ext || strstr(path, "/unicast_rcv_packets") != NULL) {
+    errno = g_ib_sysfs_ext ? EIO : ENOENT;
+    return -1;
+  }
+  *dest = 5;
+  return 1;
 }
 
 static int g_ib_walk_errno; /* nonzero: /sys/class/infiniband fails to open with it */
@@ -232,6 +247,19 @@ static void test_mad_query(void)
   g_ib_walk_errno = 0;
   ib_tick();
   assert(state(s, "port_rcv_errors") == STATS_SENTINEL_OK);
+
+  /* sysfs serves the extended packet keys: a mad_query fault reaches only the switch query, the
+   * extended keys keep their sysfs reading (or that read's code) and port_select has no source. */
+  g_ib_sysfs_ext = 1;
+  assert(stats_fault_inject_set("mad_query:mlx5_0") == 1);
+  ib_tick();
+  assert(state(s, "port_xmit_pkts") == STATS_SENTINEL_OK);
+  assert(state(s, "port_unicast_rcv_pkts") == STATS_SENTINEL_READ_FAILED);
+  assert(state(s, "port_select") == STATS_SENTINEL_NOT_PRESENT);
+  assert(state(s, "sw_rx_bytes") == STATS_SENTINEL_BACKEND_ERROR);
+  assert(stats_fault_inject_set(NULL) == 0);
+  g_ib_sysfs_ext = 0;
+  ib_mad_test_reset_backoff();
   ib_mad_dyn_test_set_hooks(NULL);
 }
 

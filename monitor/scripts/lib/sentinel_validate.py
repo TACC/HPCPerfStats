@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from .host_live_probes import probe_power_socket_watts
+from .host_live_probes import IB_EXT_SYSFS_FILES, probe_power_socket_watts
 from .independent_read import opa_counter_files
 from .payload_parse import iter_metric_rows, row_key_names
 from .row_validate import token_sentinel_code
@@ -200,9 +200,12 @@ def _not_present_source_exists(
         port_dir = sys_root / "class" / "infiniband" / hca / "ports" / port
         if not sep or not port_dir.is_dir():
             return None
-        files = [port_dir / d / key for d in ("counters", "hw_counters")]
         if t == "host_opa":
             files = opa_counter_files(port_dir, key)
+        else:
+            files = [port_dir / d / key for d in ("counters", "hw_counters")]
+            if key in IB_EXT_SYSFS_FILES:
+                files.append(port_dir / "counters" / IB_EXT_SYSFS_FILES[key])
         return any(f.is_file() for f in files)
     if t == "host_power_socket":
         return (dev, key) in meters

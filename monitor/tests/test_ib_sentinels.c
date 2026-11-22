@@ -35,11 +35,13 @@ static char g_root[] = "/tmp/hps_ib_sentXXXXXX";
 
 #if defined(MONITOR_WITH_INFINIBAND)
 static enum stats_sentinel g_ext_code, g_sw_code;
+static int g_ext_calls;
 
 enum stats_sentinel ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
 {
   (void)hca;
   (void)port;
+  g_ext_calls++;
   if (g_ext_code == STATS_SENTINEL_OK)
     stats_set(stats, "port_select", 1ULL);
   return g_ext_code;
@@ -172,6 +174,93 @@ static void test_ib_mad_codes(void)
   assert(state_of(s, "port_rcv_data") == STATS_SENTINEL_OK);
 }
 
+static unsigned long long val_of(struct stats *s, const char *key)
+{
+  return s->s_val[schema_ref(&s->s_type->st_schema, key)];
+}
+
+static void put_ext_sources(const char *port_dir, const char *unicast_rcv)
+{
+  static const char *const files[][2] = {
+      {"port_xmit_packets", "741071167\n"},    {"port_rcv_packets", "800921948\n"},
+      {"unicast_xmit_packets", "741071167\n"}, {"multicast_xmit_packets", "0\n"},
+      {"multicast_rcv_packets", "66622348\n"},
+  };
+  char rel[256];
+
+  for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); i++) {
+    snprintf(rel, sizeof(rel), "%s/counters/%s", port_dir, files[i][0]);
+    put(rel, files[i][1]);
+  }
+  if (unicast_rcv != NULL) {
+    snprintf(rel, sizeof(rel), "%s/counters/unicast_rcv_packets", port_dir);
+    put(rel, unicast_rcv);
+  }
+}
+
+/* c122-018 (GB200): the MAD PortCountersExtended query to the port's own LID timed out and read
+ * ~4x low where it worked (PortCounters cleared by fabric management). A port with every
+ * counters/ packet file serves the extended packet keys from those reads (cumulative since boot)
+ * without a MAD query; port_select / counter_select have no source there (NOT_PRESENT); a source
+ * file that does not read gives READ_FAILED; a port missing any source file falls back to MAD. */
+static void test_ib_ext_keys_from_sysfs(void)
+{
+  struct stats *s;
+
+  mk("class/infiniband/mlx5_4");
+  mk("class/infiniband/mlx5_4/ports");
+  mk("class/infiniband/mlx5_4/ports/1");
+  mk("class/infiniband/mlx5_4/ports/1/counters");
+  put_ext_sources("class/infiniband/mlx5_4/ports/1", "734299600\n");
+#if defined(MONITOR_WITH_INFINIBAND)
+  g_ext_calls = 0;
+  g_ext_code = STATS_SENTINEL_BACKEND_ERROR;
+  g_sw_code = STATS_SENTINEL_OK;
+#endif
+
+  s = collect_ib("mlx5_4", 1);
+  assert(state_of(s, "port_xmit_pkts") == STATS_SENTINEL_OK);
+  assert(val_of(s, "port_xmit_pkts") == 741071167ULL);
+  assert(val_of(s, "port_rcv_pkts") == 800921948ULL);
+  assert(val_of(s, "port_unicast_xmit_pkts") == 741071167ULL);
+  assert(val_of(s, "port_unicast_rcv_pkts") == 734299600ULL);
+  assert(state_of(s, "port_multicast_xmit_pkts") == STATS_SENTINEL_OK);
+  assert(val_of(s, "port_multicast_xmit_pkts") == 0ULL);
+  assert(val_of(s, "port_multicast_rcv_pkts") == 66622348ULL);
+  assert(state_of(s, "port_select") == STATS_SENTINEL_NOT_PRESENT);
+  assert(state_of(s, "counter_select") == STATS_SENTINEL_NOT_PRESENT);
+#if defined(MONITOR_WITH_INFINIBAND)
+  assert(g_ext_calls == 0);                                /* no MAD extended query */
+  assert(state_of(s, "sw_rx_bytes") == STATS_SENTINEL_OK); /* switch keys stay on MAD */
+#else
+  assert(state_of(s, "sw_rx_bytes") == STATS_SENTINEL_NOT_BUILT);
+#endif
+
+  /* A source file that exists but does not read: its key READ_FAILED, still no MAD. */
+  put("class/infiniband/mlx5_4/ports/1/counters/unicast_rcv_packets", "junk\n");
+  s = collect_ib("mlx5_4", 1);
+  assert(state_of(s, "port_unicast_rcv_pkts") == STATS_SENTINEL_READ_FAILED);
+  assert(state_of(s, "port_xmit_pkts") == STATS_SENTINEL_OK);
+  assert(state_of(s, "port_select") == STATS_SENTINEL_NOT_PRESENT);
+
+  /* One source file missing: the MAD query serves the port's extended keys. */
+  mk("class/infiniband/mlx5_5");
+  mk("class/infiniband/mlx5_5/ports");
+  mk("class/infiniband/mlx5_5/ports/1");
+  mk("class/infiniband/mlx5_5/ports/1/counters");
+  put_ext_sources("class/infiniband/mlx5_5/ports/1", NULL);
+  s = collect_ib("mlx5_5", 1);
+#if defined(MONITOR_WITH_INFINIBAND)
+  assert(g_ext_calls == 1);
+  assert(state_of(s, "port_select") == STATS_SENTINEL_BACKEND_ERROR);
+  assert(state_of(s, "port_xmit_pkts") == STATS_SENTINEL_BACKEND_ERROR);
+#else
+  assert(state_of(s, "port_select") == STATS_SENTINEL_NOT_BUILT);
+  assert(state_of(s, "port_xmit_pkts") == STATS_SENTINEL_NOT_BUILT);
+#endif
+  assert(state_of(s, "port_xmit_packets") == STATS_SENTINEL_OK); /* sysfs key itself */
+}
+
 /* host_opa without STL MAD: sysfs keys read, absent files NOT_PRESENT, unparsable READ_FAILED,
  * and every STL-only key gets the MAD code. */
 static void test_opa_codes_without_mad(void)
@@ -225,6 +314,7 @@ int main(void)
 
   test_ib_sysfs_codes();
   test_ib_mad_codes();
+  test_ib_ext_keys_from_sysfs();
   test_opa_codes_without_mad();
 
   ib_family_test_set_sysfs_root(NULL);

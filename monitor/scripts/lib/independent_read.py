@@ -15,12 +15,15 @@ and the ACPI hwmon power meters (host_power_socket).
 
 A collector that silently stopped reading (flat, or stuck at 0) fails this even when idle.
 
-On a MAD build (capability slug token ``ib`` or ``ibdyn``) host_ib port_xmit_data / port_rcv_data
-come from the 64-bit PortCountersExtended, a separate counter that can sit a constant away from
-sysfs ``counters/*`` (a reset of one but not the other) while advancing at the same rate. One
-live read cannot bound an unknown offset, so those two keys are bracketed only on rows the MAD
-query did not fill in either capture (every MAD extended key a sentinel, so sysfs supplied them)
-and are otherwise reported as one NOTE. Every other host_ib key is sysfs on every build.
+host_ib ports with every ``counters/`` packet file (``IB_EXT_SYSFS_FILES``) serve the extended
+packet keys (``port_xmit_pkts`` ...) from those files and skip the MAD extended query. On a MAD
+build (capability slug token ``ib`` or ``ibdyn``) any other port gets port_xmit_data /
+port_rcv_data and the packet keys from the 64-bit PortCountersExtended, a separate counter that
+can sit a constant away from sysfs (a reset of one but not the other) while advancing at the
+same rate. One live read cannot bound an unknown offset, so those keys are bracketed only on rows
+the MAD query did not fill in either capture (port_select / counter_select, which only MAD sets,
+a sentinel) and are otherwise reported as one NOTE. Every other host_ib key is sysfs on every
+build.
 """
 from __future__ import annotations
 
@@ -28,7 +31,7 @@ import re
 import time
 from pathlib import Path
 
-from .host_live_probes import probe_power_socket_watts
+from .host_live_probes import IB_EXT_SYSFS_FILES, probe_power_socket_watts
 from .message_parse import schema_key_name, schema_token_is_event_counter
 from .payload_parse import metric_value_at_key, row_key_names, rows_by_type
 
@@ -43,13 +46,11 @@ _OPA_HW_COUNTERS = {
     "port_xmit_data": "TxWords", "port_rcv_data": "RxWords", "port_xmit_pkts": "TxPkt",
     "port_rcv_pkts": "RxPkt", "port_xmit_wait": "TxWait",
 }
-# host_ib keys the MAD extended query overwrites on top of sysfs (ib_mad.c IB_PC_EXT_F); the
-# rest of IB_PC_EXT_F has no sysfs file, so a value there proves MAD filled the row.
-_IB_MAD_SYSFS_KEYS = frozenset({"port_xmit_data", "port_rcv_data"})
-_IB_MAD_ONLY_KEYS = (
-    "port_select", "counter_select", "port_xmit_pkts", "port_rcv_pkts", "port_unicast_xmit_pkts",
-    "port_unicast_rcv_pkts", "port_multicast_xmit_pkts", "port_multicast_rcv_pkts",
-)
+# host_ib keys the MAD extended query fills on a port it serves (ib_mad.c IB_PC_EXT_F) that
+# sysfs fills elsewhere; port_select / counter_select only MAD sets, so a value there proves MAD
+# filled the row.
+_IB_MAD_SYSFS_KEYS = frozenset({"port_xmit_data", "port_rcv_data", *IB_EXT_SYSFS_FILES})
+_IB_MAD_ONLY_KEYS = ("port_select", "counter_select")
 _IB_MAD_SLUG_TOKENS = frozenset({"ib", "ibdyn"})
 _HOST_MEM_VOLATILE_GAUGE_MIN_KB = 64
 _HOST_MEM_VOLATILE_GAUGE_KEYS = frozenset({"dirty", "writeback"})
@@ -91,7 +92,7 @@ def _read_ib_counters(sys_root: Path, devs: list[str], keys: list[str]) -> dict[
         counters = sys_root / "class" / "infiniband" / hca / "ports" / port / "counters"
         for key in keys:
             try:
-                text = (counters / key).read_text(encoding="utf-8").strip()
+                text = (counters / IB_EXT_SYSFS_FILES.get(key, key)).read_text(encoding="utf-8").strip()
             except OSError:
                 continue
             if text.isdigit():
@@ -203,9 +204,10 @@ def _width(token: str) -> int:
 
 def _ib_mad_filled(values: dict[tuple[str, str, str], int], dev: str, evidence: list[str],
                    slug_mad: bool | None) -> bool:
-    """True when the MAD extended query, not sysfs, supplied port_*_data on host_ib ``dev`` in
-    this capture. ``slug_mad``: the slug has a MAD token (None: no slug). With extended-only keys
-    in the schema their values decide; without them only a MAD slug says MAD."""
+    """True when the MAD extended query, not sysfs, supplied the _IB_MAD_SYSFS_KEYS on host_ib
+    ``dev`` in this capture. ``slug_mad``: the slug has a MAD token (None: no slug). With
+    port_select / counter_select in the schema their values decide; without them only a MAD slug
+    says MAD."""
     if slug_mad is False:
         return False
     if evidence:
@@ -229,7 +231,7 @@ def check_independent_reads(
     in both captures while its source reads non-zero.
 
     ``capability_slug`` says whether host_ib may be MAD-sourced (tokens ``ib`` / ``ibdyn``);
-    without it the payload decides (a MAD extended-only key carrying a value)."""
+    without it the payload decides (port_select / counter_select carrying a value)."""
     notes: list[str] = []
     errors: list[str] = []
     slug_mad = None if capability_slug is None else bool(

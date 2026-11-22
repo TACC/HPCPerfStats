@@ -523,7 +523,8 @@ def main() -> int:
         "--spot-check-max-age",
         type=float,
         default=120.0,
-        help="Max sample age (sec) for monotonic counter spot checks",
+        help="Max sample age (sec) for monotonic counter spot checks; also the longest wait for a "
+        "fresh sample before the host_power_socket live read",
     )
     p.add_argument(
         "--wait-shm-seconds",
@@ -779,6 +780,8 @@ def main() -> int:
             full_body=full_body,
             max_age_sec=args.spot_check_max_age,
             strict=args.strict_live_spot_check,
+            shm_dir=shm_dir,
+            fresh_timeout_sec=args.spot_check_max_age,
         )
         notes.extend(ls_notes)
         warnings.extend(ls_warn)

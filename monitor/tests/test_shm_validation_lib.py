@@ -1280,7 +1280,7 @@ class Round2ShmChecksTests(unittest.TestCase):
             ("0", "sysio_power_w"): 6.0}
         body = body.replace("NOW", f"{_time.time():.1f}")
         with patch.object(lsc, "probe_power_socket_devices", return_value=list(sockets)), \
-                patch.object(lsc, "probe_power_socket_watts", return_value=watts), \
+                patch.object(lsc, "fresh_power_sample", return_value=(body, watts)), \
                 patch.object(lsc, "probe_nvidia_gpu_devices", return_value=list(gpus)), \
                 patch.object(lsc, "probe_nvidia_smi_mem_total_mib", return_value=smi or {}), \
                 patch.object(lsc, "probe_cpu_devices", return_value=[]), \
@@ -1288,7 +1288,7 @@ class Round2ShmChecksTests(unittest.TestCase):
                 patch.object(lsc, "probe_host_fqdn", return_value=""):
             _, warnings, _ = lsc.run_live_spot_checks(
                 _round2_manifest(schema, gpu_built=gpu_built), schema, full_body=body,
-                max_age_sec=300, strict=False)
+                max_age_sec=300, strict=False, shm_dir=Path("shm"))
         return warnings
 
     def test_live_power_socket_matches_hwmon(self) -> None:
@@ -1305,10 +1305,9 @@ class Round2ShmChecksTests(unittest.TestCase):
         self.assertTrue(any("host_power_socket missing from schema" in w for w in missing))
 
     def test_live_power_value_mismatch_is_warning_even_strict(self) -> None:
-        """c122-018 2026-11-14: a host_power_socket sample (up to sample_freq_slow old) vs
-        the live meter read while the validator itself runs (ondemand governor wakes the
-        socket: emitted 10 W, live 36 W) must not fail strict runs; structural problems
-        (a value with no live meter) still do."""
+        """c122-018 2026-11-14: a host_power_socket value vs the live meter read (meters average
+        over different windows, the ondemand governor wakes the socket: emitted 10 W, live 36 W)
+        must not fail strict runs; structural problems (a value with no live meter) still do."""
         import time as _time
 
         from lib import live_spot_check as lsc
@@ -1320,7 +1319,7 @@ class Round2ShmChecksTests(unittest.TestCase):
         def strict_run(body):
             body = body.replace("NOW", f"{_time.time():.1f}")
             with patch.object(lsc, "probe_power_socket_devices", return_value=["0"]), \
-                    patch.object(lsc, "probe_power_socket_watts", return_value=watts), \
+                    patch.object(lsc, "fresh_power_sample", return_value=(body, watts)), \
                     patch.object(lsc, "probe_nvidia_gpu_devices", return_value=[]), \
                     patch.object(lsc, "probe_nvidia_smi_mem_total_mib", return_value={}), \
                     patch.object(lsc, "probe_cpu_devices", return_value=[]), \
@@ -1328,7 +1327,7 @@ class Round2ShmChecksTests(unittest.TestCase):
                     patch.object(lsc, "probe_host_fqdn", return_value=""):
                 return lsc.run_live_spot_checks(
                     _round2_manifest(schema), schema, full_body=body, max_age_sec=300,
-                    strict=True)
+                    strict=True, shm_dir=Path("shm"))
 
         _, warnings, errors = strict_run("NOW - h\nhost_power_socket 0 @full 10 55 6 0\n")
         self.assertEqual(errors, [])
@@ -1337,6 +1336,56 @@ class Round2ShmChecksTests(unittest.TestCase):
         _, _, errors = strict_run("NOW - h\nhost_power_socket 0 @full 44 88 6 40\n")
         self.assertTrue(any("module_power_w=40 W but no live meter" in e for e in errors),
                         errors)
+
+    def _live_fresh(self, *, land: bool, timeout: float = 120.0):
+        """live_spot over a real shm dir: `full` holds an idle socket-1 sample (10 W); the meters
+        read 40.9 W until the next `fast` sample (10 W) lands, then 9.6 W (the validator's own
+        stimulus has worn off by the time that sample is collected)."""
+        from lib import live_spot_check as lsc
+
+        schema = {"host_power_socket": PSOCK_KEYS}
+        landed: list[bool] = []
+
+        def meters() -> dict:
+            watts = 9.6 if landed else 40.9
+            return {("1", "cpu_power_w"): watts}
+
+        with tempfile.TemporaryDirectory() as td:
+            shm = Path(td)
+            row = "host_power_socket 1 @{} 10 -2 -2 -2\n"
+            (shm / "full").write_text("1000.0 - h\n" + row.format("full"), encoding="utf-8")
+            (shm / "fast").write_text("1000.0 - h\n" + row.format("fast"), encoding="utf-8")
+
+            def land_next_sample(_sec: float = 0.0) -> None:
+                if land and not landed:
+                    (shm / "fast").write_text("1030.0 - h\n" + row.format("fast"), encoding="utf-8")
+                    landed.append(True)
+
+            with patch.object(lsc, "probe_power_socket_devices", return_value=["1"]), \
+                    patch.object(lsc, "probe_power_socket_watts", side_effect=meters), \
+                    patch.object(lsc, "probe_nvidia_gpu_devices", return_value=[]), \
+                    patch.object(lsc, "probe_cpu_devices", return_value=[]), \
+                    patch.object(lsc, "probe_loadavg_scaled", return_value={}), \
+                    patch.object(lsc, "probe_host_fqdn", return_value=""), \
+                    patch("lib.shm_snapshot.time.sleep", side_effect=land_next_sample):
+                return lsc.run_live_spot_checks(
+                    _round2_manifest(schema), schema,
+                    full_body=(shm / "full").read_text(encoding="utf-8"), max_age_sec=300,
+                    strict=True, shm_dir=shm, fresh_timeout_sec=timeout)
+
+    def test_live_power_reads_meters_right_after_a_fresh_fast_sample(self) -> None:
+        """c122-018 2026-11-22: socket 1 emitted 10 W (meter idle 9.6 W) against a live
+        power1_average of 40.9 W read right after the validator's CPU stimulus; the meters must
+        be read right after a fresh `fast` sample and compared with that sample's row."""
+        notes, warnings, errors = self._live_fresh(land=True)
+        self.assertEqual((warnings, errors), ([], []))
+        self.assertFalse(any("host_power_socket" in n for n in notes), notes)
+
+    def test_live_power_without_a_fresh_sample_is_skipped_not_warned(self) -> None:
+        notes, warnings, errors = self._live_fresh(land=False, timeout=0.0)
+        self.assertEqual((warnings, errors), ([], []))
+        self.assertIn("NOTE live_spot host_power_socket: no fresh fast sample within 0s; "
+                      "power comparison skipped", notes)
 
     def test_live_required_types_skip_per_job_full_payload(self) -> None:
         """Shared node with jobs: `full` holds a jid payload, node-wide rows live in `-`."""
@@ -1996,6 +2045,27 @@ class SentinelManifestLayerTests(unittest.TestCase):
         self.assertTrue(any("host_vm/- pgfault" in e for e in errors))
         self.assertTrue(any("host_ib/mlx5_0.1 port_rcv_data" in e for e in errors))
 
+    def test_not_present_probe_ib_packet_key_with_its_counters_file(self) -> None:
+        """host_ib serves port_xmit_pkts from counters/port_xmit_packets: NOT_PRESENT there while
+        that file exists is a collector bug; without the file (MAD port) it is not judged."""
+        from lib.sentinel_validate import check_not_present_probes
+
+        schema = {"host_ib": ["port_xmit_pkts,E", "port_select,c"]}
+        with tempfile.TemporaryDirectory() as td:
+            counters = Path(td) / "class" / "infiniband" / "mlx5_1" / "ports" / "1" / "counters"
+            counters.mkdir(parents=True)
+            (counters / "port_xmit_packets").write_text("741071167\n", encoding="utf-8")
+            body = self._body("host_ib mlx5_1.1 -2 -2")
+            notes, errors = check_not_present_probes({"full": (body, False, None)}, schema,
+                                                     proc_root=Path(td) / "proc", sys_root=Path(td))
+            self.assertEqual(errors, ["FAIL sentinel probe full host_ib/mlx5_1.1 port_xmit_pkts: "
+                                      "NOT_PRESENT but the source exists"])
+            (counters / "port_xmit_packets").unlink()
+            notes, errors = check_not_present_probes({"full": (body, False, None)}, schema,
+                                                     proc_root=Path(td) / "proc", sys_root=Path(td))
+        self.assertEqual(errors, [])
+        self.assertIn("PASS sentinel probe (2 NOT_PRESENT keys)", notes)
+
     @staticmethod
     def _power_meter(root: Path, idx: int, label: str, uw: int) -> None:
         d = root / "class" / "hwmon" / f"hwmon{idx}"
@@ -2340,6 +2410,41 @@ class IndependentReadIbMadTests(unittest.TestCase):
         _, errors = self._check(None, live_rcv=81_653_800_000 + self._OFFSET,
                                 mad_a=("-10", "-10"), mad_b=("-10", "-10"))
         self.assertTrue(any("port_rcv_data: live" in e for e in errors), errors)
+
+    def test_sysfs_served_row_brackets_data_and_packet_keys(self) -> None:
+        """c122-018: a port with every counters/ packet file gets port_xmit_pkts from
+        counters/port_xmit_packets and no MAD query (port_select NOT_PRESENT), so on a MAD build
+        port_rcv_data and port_xmit_pkts are both bracketed against sysfs."""
+        from lib.independent_read import check_independent_reads
+
+        def run(live_pkts: int):
+            live = {("host_ib", "mlx5_0.1", "port_rcv_data"): 81_653_800_000,
+                    ("host_ib", "mlx5_0.1", "symbol_error"): 5,
+                    ("host_ib", "mlx5_0.1", "port_xmit_pkts"): live_pkts}
+            return check_independent_reads(
+                self._SCHEMA, self._body(1000.0, 81_653_661_045, 4, ("-2", "900")),
+                self._body(1030.0, 81_653_967_045, 6, ("-2", "950")), 1030.0, 1010.0, live,
+                require_tier=False, allowed_tier=None, capability_slug=self._MAD_SLUG)
+
+        notes, errors = run(920)
+        self.assertEqual(errors, [])
+        self.assertIn("PASS independent_read (3 keys)", notes)
+        self.assertFalse(any("MAD PortCountersExtended" in n for n in notes), notes)
+        _, errors = run(1000)
+        self.assertEqual(errors, ["FAIL independent_read host_ib/mlx5_0.1 port_xmit_pkts: "
+                                  "live 1000 outside emitted [900, 950]"])
+
+    def test_packet_keys_read_from_their_counters_files(self) -> None:
+        from lib.independent_read import read_independent_sources
+
+        with tempfile.TemporaryDirectory() as td:
+            counters = Path(td) / "class" / "infiniband" / "mlx5_0" / "ports" / "1" / "counters"
+            counters.mkdir(parents=True)
+            (counters / "unicast_rcv_packets").write_text("734299600\n", encoding="utf-8")
+            _, live = read_independent_sources(
+                {"host_ib": ["port_unicast_rcv_pkts,E"]}, "1.0 j h\nhost_ib mlx5_0.1 1\n",
+                require_tier=False, allowed_tier=None, sys_root=Path(td))
+        self.assertEqual(live, {("host_ib", "mlx5_0.1", "port_unicast_rcv_pkts"): 734299600})
 
     def test_mad_slug_without_extended_keys_in_schema_is_not_bracketed(self) -> None:
         from lib.independent_read import check_independent_reads
@@ -2690,6 +2795,33 @@ class FaultInjectScheduleTests(unittest.TestCase):
             return fic.build_plan({"capability_slug": "x86_64-ver3.1-debug-hw-ib-x86perf"}, manifest,
                                   ticks=ticks, sys_root=Path(td))
 
+    def _mad_keys(self, files: tuple[str, ...]) -> list[str]:
+        import fault_inject_check as fic
+        from lib.host_live_probes import IB_EXT_SYSFS_FILES
+
+        manifest = {"types": {"host_ib": {"schema_keys": self.IB_SCHEMA}}}
+        with tempfile.TemporaryDirectory() as td:
+            port = Path(td) / "class" / "infiniband" / "mlx5_0" / "ports" / "1"
+            (port / "counters").mkdir(parents=True)
+            for name, text in (("state", "4: ACTIVE"), ("phys_state", "5: LinkUp"),
+                               ("link_layer", "InfiniBand")):
+                (port / name).write_text(text + "\n", encoding="utf-8")
+            for key in files:
+                (port / "counters" / IB_EXT_SYSFS_FILES[key]).write_text("1\n", encoding="utf-8")
+            plan = fic.build_plan({"capability_slug": "aarch64-ver3.1-debug-ibdyn-arm"}, manifest,
+                                  ticks=3, sys_root=Path(td))
+        return next(e["keys"] for e in plan if e["spec"].startswith("mad_query"))
+
+    def test_mad_query_plans_extended_keys_only_where_mad_serves_them(self) -> None:
+        # c122-018: sysfs counters/ serve the extended packet keys on every port, so the MAD
+        # extended query (and a mad_query fault) never touches them; only the switch keys.
+        from lib.host_live_probes import IB_EXT_SYSFS_FILES
+
+        sw = ["sw_rx_bytes", "sw_rx_packets", "sw_tx_bytes", "sw_tx_packets"]
+        self.assertEqual(self._mad_keys(tuple(IB_EXT_SYSFS_FILES)), sw)
+        partial = self._mad_keys(tuple(IB_EXT_SYSFS_FILES)[:-1])
+        self.assertEqual(partial, ["port_select", "counter_select", *IB_EXT_SYSFS_FILES, *sw])
+
     def test_collect_faults_arm_after_one_clean_cycle(self) -> None:
         # Regression: every fault was armed from daemon start, before any row existed, so
         # dcgm_fetch / opendir / mad_query marked empty tables.
@@ -2808,8 +2940,9 @@ class FaultInjectScheduleTests(unittest.TestCase):
         notes, errors = self._check(lambda i, p: "5 6", plan=[mad],
                                     fired=f"{mad['spec']} 0\nother@1 4\n")
         self.assertEqual(errors, [])
-        self.assertIn(f"NOTE fault_inject {mad['spec']}: fault point not reached on this node (0 fires)",
-                      notes)
+        self.assertIn(f"NOTE fault_inject {mad['spec']}: fault point not reached on this node (0 fires; "
+                      "e.g. sysfs counters/ serve every port's extended packet keys and the switch "
+                      "MAD port is absent)", notes)
 
     def test_fault_point_that_fired_without_its_code_fails(self) -> None:
         mad = self._ib_plan()[0]

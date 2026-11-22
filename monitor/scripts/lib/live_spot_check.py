@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from .host_live_probes import (
     probe_cpu_devices,
@@ -17,7 +18,25 @@ from .host_live_probes import (
 )
 from .message_parse import schema_key_name
 from .papi_shm_validate import check_x86_host_cpu_hw_key_sets
-from .payload_parse import metric_value_at_key, rows_by_type, sample_header_timestamp
+from .payload_parse import metric_value_at_key, row_key_names, rows_by_type, sample_header_timestamp
+from .shm_snapshot import read_shm_sample, wait_for_timestamp_advance
+
+
+def fresh_power_sample(shm_dir: Path, kind: str, timeout_sec: float) -> tuple[str, dict] | None:
+    """(body, live meter watts) for the next ``kind`` sample, with the meters read as soon as it
+    lands, so the emitted gauge and the live read average over nearly the same window (an older
+    sample against a read taken after the validator's own stimulus differs by tens of W). None
+    when the file has no sample or none lands within ``timeout_sec``."""
+    path = shm_dir / kind
+    try:
+        prev = read_shm_sample(path)[0]
+        if prev is None:
+            return None
+        _, body = wait_for_timestamp_advance(path, prev, timeout_sec=timeout_sec,
+                                             poll_interval_sec=0.1)
+    except (OSError, TimeoutError):
+        return None
+    return body, probe_power_socket_watts()
 
 
 def run_live_spot_checks(
@@ -27,7 +46,12 @@ def run_live_spot_checks(
     full_body: str,
     max_age_sec: float,
     strict: bool,
+    shm_dir: Path | None = None,
+    fresh_timeout_sec: float = 0.0,
 ) -> tuple[list[str], list[str], list[str]]:
+    """Notes, warnings and errors (strict). host_power_socket is compared on a fresh sample read
+    from ``shm_dir`` (``fast`` with the slow tier, else ``full``), waiting at most
+    ``fresh_timeout_sec`` for it."""
     notes: list[str] = []
     warnings: list[str] = []
     errors: list[str] = []
@@ -127,22 +151,34 @@ def run_live_spot_checks(
         ]
         return names, full_rows.get(type_name, [])
 
-    if "host_power_socket" in full_rows and sample_fresh:
-        live_w = probe_power_socket_watts()
-        names, rows = _rows_with_keys("host_power_socket")
-        for row in rows:
-            for key in names:
-                live = live_w.get((row.dev, key))
-                emitted = metric_value_at_key(row.values, names, key)
-                if live is None:
-                    if emitted:
-                        warn(f"host_power_socket/{row.dev} {key}={emitted} W but no live meter")
-                    continue
-                # Gauge vs a sample up to sample_freq_slow old: socket power moves within
-                # seconds (ondemand governor, the validator's own load), so never strict.
-                if emitted is not None and abs(emitted - live) > max(15.0, 0.25 * live):
-                    warnings.append(f"WARN live_spot host_power_socket/{row.dev} {key}: "
-                                    f"emitted={emitted} W live={live:.1f} W")
+    if "host_power_socket" in full_rows:
+        kind = "fast" if enable_slow else "full"
+        fresh = fresh_power_sample(shm_dir, kind, fresh_timeout_sec) if shm_dir is not None else None
+        if fresh is None:
+            notes.append(f"NOTE live_spot host_power_socket: no fresh {kind} sample within "
+                         f"{fresh_timeout_sec:.0f}s; power comparison skipped")
+        else:
+            body, live_w = fresh
+            tier = next((t for t in ("@fast", "@full") if f" {t}" in body), None)
+            rows = rows_by_type(body, schema_by_type, require_tier=tier is not None,
+                                allowed_tier=tier).get("host_power_socket", [])
+            if not rows:
+                notes.append(f"NOTE live_spot host_power_socket: fresh {kind} sample has no "
+                             "host_power_socket rows; power comparison skipped")
+            for row in rows:
+                names = row_key_names(row, schema_by_type)
+                for key in names:
+                    live = live_w.get((row.dev, key))
+                    emitted = metric_value_at_key(row.values, names, key)
+                    if live is None:
+                        if emitted:
+                            warn(f"host_power_socket/{row.dev} {key}={emitted} W but no live meter")
+                        continue
+                    # The meters average over different windows and socket power moves within
+                    # seconds (ondemand governor), so a value mismatch is never strict.
+                    if emitted is not None and abs(emitted - live) > max(15.0, 0.25 * live):
+                        warnings.append(f"WARN live_spot host_power_socket/{row.dev} {key}: "
+                                        f"emitted={emitted} W live={live:.1f} W")
 
     if "host_cpu_hw" in full_rows:
         vendor = probe_x86_cpu_vendor()
