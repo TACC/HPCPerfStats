@@ -1377,7 +1377,8 @@ def apply_counter_deltas_cols(
 ]:
   """Columnar port of ``_apply_counter_deltas``.
 
-  Groups by host/type/dev/event, sorts by (key, time), computes
+  Groups by host/type/dev/event, sorts by (key, time), drops a row equal
+  to its predecessor in key, time and value (a resent copy), computes
   ``value.diff()`` per group (first sample ``NaN`` unless ``carry_raw``
   has a hit), adds one modulus only when the previous sample sat in the
   top half of the counter and the drop is smaller than one modulus, otherwise
@@ -1433,9 +1434,17 @@ def apply_counter_deltas_cols(
   for i in range(n):
     combo.append((keys[i], times[i], i))
   combo.sort()
+  # A resent sample (listend archive redelivery) repeats identical rows; the
+  # collapse would sum the copies, so each reading counts once.
   order: list[int] = []
-  for c in combo:
-    order.append(c[2])
+  for j in range(n):
+    if j > 0:
+      a = combo[j - 1][2]
+      b = combo[j][2]
+      if keys[a] == keys[b] and times[a] == times[b] and values[a] == values[b]:
+        continue
+    order.append(combo[j][2])
+  n = len(order)
 
   for j in range(n):
     idx = order[j]

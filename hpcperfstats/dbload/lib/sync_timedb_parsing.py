@@ -3730,6 +3730,9 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
   """
   Apply counter diffs; optional cross-flush ``carry.raw`` continuity.
 
+  Rows identical to their predecessor in counter key, time and value (one
+  sample delivered twice) are dropped first, so collapse never sums them.
+
   Carry paths use group boundary masks after ``lexsort`` (not per-group
   ``head``/``tail`` groupby). String and object group keys become sorted
   category codes. Repeated values are coded by pointer identity, then
@@ -3812,8 +3815,18 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
       .ngroup()
       .to_numpy()
     )
-  n = len(gid)
+  # A resent sample (listend archive redelivery) repeats identical rows; the
+  # collapse would sum the copies, so each reading counts once.
   values = stats_df["value"].to_numpy(dtype=np.float64, copy=False)
+  t = stats_df["time"].to_numpy(dtype=np.float64, copy=False)
+  copy = np.zeros(len(gid), dtype=bool)
+  copy[1:] = (gid[1:] == gid[:-1]) & (t[1:] == t[:-1])
+  copy[1:] &= values[1:] == values[:-1]
+  if copy.any():
+    stats_df = stats_df.loc[~copy].reset_index(drop=True)
+    gid = gid[~copy]
+    values = values[~copy]
+  n = len(gid)
   is_first = np.ones(n, dtype=bool)
   is_first[1:] = gid[1:] != gid[:-1]
   is_last = np.ones(n, dtype=bool)

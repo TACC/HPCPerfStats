@@ -61,11 +61,14 @@ PARITY_FEATURES: tuple[ParityFeature, ...] = (
     ),
   ),
   ParityFeature(
-    "counter deltas (wrap, mult, carry)",
+    "counter deltas (wrap, mult, carry, resent copies)",
     f"{_P}:_apply_counter_deltas",
     ("apply_counter_deltas_cols",),
     (
       f"{_T}/test_codon_feed_delta_collapse_arc.py::test_apply_counter_deltas_cols_wrap_and_carry_continuity",
+      f"{_T}/test_duplicate_sample_collapse_parity.py::test_resent_sample_codon_matches_cpython",
+      f"{_T}/test_duplicate_sample_collapse_parity.py::test_distinct_readings_at_one_key_are_not_dropped",
+      f"{_T}/test_codon_canonical_parity.py::test_pyext_resent_sample_counts_once",
       f"{_T}/test_codon_feed_delta_collapse_arc.py::test_counter_drop_across_restart_breaks_chain_both_engines",
     ),
   ),

@@ -449,6 +449,37 @@ def test_pyext_overlapping_jid_gpu_payloads_keep_one_reading(
   )
 
 
+def test_pyext_resent_sample_counts_once(pyext: Any) -> None:
+  """The baked delta step drops a whole sample delivered twice in one batch
+  (hs04 2026-11-09: every value doubled, ``host_cpu`` 2 CPUs summed x2)."""
+  from hpcperfstats.tests.test_codon_feed_delta_collapse_arc import (
+    _assert_rows_match,
+  )
+  from hpcperfstats.tests.test_duplicate_sample_collapse_parity import (
+    resent_sample_lines,
+  )
+  from hpcperfstats.tests.test_keep_dev_type_set_parity import _cpython_rows
+
+  lines = resent_sample_lines()
+  got = _pyext_sentinel_rows(pyext, [lines])
+  cpu = {
+    k[4]: v[0] for k, v in got.items() if k[1:4] == ("host_cpu", "", "user")
+  }
+  assert cpu == {1000.0: 3000.0, 1010.0: 3300.0, 1020.0: 3600.0}
+  py = _cpython_rows(lines)
+  want = {
+    (r.host, r.type, r.dev, r.event, float(r.time)): (r.value, r.delta, r.arc)
+    for r in py.itertuples()
+  }
+  _assert_rows_match(
+    {
+      k: tuple(float("nan") if x is None else x for x in v)
+      for k, v in got.items()
+    },
+    want,
+  )
+
+
 def test_pyext_file_session_seeds_bridge_max(
   pyext: Any, tmp_path: Path
 ) -> None:
