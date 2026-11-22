@@ -711,6 +711,10 @@ a substitute for root):
 - `ProtectKernelTunables=true`, `ProtectControlGroups=true`, `NoNewPrivileges=true`
 - `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`
 - `ReadWritePaths=/var/lib/hpcperfstats /run` (dumpfiles + pid/runtime)
+- `BindPaths=-/tmp/xpum_p.sock -/tmp/xpum_up.sock`: the XPU Manager daemon's sockets in
+  the host `/tmp`, which `PrivateTmp` would otherwise hide from `xpumcli` (PVC
+  `intel_gpu` emitted no rows: `XPUM Service Status Error`). Bound when the monitor
+  starts, so restart the monitor after restarting `xpumd`.
 - **`PrivateDevices` is intentionally unset** so `/dev/infiniband`, GPU nodes, and
   perf remain available.
 

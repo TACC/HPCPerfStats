@@ -11,6 +11,10 @@ ProtectControlGroups=true
 NoNewPrivileges=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 ReadWritePaths=/var/lib/hpcperfstats /run
+# xpumcli (intel_gpu, PVC) talks to xpumd through these sockets in the host /tmp, which
+# PrivateTmp hides; "-" skips nodes without XPU Manager. Bound at start: a later xpumd
+# restart that recreates them needs a monitor restart too.
+BindPaths=-/tmp/xpum_p.sock -/tmp/xpum_up.sock
 # Default per-process soft FD limit is often 1024; collectors (one perf fd per event per CPU) + dumpfiles can exceed it (EMFILE).
 LimitNOFILE=1048576
 EnvironmentFile=-/etc/sysconfig/hpcperfstatsd

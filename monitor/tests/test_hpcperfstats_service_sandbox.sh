@@ -15,6 +15,9 @@ required=(
   '^NoNewPrivileges=true'
   '^RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK'
   '^ReadWritePaths=/var/lib/hpcperfstats /run'
+  # PrivateTmp hides xpumd's host /tmp sockets: xpumcli then prints "XPUM Service Status Error"
+  # and intel_gpu emits no rows (c551-004 PVC 2026-11-22).
+  '^BindPaths=-/tmp/xpum_p\.sock -/tmp/xpum_up\.sock$'
 )
 
 for pat in "${required[@]}"; do
