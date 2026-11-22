@@ -1534,6 +1534,38 @@ class JobTableHandoff:
       self._total_bytes -= self._bytes.pop(str(jid), 0)
       return self._tables.pop(str(jid), None)
 
+  def rows(self, jid: str) -> int:
+    """
+    Frame rows of the pending table for ``jid`` without taking it.
+
+    Args:
+      jid (str): Job id.
+
+    Returns:
+      int: Row count, or 0 when no table is pending (evicted or absent).
+
+    Examples:
+      >>> JobTableHandoff().rows("x")
+      0
+    """
+    with self._lock:
+      table = self._tables.get(str(jid))
+      return int(table.index.n_rows) if table is not None else 0
+
+  def total_bytes(self) -> int:
+    """
+    Summed array bytes of every pending table.
+
+    Returns:
+      int: Bytes counted against ``max_bytes``.
+
+    Examples:
+      >>> JobTableHandoff().total_bytes()
+      0
+    """
+    with self._lock:
+      return int(self._total_bytes)
+
   def discard(self, jid: str) -> None:
     """
     Drop a pending table (failed job).

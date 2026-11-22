@@ -85,16 +85,23 @@ flowchart TD
 ```
 
 **Admission (sliding session).** A job starts only while a pool thread is
-free **and** its estimated memory fits: `ref_memory_cost` =
-`estimated_sample_count` (`max(1, nhosts) x ceil(runtime / 60)`) x
-`METRICS_PEAK_BYTES_PER_HOST_MINUTE` (`lib/metrics_sliding_session.py`), summed
-over every job in flight (metrics or prewarm phase; artifact-only jobs count
-in full), must stay within `metrics_memory_budget_pct` of the memory base
+free **and** its estimated memory fits: `MemoryCostModel.cost` =
+`estimated_sample_count` (`max(1, nhosts) x ceil(runtime / 60)`) x rows per
+host-minute x `METRICS_PEAK_BYTES_PER_ROW` (`lib/metrics_sliding_session.py`).
+Rows per host-minute is the p90 of recent finished jobs, never below
+`METRICS_ROWS_PER_HOST_MINUTE`, and a job whose metrics finished is costed at
+its measured frame rows from then on. The summed cost of every job in
+flight (metrics or prewarm phase; artifact-only jobs count in full) must stay
+within `metrics_memory_budget_pct` of the memory base
 (cgroup `memory.max`, else host `MemTotal`), and memory headroom (cgroup
 `memory.max - (current - inactive_file)`, else host `MemAvailable`; read at
 most once a second) must be at least `metrics_admit_headroom_mib`. With
 nothing in flight one job always starts, so a job larger than the budget runs
-alone. The same check gates the primary fill and the continuous refill. A
+alone. The same check gates the primary fill and the continuous refill. Once a
+minute while work is in flight the session logs `metrics admission:
+inflight= est_gib= measured_gib= budget_gib= rows_per_host_min= handoff_gib=
+rss_gib=`; RSS well above the estimated plus measured cost points at memory no
+in-flight job accounts for. A
 ready-queue job the check refuses stays queued and smaller jobs behind it may
 start; once it has waited `metrics_memory_budget_head_wait_s`, jobs of its lane
 and lower-priority lanes stop starting ahead of it (an aged backfill job never

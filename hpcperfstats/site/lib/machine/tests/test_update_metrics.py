@@ -6701,6 +6701,54 @@ def test_sliding_session_gets_memory_admission(monkeypatch):
   assert seen["head_wait_s"] == 600.0
   assert isinstance(seen["admit_ok"], update_metrics._MemoryHeadroomGate)
   assert seen["admit_ok"].headroom_mib == 16384
+  # One model per process, so learned densities survive from pass to pass.
+  assert seen["cost_model"] is update_metrics._METRICS_COST_MODEL
+  assert seen["telemetry_fn"] is update_metrics._log_admission_telemetry
+  from hpcperfstats.analysis.metrics.lib.columnar.job_table import HANDOFF
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
+
+  HANDOFF.put(
+    table_from_records(
+      [(1_000_000, "h1", "host_cpu", "user", None, 1.0, 0.0, 0.0)],
+      jid="obs",
+    )
+  )
+  try:
+    assert seen["observe_rows"](SimpleNamespace(jid="obs")) == 1
+    assert seen["observe_rows"](SimpleNamespace(jid="none")) == 0
+  finally:
+    HANDOFF.discard("obs")
+
+
+@pytest.mark.machine_unit_mock
+def test_admission_telemetry_log_line(monkeypatch):
+  """The once-a-minute line puts admission's in-flight estimate beside the
+  HANDOFF size and process RSS, so RSS growth that no in-flight job
+  explains (allocator retention, a leak) is visible in production logs."""
+  lines = []
+  monkeypatch.setattr(
+    update_metrics, "log_print", lambda msg, **_k: lines.append(msg)
+  )
+  monkeypatch.setattr(
+    update_metrics.process_memory, "read_process_rss_bytes", lambda: 3 << 30
+  )
+  update_metrics._log_admission_telemetry(
+    {
+      "inflight": 4,
+      "estimated_bytes": 1 << 30,
+      "measured_bytes": 2 << 30,
+      "budget_bytes": 10 << 30,
+      "rows_per_host_minute": 312.0,
+    }
+  )
+  assert lines == [
+    "metrics admission: inflight=4 est_gib=1.0 measured_gib=2.0 "
+    "budget_gib=10.0 rows_per_host_min=312 "
+    f"handoff_gib={update_metrics.HANDOFF.total_bytes() / (1 << 30):.1f} "
+    "rss_gib=3.0"
+  ]
 
 
 @pytest.mark.machine_unit_mock

@@ -83,6 +83,9 @@ Attributes:
   _COVERAGE_MARGIN_WARN_CAP_SECONDS: Attribute.
   _COVERAGE_MARGIN_WARN_LOGGED: Attribute.
   _METRICS_PREWARM_RETRY_ATTEMPTS: Retries for sync detail/plot prewarm.
+  _METRICS_COST_MODEL: Memory admission cost model shared by every sliding
+    session of the process, so what it learned from finished jobs survives
+    from pass to pass.
   _WORKER_FAILURE_KINDS: Outcome kinds counted as worker failures.
   _PUBLIC_EF_STATUS: Background /pub/ EF refresher counters and last stats.
   _PUBLIC_EF_STATUS_LOCK: Guards ``_PUBLIC_EF_STATUS``.
@@ -135,6 +138,7 @@ from hpcperfstats.analysis.metrics.lib.metrics_idle_slot_supplement import (
   resolve_nhosts_for_ref,
 )
 from hpcperfstats.analysis.metrics.lib.metrics_sliding_session import (
+  MemoryCostModel,
   resolve_metrics_pool_max_inflight,
   run_metrics_sliding_session,
   should_use_metrics_sliding_session,
@@ -363,6 +367,7 @@ STALL_RECOVERY_PER_JID_TIMEOUT_SECONDS = 60.0
 STALL_RECOVERY_PER_JID_POLL_TIMEOUT_SECONDS = 2.0
 STALL_RECOVERY_MAX_WALL_SECONDS = 300.0
 _METRICS_PREWARM_RETRY_ATTEMPTS = 2
+_METRICS_COST_MODEL = MemoryCostModel()
 # Threads of the background /pub/ EF refresher pool (runs beside compute).
 PUBLIC_EF_POOL_THREADS = 4
 PUBLIC_EF_PHASE_POLL_TIMEOUT_SECONDS = float(
@@ -7655,6 +7660,47 @@ def _metrics_memory_budget_bytes() -> int:
   return budget
 
 
+def _log_admission_telemetry(stats: dict[str, Any]) -> None:
+  """
+  Log the sliding session's in-flight memory picture beside process RSS.
+
+  ``est`` is admission's estimate for jobs still in compute, ``measured`` the
+  frame-sized cost of jobs whose frame exists, ``handoff`` the frames parked
+  for prewarm; ``rss`` well above their sum means memory not attributed to
+  in-flight jobs (allocator retention or a leak).
+
+  Args:
+    stats (dict[str, Any]): ``telemetry_fn`` payload from
+      ``run_metrics_sliding_session``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _log_admission_telemetry(  # doctest: +SKIP
+    ...   {
+    ...     "inflight": 2,
+    ...     "estimated_bytes": 1,
+    ...     "measured_bytes": 1,
+    ...     "budget_bytes": 4,
+    ...     "rows_per_host_minute": 312.0,
+    ...   }
+    ... )
+  """
+  gib = float(1 << 30)
+  log_print(
+    "metrics admission: "
+    f"inflight={int(stats['inflight'])} "
+    f"est_gib={stats['estimated_bytes'] / gib:.1f} "
+    f"measured_gib={stats['measured_bytes'] / gib:.1f} "
+    f"budget_gib={stats['budget_bytes'] / gib:.1f} "
+    f"rows_per_host_min={float(stats['rows_per_host_minute']):.0f} "
+    f"handoff_gib={HANDOFF.total_bytes() / gib:.1f} "
+    f"rss_gib={process_memory.read_process_rss_bytes() / gib:.1f}",
+    flush=True,
+  )
+
+
 def _compute_jid_outcomes_sliding(
   *,
   job_refs: Any,
@@ -7860,6 +7906,9 @@ def _compute_jid_outcomes_sliding(
     memory_budget_bytes=_metrics_memory_budget_bytes(),
     head_wait_s=float(cfg.get_metrics_memory_budget_head_wait_s()),
     admit_ok=_MemoryHeadroomGate(cfg.get_metrics_admit_headroom_mib()),
+    cost_model=_METRICS_COST_MODEL,
+    observe_rows=lambda ref: HANDOFF.rows(ref.jid),
+    telemetry_fn=_log_admission_telemetry,
   )
   timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
   # Sliding interleaves metrics+prewarm; report full session as batch wall and

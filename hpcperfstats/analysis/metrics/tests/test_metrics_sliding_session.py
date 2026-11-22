@@ -475,7 +475,7 @@ def test_continuous_session_stop_leaves_queued_work_for_later():
 # only, so a burst of large backfill jobs (each holding several copies of
 # its frame) took up to 188 GB RSS and the process was OOM-killed.
 
-_C = mss.METRICS_PEAK_BYTES_PER_HOST_MINUTE
+_C = mss.METRICS_ROWS_PER_HOST_MINUTE * mss.METRICS_PEAK_BYTES_PER_ROW
 
 
 class _CountdownAsync:
@@ -592,7 +592,8 @@ def test_budget_zero_disables():
 def test_artifact_only_counts_full_cost():
   compute = _ref("c", 10)
   artifact = _ref("a", 10, artifact_only=True)
-  assert mss.ref_memory_cost(artifact) == mss.ref_memory_cost(compute)
+  model = mss.MemoryCostModel()
+  assert model.cost(artifact) == model.cost(compute)
 
   class _SlowPrewarmPool(_TrackPool):
     def apply_async(self, fn, args):
@@ -686,5 +687,101 @@ def test_peak_bytes_cover_float64_value_columns():
   from hpcperfstats.analysis.metrics.lib.columnar.jobframe import VALUE_DTYPE
 
   assert np.dtype(VALUE_DTYPE) == np.float64
-  per_row = mss.METRICS_PEAK_BYTES_PER_HOST_MINUTE // 201
-  assert per_row >= 65 + 56
+  assert mss.METRICS_PEAK_BYTES_PER_ROW >= 65 + 56
+
+
+def test_cost_model_learns_denser_jobs_but_never_drops_below_floor():
+  """Regression (hs04 OOM, 2026-11-21): a fixed 201 rows per host-minute
+  (single-host golden corpus) under-costed production jobs measured at
+  238-335 rows per host-minute, so admission let in about twice the
+  budget. The model floors at the production p90 and learns upward."""
+  model = mss.MemoryCostModel(rows_floor=300, bytes_per_row=100)
+  timed = {"runtime_s": 600.0}
+  assert model.rows_per_host_minute() == 300
+  for _ in range(20):
+    model.observe(_ref("sparse", 100, **timed), 100 * 50)
+  assert model.rows_per_host_minute() == 300
+  for _ in range(200):
+    model.observe(_ref("dense", 100, **timed), 100 * 900)
+  assert model.rows_per_host_minute() == 900
+  assert model.cost(_ref("x", 10)) == 10 * 900 * 100
+  untimed = mss.MemoryCostModel(rows_floor=300)
+  untimed.observe(_ref("guess", 2880), 2880 * 5000)
+  assert untimed.rows_per_host_minute() == 300
+
+
+def _slow_prewarm_pool():
+  class _Pool(_TrackPool):
+    def apply_async(self, fn, args):
+      if args and not isinstance(args[0], tuple):
+        jid = args[0]
+        self.submits.append((f"pw:{jid}", frozenset(self.inflight)))
+        self.inflight.add(f"pw:{jid}")
+        return _CountdownAsync(self, f"pw:{jid}", self.polls * 4)
+      return super().apply_async(fn, args)
+
+  return _Pool()
+
+
+@pytest.mark.machine_unit_mock
+def test_measured_frame_size_replaces_the_estimate():
+  """Once a job's metrics finished, its in-flight cost is its frame rows x
+  peak bytes per row, not the host-minute estimate."""
+  model = mss.MemoryCostModel(rows_floor=10, bytes_per_row=10)
+  refs = [_ref("a", 10, runtime_s=600.0), _ref("b", 10, runtime_s=600.0)]
+  budget = 1500  # one estimate (10 x 10 x 10) fits, two do not
+
+  def _run(observe):
+    pool = _slow_prewarm_pool()
+    _session(
+      pool,
+      primary=refs,
+      memory_budget_bytes=budget,
+      cost_model=model,
+      observe_rows=observe,
+    )
+    return next(before for jid, before in pool.submits if jid == "b")
+
+  # Estimate only: b waits for a's prewarm to finish as well.
+  assert _run(None) == frozenset()
+  # a's frame turned out to be 5 rows (50 bytes): b starts during its prewarm.
+  assert "pw:a" in _run(lambda ref: 5 if ref.jid == "a" else 0)
+
+
+@pytest.mark.machine_unit_mock
+def test_measured_rows_teach_the_session_model():
+  model = mss.MemoryCostModel(rows_floor=1, bytes_per_row=1)
+  _session(
+    _TrackPool(),
+    primary=[_ref("a", 4, runtime_s=240.0)],
+    cost_model=model,
+    observe_rows=lambda ref: 400,
+  )
+  assert model.rows_per_host_minute() == 100
+
+
+@pytest.mark.machine_unit_mock
+def test_admission_telemetry_reports_estimated_and_measured(monkeypatch):
+  monkeypatch.setattr(mss, "ADMISSION_TELEMETRY_INTERVAL_S", 0.0)
+  seen = []
+  model = mss.MemoryCostModel(rows_floor=100, bytes_per_row=10)
+  pool = _slow_prewarm_pool()
+  pool.polls = 40  # metrics outlives several loop turns
+  _session(
+    pool,
+    primary=[_ref("a", 10, runtime_s=600.0)],
+    memory_budget_bytes=123,
+    cost_model=model,
+    observe_rows=lambda ref: 7,
+    telemetry_fn=seen.append,
+  )
+  assert seen
+  assert set(seen[0]) == {
+    "inflight",
+    "estimated_bytes",
+    "measured_bytes",
+    "budget_bytes",
+    "rows_per_host_minute",
+  }
+  assert seen[0]["estimated_bytes"] == 10 * 100 * 10
+  assert seen[-1]["measured_bytes"] == 70 and seen[-1]["budget_bytes"] == 123

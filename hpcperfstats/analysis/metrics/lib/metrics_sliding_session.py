@@ -2,14 +2,19 @@
 Metrics-local sliding-window feeder with sample-count idle-slot fill.
 
 Attributes:
-  METRICS_PEAK_BYTES_PER_HOST_MINUTE: Peak process bytes one host-minute
-    of a job costs while it is in flight: golden-corpus p90 frame rows per
-    host-minute times a per-row allowance that covers the consuming
-    fetch/build peak (about 65 B/row measured with float64 value columns)
-    and a float64 frame plus its ``FrameIndex`` (about 56 B/row) held by
-    either the metrics thread or the prewarm child. Memory admission
-    multiplies a ref's
-    ``estimated_sample_count`` by it.
+  METRICS_ROWS_PER_HOST_MINUTE: Floor for the frame rows one host-minute
+    of a job holds: the p90 measured on the largest recent production jobs
+    (hpcperfstats04; the single-host golden corpus runs lower).
+    ``MemoryCostModel`` learns a higher value from finished jobs, never a
+    lower one.
+  METRICS_PEAK_BYTES_PER_ROW: Peak process bytes per frame row while a job
+    is in flight: the consuming fetch/build plus metrics compute peak
+    measured on the golden jobs with float64 value columns (frames above a
+    few thousand rows; tiny jobs are dominated by fixed overhead).
+  ADMISSION_TELEMETRY_INTERVAL_S: Seconds between ``telemetry_fn`` calls.
+  LEARN_WINDOW: Finished jobs whose rows per host-minute the cost model
+    keeps.
+  LEARN_QUANTILE: Quantile of that window the cost model costs refs at.
 """
 
 from __future__ import annotations
@@ -24,7 +29,11 @@ from hpcperfstats.analysis.metrics.lib.metrics_idle_slot_supplement import (
   pop_supplement_refs_from_ready_queue,
 )
 
-METRICS_PEAK_BYTES_PER_HOST_MINUTE = 201 * 125
+METRICS_ROWS_PER_HOST_MINUTE = 312
+METRICS_PEAK_BYTES_PER_ROW = 140
+ADMISSION_TELEMETRY_INTERVAL_S = 60.0
+LEARN_WINDOW = 200
+LEARN_QUANTILE = 0.9
 
 
 def resolve_metrics_pool_max_inflight(pool: Any, fallback: int = 1) -> int:
@@ -79,33 +88,154 @@ def is_backfill_ref(ref: Any) -> bool:
   return getattr(ref, "lane", None) == "backfill"
 
 
-def ref_memory_cost(ref: Any) -> int:
+def _estimated_samples(ref: Any) -> int:
   """
-  Estimated peak bytes a ref holds while in flight.
-
-  ``artifact_only`` refs cost the same as a compute: the prewarm child
-  re-reads the whole frame inside the same memory cgroup.
+  A ref's ``estimated_sample_count`` (host-minutes), at least 1.
 
   Args:
-    ref (Any): Candidate ref (``estimated_sample_count`` optional, >= 1).
+    ref (Any): Candidate ref (``estimated_sample_count`` optional).
 
   Returns:
-    int: ``estimated_sample_count x METRICS_PEAK_BYTES_PER_HOST_MINUTE``.
+    int: Host-minutes the scheduler estimated for the job.
 
   Examples:
     >>> from types import SimpleNamespace
-    >>> ref_memory_cost(SimpleNamespace(estimated_sample_count=2)) == (
-    ...   2 * METRICS_PEAK_BYTES_PER_HOST_MINUTE
-    ... )
-    True
-    >>> ref_memory_cost(SimpleNamespace()) == METRICS_PEAK_BYTES_PER_HOST_MINUTE
-    True
+    >>> _estimated_samples(SimpleNamespace(estimated_sample_count=0))
+    1
   """
   try:
-    samples = max(1, int(getattr(ref, "estimated_sample_count", 1) or 1))
+    return max(1, int(getattr(ref, "estimated_sample_count", 1) or 1))
   except TypeError, ValueError:
-    samples = 1
-  return samples * METRICS_PEAK_BYTES_PER_HOST_MINUTE
+    return 1
+
+
+class MemoryCostModel:
+  """
+  Peak-memory cost of a metrics job, learned from the jobs that finished.
+
+  A ref is costed at ``estimated_sample_count x rows per host-minute x
+  METRICS_PEAK_BYTES_PER_ROW``. Rows per host-minute is the
+  ``LEARN_QUANTILE`` of the last ``LEARN_WINDOW`` finished jobs with a known
+  runtime (their frame rows over their estimated host-minutes), never below
+  ``METRICS_ROWS_PER_HOST_MINUTE``, so a denser job mix raises the cost and
+  a sparse one cannot lower it under the production floor. Once a job's
+  frame exists its cost is its measured rows x ``METRICS_PEAK_BYTES_PER_ROW``.
+  ``artifact_only`` refs are costed like a compute: the prewarm child
+  re-reads the whole frame inside the same memory cgroup.
+
+  Attributes:
+    rows_floor: Lowest rows per host-minute used.
+    bytes_per_row: Peak bytes per frame row.
+    _ratios: Rows per host-minute of recent finished jobs.
+  """
+
+  def __init__(
+    self,
+    rows_floor: float = METRICS_ROWS_PER_HOST_MINUTE,
+    bytes_per_row: float = METRICS_PEAK_BYTES_PER_ROW,
+  ) -> None:
+    """
+    Create a model with no observations yet.
+
+    Args:
+      rows_floor (float): Lowest rows per host-minute used.
+      bytes_per_row (float): Peak bytes per frame row.
+
+    Returns:
+      None
+
+    Examples:
+      >>> MemoryCostModel().rows_per_host_minute() == (
+      ...   METRICS_ROWS_PER_HOST_MINUTE
+      ... )
+      True
+    """
+    self.rows_floor = float(rows_floor)
+    self.bytes_per_row = float(bytes_per_row)
+    self._ratios: deque[float] = deque(maxlen=LEARN_WINDOW)
+
+  def rows_per_host_minute(self) -> float:
+    """
+    Rows per host-minute refs are costed at.
+
+    Returns:
+      float: ``LEARN_QUANTILE`` of the observed ratios, at least the floor.
+
+    Examples:
+      >>> m = MemoryCostModel(rows_floor=10)
+      >>> m.observe(
+      ...   type("R", (), {"runtime_s": 60.0, "estimated_sample_count": 1})(),
+      ...   50,
+      ... )
+      >>> m.rows_per_host_minute()
+      50.0
+    """
+    if not self._ratios:
+      return self.rows_floor
+    ordered = sorted(self._ratios)
+    learned = ordered[min(len(ordered) - 1, int(LEARN_QUANTILE * len(ordered)))]
+    return max(self.rows_floor, learned)
+
+  def cost(self, ref: Any) -> int:
+    """
+    Estimated peak bytes of ``ref`` before its frame exists.
+
+    Args:
+      ref (Any): Candidate ref (``estimated_sample_count`` optional).
+
+    Returns:
+      int: Host-minutes x rows per host-minute x bytes per row.
+
+    Examples:
+      >>> from types import SimpleNamespace
+      >>> MemoryCostModel(rows_floor=2, bytes_per_row=10).cost(
+      ...   SimpleNamespace(estimated_sample_count=3)
+      ... )
+      60
+    """
+    return int(
+      _estimated_samples(ref) * self.rows_per_host_minute() * self.bytes_per_row
+    )
+
+  def measured_cost(self, rows: int) -> int:
+    """
+    Peak bytes of a job whose frame has ``rows`` rows.
+
+    Args:
+      rows (int): Frame rows.
+
+    Returns:
+      int: ``rows x bytes_per_row``.
+
+    Examples:
+      >>> MemoryCostModel(bytes_per_row=10).measured_cost(5)
+      50
+    """
+    return int(rows * self.bytes_per_row)
+
+  def observe(self, ref: Any, rows: int) -> None:
+    """
+    Learn from a finished job's frame size.
+
+    Refs without a known runtime carry a guessed window, so their ratio says
+    nothing about the jobs' density and is not learned.
+
+    Args:
+      ref (Any): The finished job's ref.
+      rows (int): Rows of its frame.
+
+    Returns:
+      None
+
+    Examples:
+      >>> from types import SimpleNamespace
+      >>> m = MemoryCostModel(rows_floor=1)
+      >>> m.observe(SimpleNamespace(estimated_sample_count=4), 400)
+      >>> m.rows_per_host_minute()
+      1.0
+    """
+    if rows > 0 and getattr(ref, "runtime_s", None) is not None:
+      self._ratios.append(rows / _estimated_samples(ref))
 
 
 def pop_fresh_first(
@@ -331,6 +461,9 @@ def run_metrics_sliding_session(
   memory_budget_bytes: int = 0,
   head_wait_s: float = float("inf"),
   admit_ok: Callable[[], bool] | None = None,
+  cost_model: MemoryCostModel | None = None,
+  observe_rows: Callable[[Any], int] | None = None,
+  telemetry_fn: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
   """
   Pool-sized sliding metrics+prewarm session with sample-count idle-slot fill.
@@ -343,7 +476,7 @@ def run_metrics_sliding_session(
   ``ready_queue`` until ``should_stop()`` (no end-of-batch drain).
 
   Both the primary fill and the continuous refill admit a ref only while
-  its memory cost (``ref_memory_cost``) fits in ``memory_budget_bytes``
+  its memory cost (``MemoryCostModel.cost``) fits in ``memory_budget_bytes``
   next to the cost of everything in flight and ``admit_ok()`` reports
   memory headroom; with nothing in flight one ref is always admitted, so a
   job larger than the whole budget still runs (alone). The count cap
@@ -385,13 +518,23 @@ def run_metrics_sliding_session(
     on_refs_taken (Any | None): Optional ``(refs: list) -> None`` called with
         the refs popped from ``ready_queue`` (lane accounting; fresh-lane
         refs are popped before backfill-lane refs).
-    memory_budget_bytes (int): Summed ``ref_memory_cost`` allowed in
+    memory_budget_bytes (int): Summed in-flight cost allowed in
         flight; 0 disables the budget.
     head_wait_s (float): Seconds a ready-queue ref refused by admission may
         be passed over before refs behind it stop being admitted ahead of it
         (``pop_fresh_first``).
     admit_ok (Callable[[], bool] | None): Memory headroom check; False
         pauses admission while work is in flight. None always admits.
+    cost_model (MemoryCostModel | None): Costs refs and learns from
+        finished jobs; None uses a fresh model for this session.
+    observe_rows (Callable[[Any], int] | None): ``ref -> frame rows`` once
+        its metrics persisted (0 when unknown). A known size replaces the
+        job's estimated cost and teaches ``cost_model``.
+    telemetry_fn (Callable[[dict[str, Any]], None] | None): Called at most
+        every ``ADMISSION_TELEMETRY_INTERVAL_S`` while work is in flight
+        with ``inflight``, ``estimated_bytes`` (refs costed by estimate),
+        ``measured_bytes`` (refs costed by their frame), ``budget_bytes``
+        and ``rows_per_host_minute``.
 
   Returns:
     list[dict[str, Any]]: Per-ref results with keys ``ref``, ``ok``,
@@ -442,7 +585,37 @@ def run_metrics_sliding_session(
   completed_total = 0
   session_total = len(primary_refs)
   budget = max(0, int(memory_budget_bytes))
+  model = cost_model if cost_model is not None else MemoryCostModel()
   skipped_since: dict[Any, float] = {}
+  telemetry_at = [time.monotonic()]
+
+  def _telemetry() -> None:
+    """
+    Report the in-flight memory picture to ``telemetry_fn`` (throttled).
+
+    Returns:
+      None
+
+    Examples:
+      >>> _telemetry()  # doctest: +SKIP
+    """
+    now = time.monotonic()
+    if not callable(telemetry_fn) or not pending:
+      return
+    if now - telemetry_at[0] < ADMISSION_TELEMETRY_INTERVAL_S:
+      return
+    telemetry_at[0] = now
+    measured = sum(i["cost"] for i in pending if i.get("measured"))
+    with contextlib.suppress(Exception):
+      telemetry_fn(
+        {
+          "inflight": len(pending),
+          "estimated_bytes": sum(i["cost"] for i in pending) - measured,
+          "measured_bytes": measured,
+          "budget_bytes": budget,
+          "rows_per_host_minute": model.rows_per_host_minute(),
+        }
+      )
 
   def _admit(ref: Any, extra_cost: int = 0) -> bool:
     """
@@ -464,7 +637,7 @@ def run_metrics_sliding_session(
     if not pending and not extra_cost:
       return True
     if budget and (
-      sum(item["cost"] for item in pending) + extra_cost + ref_memory_cost(ref)
+      sum(item["cost"] for item in pending) + extra_cost + model.cost(ref)
       > budget
     ):
       return False
@@ -529,7 +702,7 @@ def run_metrics_sliding_session(
     """
     item = {
       "ref": ref,
-      "cost": ref_memory_cost(ref),
+      "cost": model.cost(ref),
       "phase": "metrics",
       "is_original": bool(is_original),
       "t0": time.monotonic(),
@@ -658,7 +831,7 @@ def run_metrics_sliding_session(
       """
       if not _admit(ref, taken_cost[0]):
         return False
-      taken_cost[0] += ref_memory_cost(ref)
+      taken_cost[0] += model.cost(ref)
       return True
 
     with lock:
@@ -671,6 +844,7 @@ def run_metrics_sliding_session(
       )
 
   while (primary or pending or continuous) and not _shutting_down():
+    _telemetry()
     stop = continuous and callable(should_stop) and bool(should_stop())
     was_idle = not pending
     filled = False
@@ -824,6 +998,14 @@ def run_metrics_sliding_session(
       last_progress_at = time.monotonic()
       ready_item["base_outcome"] = base_outcome
       ready_item["metrics_s"] = metrics_s
+      rows = 0
+      if base_outcome.get("ok") and callable(observe_rows):
+        with contextlib.suppress(Exception):
+          rows = int(observe_rows(ref) or 0)
+      if rows > 0:
+        model.observe(ref, rows)
+        ready_item["cost"] = model.measured_cost(rows)
+        ready_item["measured"] = True
       if base_outcome.get("ok"):
         _emit("prewarm")
         _submit_prewarm(ready_item)
