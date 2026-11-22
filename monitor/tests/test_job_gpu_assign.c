@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "job_gpu_assign.h"
@@ -192,6 +193,70 @@ static void test_grant_rejects_oversized_token(void)
   unlink(gres);
 }
 
+/* Horizon has ConstrainDevices=no (2026-11-23): nvidia-smi in job A opened job B's GPU, so the
+ * old grant-UNION-open-fds set put B's GPU rows in A's payload and took them off '-'. The grant
+ * decides; open fds count only for a job without one. */
+static void test_job_set_grant_first(void)
+{
+  char gres[256];
+  char root[256];
+  char path[600];
+  const char *tmpdir = getenv("TMPDIR");
+  const int pids[] = {4242};
+  struct job_gpu_set a;
+  struct job_gpu_set b;
+  struct job_gpu_set u;
+  struct job_gpu_set avail;
+  struct job_gpu_set rem;
+
+  /* Arrange: AutoDetect=nvml grants; pid 4242 holds /dev/nvidia3 (collector dev "1") open. */
+  snprintf(gres, sizeof(gres), "%s/gres_XXXXXX", tmpdir && tmpdir[0] ? tmpdir : "/tmp");
+  {
+    int fd = mkstemp(gres);
+
+    assert(fd >= 0);
+    close(fd);
+  }
+  write_gres(gres, "AutoDetect=nvml\n");
+  job_gpu_assign_set_gres_conf_path(gres);
+  job_gpu_assign_reset_autodetect_cache();
+  job_gpu_assign_set_nvml_hooks(mock_nvml_index, mock_minor);
+  snprintf(root, sizeof(root), "%s/proc_XXXXXX", tmpdir && tmpdir[0] ? tmpdir : "/tmp");
+  assert(mkdtemp(root) != NULL);
+  snprintf(path, sizeof(path), "%s/4242", root);
+  assert(mkdir(path, 0700) == 0);
+  snprintf(path, sizeof(path), "%s/4242/fd", root);
+  assert(mkdir(path, 0700) == 0);
+  snprintf(path, sizeof(path), "%s/4242/fd/3", root);
+  assert(symlink("/dev/nvidia3", path) == 0);
+  setenv("HPCPERFSTATS_PROC_ROOT", root, 1);
+
+  /* Act + Assert: grant {0} plus an open fd on GPU 1 stays {0}. */
+  assert(job_gpu_assign_job_set("0", pids, 1, &a) == 0);
+  assert(a.n == 1 && strcmp(a.devs[0], "0") == 0);
+  /* No grant: the open fd is the only signal, {1}. */
+  assert(job_gpu_assign_job_set(NULL, pids, 1, &b) == 0);
+  assert(b.n == 1 && strcmp(b.devs[0], "1") == 0);
+  /* Job B granted {1}: the two sets are disjoint and '-' keeps the unscheduled {2,3}. */
+  assert(job_gpu_assign_job_set("1", NULL, 0, &b) == 0);
+  job_gpu_set_union(&a, &b, &u);
+  assert(u.n == 2);
+  assert(job_gpu_assign_map_grant("0,1,2,3", &avail) == 0);
+  job_gpu_set_diff(&avail, &u, &rem);
+  assert(rem.n == 2 && strcmp(rem.devs[0], "2") == 0 && strcmp(rem.devs[1], "3") == 0);
+  assert(job_gpu_assign_job_set("0", pids, 1, NULL) == -1);
+
+  unlink(path);
+  snprintf(path, sizeof(path), "%s/4242/fd", root);
+  rmdir(path);
+  snprintf(path, sizeof(path), "%s/4242", root);
+  rmdir(path);
+  rmdir(root);
+  unsetenv("HPCPERFSTATS_PROC_ROOT");
+  job_gpu_assign_set_gres_conf_path(NULL);
+  unlink(gres);
+}
+
 int main(void)
 {
   test_nvml_grant_and_off();
@@ -199,6 +264,7 @@ int main(void)
   test_wire_and_equal();
   test_gres_conf_from_slurm_conf_dir();
   test_grant_rejects_oversized_token();
+  test_job_set_grant_first();
   printf("test_job_gpu_assign: ok\n");
   return 0;
 }

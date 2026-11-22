@@ -265,8 +265,6 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
 
     memset(&claimed, 0, sizeof(claimed));
     for (i = 0; i < disc.n; i++) {
-      struct job_gpu_set granted;
-      struct job_gpu_set in_use;
       struct job_gpu_set g_union;
       enum job_cpu_coverage cov = JOB_CPU_UNKNOWN;
 
@@ -274,9 +272,8 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
       /* Title-named jobs claim no CPUs/GPUs: those stay on the node-wide '-' payload. */
       if (!job_emit_entry_emits_affinity(&disc.entries[i]))
         continue;
-      job_gpu_assign_map_grant(disc.entries[i].job_gpus, &granted);
-      job_gpu_assign_scan_fds(disc.entries[i].pids, disc.entries[i].npids, &in_use);
-      job_gpu_set_union(&granted, &in_use, &g_union);
+      job_gpu_assign_job_set(disc.entries[i].job_gpus, disc.entries[i].pids, disc.entries[i].npids,
+                             &g_union);
       job_gpu_set_union(&claimed, &g_union, &tmp);
       claimed = tmp;
       (void)job_emit_entry_cpulist(&disc.entries[i], affinity_pid_sample_limit, cpu_lists[i],
@@ -289,8 +286,6 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
     (void)job_sched_affinity_remainder_cpulist(cpu_ptrs, n_cpu_lists, rem_cpus, sizeof(rem_cpus));
 
     for (i = 0; i < disc.n; i++) {
-      struct job_gpu_set granted;
-      struct job_gpu_set in_use;
       struct job_gpu_set g_union;
       char jobs_mark[256];
       char gpus_wire[256];
@@ -300,11 +295,9 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
       struct job_emit_filter_ctx ctx;
 
       memset(&g_union, 0, sizeof(g_union));
-      if (job_emit_entry_emits_affinity(&disc.entries[i])) {
-        job_gpu_assign_map_grant(disc.entries[i].job_gpus, &granted);
-        job_gpu_assign_scan_fds(disc.entries[i].pids, disc.entries[i].npids, &in_use);
-        job_gpu_set_union(&granted, &in_use, &g_union);
-      }
+      if (job_emit_entry_emits_affinity(&disc.entries[i]))
+        job_gpu_assign_job_set(disc.entries[i].job_gpus, disc.entries[i].pids,
+                               disc.entries[i].npids, &g_union);
       job_emit_multi_ctx(&disc.entries[i], &g_union, cpu_lists[i], &ctx);
       snprintf(jobs_mark, sizeof(jobs_mark), "jobs jids=%s", jobs_csv);
       job_gpu_set_format_wire(&g_union, gpus_wire, sizeof(gpus_wire));

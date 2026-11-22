@@ -141,4 +141,15 @@ awk '/^done:/ { d = 1 } d && /stats_sentinel_debug_write_shm\(\);/ { ok = 1 }
     exit 1
   }
 
+# G(jid) comes from job_gpu_assign_job_set (grant first, open fds only without a grant). The
+# old grant-UNION-fds put another job's opened GPU in two payloads (Horizon, unfenced devices).
+grep -q 'job_gpu_assign_scan_fds' "${SRC}" && {
+  echo "job_shared_emit must build G(jid) via job_gpu_assign_job_set, not scan fds itself" >&2
+  exit 1
+}
+test "$(grep -c 'job_gpu_assign_job_set(' "${SRC}")" -eq 2 || {
+  echo "both job_shared_emit G(jid) sites must use job_gpu_assign_job_set" >&2
+  exit 1
+}
+
 echo "test_job_shared_emit_debug_shm_mirror passed"

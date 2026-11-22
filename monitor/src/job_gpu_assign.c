@@ -351,6 +351,14 @@ int job_gpu_assign_scan_fds(const int *pids, size_t npids, struct job_gpu_set *i
   return 0;
 }
 
+int job_gpu_assign_job_set(const char *slurm_job_gpus, const int *pids, size_t npids,
+                           struct job_gpu_set *out)
+{
+  if (job_gpu_assign_map_grant(slurm_job_gpus, out) != 0)
+    return -1;
+  return out->n > 0 ? 0 : job_gpu_assign_scan_fds(pids, npids, out);
+}
+
 void job_gpu_set_union(const struct job_gpu_set *a, const struct job_gpu_set *b,
                        struct job_gpu_set *out)
 {

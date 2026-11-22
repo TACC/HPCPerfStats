@@ -56,6 +56,7 @@ host_mem_job j:<jid> [@fast|@full] <mem_used> <mem_peak> <anon_pages> <file_page
 - DEBUG shm: `fast`/`full` keep last jid only; `fast.burst`/`full.burst` hold the full tick.
 - GPU `dev` = collector index; unknown inventory never takes the no-mark fast path.
 - Marked-tick GPU filter: each jid keeps `G(jid)`; `-` keeps **unscheduled** `G_available − ∪G(jid)` (omit GPU rows on `-` when inventory unknown).
+- `G(jid)` = the `SLURM_JOB_GPUS` grant; the `/dev/nvidiaN` fds the job's pids hold open count **only when the grant is empty** (`job_gpu_assign_job_set`, both `job_shared_emit.c` sites). Never grant ∪ fds: Horizon runs `ConstrainDevices=no`, so `nvidia-smi` in job A opened job B's GPU and put its rows in both payloads and off `-` (2026-11-23). Tests: `test_job_gpu_assign.c` `test_job_set_grant_first`, `test_job_shared_emit_debug_shm_mirror.sh`.
 - Marked-tick CPU filter: each jid keeps `host_cpu` / `host_cpu_hw` devices in its affinity cpulist; `-` keeps the online remainder (same split shape as GPU).
 
 ## `host_mem_job` (job cgroup memory)
