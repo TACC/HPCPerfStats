@@ -124,4 +124,21 @@ grep -q 'job_emit_remainder_ctx' "${SRC}" \
     exit 1
   }
 
+# Every sample path refreshes the DEBUG sentinels / sentinel_sites / fault_fired files. The
+# shared-node burst once skipped it (c122-018 2026-11-21): fault_fired stayed at its startup
+# snapshot, so fault_inject saw 0 fires for every ticked point and 456 false FAILs.
+for f in "${SRC}" "${ROOT}/src/monitor_daemon.c"; do
+  grep -q 'stats_sentinel_debug_write_shm();' "${f}" \
+    || {
+      echo "sample path in ${f} must call stats_sentinel_debug_write_shm" >&2
+      exit 1
+    }
+done
+awk '/^done:/ { d = 1 } d && /stats_sentinel_debug_write_shm\(\);/ { ok = 1 }
+  END { exit !ok }' "${SRC}" \
+  || {
+    echo "job_shared_emit burst must write the DEBUG sentinel files after done:" >&2
+    exit 1
+  }
+
 echo "test_job_shared_emit_debug_shm_mirror passed"

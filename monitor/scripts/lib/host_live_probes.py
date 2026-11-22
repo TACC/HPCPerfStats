@@ -64,32 +64,13 @@ def probe_net_devices() -> list[str]:
     return devs
 
 
-# host_ib extended packet keys and the counters/ file each one is read from (ib_family.c
-# ib_ext_sysfs_src). A port with every file serves them from sysfs; any other port gets them
-# from the MAD PortCountersExtended query.
-IB_EXT_SYSFS_FILES = {
-    "port_xmit_pkts": "port_xmit_packets",
-    "port_rcv_pkts": "port_rcv_packets",
-    "port_unicast_xmit_pkts": "unicast_xmit_packets",
-    "port_unicast_rcv_pkts": "unicast_rcv_packets",
-    "port_multicast_xmit_pkts": "multicast_xmit_packets",
-    "port_multicast_rcv_pkts": "multicast_rcv_packets",
-}
-
-
-def ib_port_ext_from_sysfs(port_dir: Path) -> bool:
-    """Whether host_ib serves the extended packet keys of ``port_dir`` from sysfs (every
-    IB_EXT_SYSFS_FILES source under counters/), so the MAD extended query never runs there."""
-    return all((port_dir / "counters" / name).is_file() for name in IB_EXT_SYSFS_FILES.values())
-
-
-def probe_ib_devices(ib_dir: str = "/sys/class/infiniband") -> list[str]:
+def probe_ib_devices() -> list[str]:
     """host_ib devices: collectible non-OPA HCAs (hfi1_* is host_opa).
 
     Mirrors ib_foreach_hca_port + ib_port_collectible (ACTIVE/LinkUp and
     link_layer InfiniBand when the sysfs file is present).
     """
-    ib_base = Path(ib_dir)
+    ib_base = Path("/sys/class/infiniband")
     if not ib_base.is_dir():
         return []
     devs: list[str] = []

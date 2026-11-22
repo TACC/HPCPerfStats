@@ -1,5 +1,5 @@
-/* MAD backoff and switch-port absence are tracked per HCA port. pscanf is stubbed to fail, so
- * every extended-counter attempt fails at the lid read without any MAD I/O. */
+/* Switch-port MAD backoff and absence are tracked per HCA port. The backoff cases run through
+ * the dlopen test hooks: the open succeeds and the switch PortInfo query fails, without MAD I/O. */
 #include <assert.h>
 #include <stdio.h>
 
@@ -12,43 +12,11 @@
 static char g_stats_buf[sizeof(struct stats) + 16];
 static struct stats *g_s = (struct stats *)g_stats_buf;
 
-static void fail_ext(const char *hca, int port, int n)
-{
-  for (int i = 0; i < n; i++)
-    assert(ib_mad_ext_collect_port(g_s, hca, port) == STATS_SENTINEL_BACKEND_ERROR);
-}
-
 static void test_null_args(void)
 {
   ib_mad_test_reset_backoff();
-  assert(ib_mad_ext_collect_port(NULL, "mlx5_0", 1) == STATS_SENTINEL_BACKEND_ERROR);
-  assert(ib_mad_ext_collect_port(g_s, NULL, 1) == STATS_SENTINEL_BACKEND_ERROR);
   assert(ib_mad_sw_collect_port(NULL, "mlx5_0", 1) == STATS_SENTINEL_BACKEND_ERROR);
   assert(ib_mad_sw_collect_port(g_s, NULL, 1) == STATS_SENTINEL_BACKEND_ERROR);
-}
-
-/* A persistently failing mlx5_4.1 backs off alone; other HCAs and ports keep collecting. */
-static void test_ext_backoff_is_per_port(void)
-{
-  ib_mad_test_reset_backoff();
-  fail_ext("mlx5_4", 1, 7);
-  fail_ext("mlx5_0", 1, 1);
-  fail_ext("mlx5_4", 1, 1);
-  assert(ib_mad_ext_collect_port(g_s, "mlx5_4", 1) == STATS_SENTINEL_BACKOFF);
-  fail_ext("mlx5_0", 1, 1);
-  fail_ext("mlx5_4", 2, 1);
-  assert(ib_mad_ext_collect_port(g_s, "mlx5_4", 1) == STATS_SENTINEL_BACKOFF);
-}
-
-/* After the cooldown one probe runs; when it fails the port backs off again at once. */
-static void test_ext_backoff_probes_once_after_cooldown(void)
-{
-  ib_mad_test_reset_backoff();
-  fail_ext("mlx5_4", 1, 8);
-  assert(ib_mad_ext_collect_port(g_s, "mlx5_4", 1) == STATS_SENTINEL_BACKOFF);
-  ib_mad_test_expire_backoff();
-  fail_ext("mlx5_4", 1, 1);
-  assert(ib_mad_ext_collect_port(g_s, "mlx5_4", 1) == STATS_SENTINEL_BACKOFF);
 }
 
 #if defined(MONITOR_IB_MAD_DLOPEN)
@@ -81,6 +49,50 @@ static uint8_t *fake_smp(void *buf, ib_portid_t *id, unsigned attr, unsigned mod
   (void)timeout;
   (void)src;
   return NULL;
+}
+
+static void use_failing_switch_query(void)
+{
+  struct ib_mad_dyn_test_hooks hooks = {0};
+
+  hooks.mad_rpc_open_port = fake_open;
+  hooks.mad_rpc_close_port = fake_close;
+  hooks.smp_query_via = fake_smp;
+  ib_mad_dyn_test_set_hooks(&hooks);
+  ib_mad_test_reset_backoff();
+  g_open_result = (struct ibmad_port *)&g_port_token;
+}
+
+static void fail_sw(const char *hca, int port, int n)
+{
+  for (int i = 0; i < n; i++)
+    assert(ib_mad_sw_collect_port(g_s, hca, port) == STATS_SENTINEL_BACKEND_ERROR);
+}
+
+/* A persistently failing mlx5_4.1 backs off alone; other HCAs and ports keep collecting. */
+static void test_sw_backoff_is_per_port(void)
+{
+  use_failing_switch_query();
+  fail_sw("mlx5_4", 1, 7);
+  fail_sw("mlx5_0", 1, 1);
+  fail_sw("mlx5_4", 1, 1);
+  assert(ib_mad_sw_collect_port(g_s, "mlx5_4", 1) == STATS_SENTINEL_BACKOFF);
+  fail_sw("mlx5_0", 1, 1);
+  fail_sw("mlx5_4", 2, 1);
+  assert(ib_mad_sw_collect_port(g_s, "mlx5_4", 1) == STATS_SENTINEL_BACKOFF);
+  ib_mad_dyn_test_set_hooks(NULL);
+}
+
+/* After the cooldown one probe runs; when it fails the port backs off again at once. */
+static void test_sw_backoff_probes_once_after_cooldown(void)
+{
+  use_failing_switch_query();
+  fail_sw("mlx5_4", 1, 8);
+  assert(ib_mad_sw_collect_port(g_s, "mlx5_4", 1) == STATS_SENTINEL_BACKOFF);
+  ib_mad_test_expire_backoff();
+  fail_sw("mlx5_4", 1, 1);
+  assert(ib_mad_sw_collect_port(g_s, "mlx5_4", 1) == STATS_SENTINEL_BACKOFF);
+  ib_mad_dyn_test_set_hooks(NULL);
 }
 
 /* A refused switch MAD open is probed once and stays NOT_PRESENT for that port only; a failed
@@ -118,9 +130,9 @@ static void test_sw_open_refused_is_permanent_per_port(void)
 int main(void)
 {
   test_null_args();
-  test_ext_backoff_is_per_port();
-  test_ext_backoff_probes_once_after_cooldown();
 #if defined(MONITOR_IB_MAD_DLOPEN)
+  test_sw_backoff_is_per_port();
+  test_sw_backoff_probes_once_after_cooldown();
   test_sw_open_refused_is_permanent_per_port();
 #endif
   printf("test_ib_mad_backoff passed\n");

@@ -831,6 +831,33 @@ class CrossSampleTests(unittest.TestCase):
         _, _, errors = self._run_strict_full(manifest, schema, pair)
         self.assertTrue(any("cpu_clock_est_cycles: decreased" in e for e in errors), errors)
 
+    def test_fast_row_values_map_to_fast_tier_keys(self) -> None:
+        """c317-016 2026-11-21: a beegfs_client @fast row carries only its non-slow keys; read
+        against the full key list, fs_bytes_free landed on vfs_write_ops / vfs_read_bytes and
+        the strict cross-sample check failed on a fake decrease."""
+        from lib.cross_sample_validate import _build_event_map
+
+        keys = ["vfs_read_ops,E,R=S", "vfs_read_bytes,E,U=B,R=S", "fs_files_used,E"]
+        manifest = {"types": {"beegfs_client": {"schema_keys": keys}}}
+        schema = {"beegfs_client": keys}
+        fast = _build_event_map(
+            "1000.0 job h\nbeegfs_client /scratch @fast 7\n",
+            manifest,
+            schema,
+            require_tier=True,
+            allowed_tier="@fast",
+        )
+        self.assertEqual(fast, {("beegfs_client", "/scratch", "fs_files_used"): 7})
+        full = _build_event_map(
+            "1060.0 job h\nbeegfs_client /scratch @full 5 1000 8\n",
+            manifest,
+            schema,
+            require_tier=True,
+            allowed_tier="@full",
+        )
+        self.assertEqual(full[("beegfs_client", "/scratch", "vfs_read_bytes")], 1000)
+        self.assertEqual(full[("beegfs_client", "/scratch", "fs_files_used")], 8)
+
     def test_flat_counters_are_a_note_not_a_warning(self) -> None:
         from lib.cross_sample_validate import run_cross_sample_checks
         from lib.daemon_conf import DaemonTiming
@@ -2045,12 +2072,13 @@ class SentinelManifestLayerTests(unittest.TestCase):
         self.assertTrue(any("host_vm/- pgfault" in e for e in errors))
         self.assertTrue(any("host_ib/mlx5_0.1 port_rcv_data" in e for e in errors))
 
-    def test_not_present_probe_ib_packet_key_with_its_counters_file(self) -> None:
-        """host_ib serves port_xmit_pkts from counters/port_xmit_packets: NOT_PRESENT there while
-        that file exists is a collector bug; without the file (MAD port) it is not judged."""
+    def test_not_present_probe_ib_packet_key_reads_its_own_file(self) -> None:
+        """port_xmit_packets NOT_PRESENT while counters/port_xmit_packets exists is a collector bug;
+        the retired port_xmit_pkts no longer maps onto that file, so an old schema with it is not
+        judged against it."""
         from lib.sentinel_validate import check_not_present_probes
 
-        schema = {"host_ib": ["port_xmit_pkts,E", "port_select,c"]}
+        schema = {"host_ib": ["port_xmit_packets,E,W=64", "port_xmit_pkts,E"]}
         with tempfile.TemporaryDirectory() as td:
             counters = Path(td) / "class" / "infiniband" / "mlx5_1" / "ports" / "1" / "counters"
             counters.mkdir(parents=True)
@@ -2058,13 +2086,8 @@ class SentinelManifestLayerTests(unittest.TestCase):
             body = self._body("host_ib mlx5_1.1 -2 -2")
             notes, errors = check_not_present_probes({"full": (body, False, None)}, schema,
                                                      proc_root=Path(td) / "proc", sys_root=Path(td))
-            self.assertEqual(errors, ["FAIL sentinel probe full host_ib/mlx5_1.1 port_xmit_pkts: "
-                                      "NOT_PRESENT but the source exists"])
-            (counters / "port_xmit_packets").unlink()
-            notes, errors = check_not_present_probes({"full": (body, False, None)}, schema,
-                                                     proc_root=Path(td) / "proc", sys_root=Path(td))
-        self.assertEqual(errors, [])
-        self.assertIn("PASS sentinel probe (2 NOT_PRESENT keys)", notes)
+        self.assertEqual(errors, ["FAIL sentinel probe full host_ib/mlx5_1.1 port_xmit_packets: "
+                                  "NOT_PRESENT but the source exists"])
 
     @staticmethod
     def _power_meter(root: Path, idx: int, label: str, uw: int) -> None:
@@ -2227,47 +2250,37 @@ class IndependentReadTests(unittest.TestCase):
         self.assertTrue(any("host_mem/0 mem_total: emitted 0 in both captures, source reads 8000000" in e for e in errors))
         self.assertTrue(any("host_power_socket/0 socket_power_w" in e for e in errors))
 
-    def test_host_mem_dirty_small_live_after_flat_zero_is_note_not_fail(self) -> None:
+    def _check_host_mem_dirty(self, row: str, live_dirty: int):
         from lib.independent_read import check_independent_reads
 
         schema = {
             **self._GAUGE_SCHEMA,
             "host_mem": ["mem_total,U=KB", "mem_free,U=KB", "dirty,U=KB"],
         }
-        live = {("host_mem", "0", "dirty"): 48}
-        notes, errors = check_independent_reads(
+        return check_independent_reads(
             schema,
-            "1000.0 j h\nhost_mem 0 7999000 100 0\n",
-            "1030.0 j h\nhost_mem 0 7999000 100 0\n",
+            f"1000.0 j h\nhost_mem 1 {row}\n",
+            f"1030.0 j h\nhost_mem 1 {row}\n",
             1030.0,
             1010.0,
-            live,
+            {("host_mem", "1", "dirty"): live_dirty},
             require_tier=False,
             allowed_tier=None,
         )
-        self.assertFalse(errors)
-        self.assertTrue(any("volatile gauge" in n and "dirty" in n for n in notes))
 
-    def test_host_mem_dirty_large_live_still_fails_flat_zero(self) -> None:
-        from lib.independent_read import check_independent_reads
+    def test_host_mem_dirty_flat_zero_with_meminfo_parsed_is_note(self) -> None:
+        # c561-009 canary: dirty swings by MB within an interval (journald, the verifier's /tmp
+        # stimulus), so 0 in both captures against a live 3024 kB is not a dead reader while
+        # mem_free on the same row proves the meminfo parse runs.
+        notes, errors = self._check_host_mem_dirty("7999000 100 0", 3024)
+        self.assertEqual(errors, [])
+        self.assertTrue(any("host_mem/1 dirty" in n and "source reads 3024" in n
+                            and n.startswith("NOTE") for n in notes), notes)
 
-        schema = {
-            **self._GAUGE_SCHEMA,
-            "host_mem": ["mem_total,U=KB", "mem_free,U=KB", "dirty,U=KB"],
-        }
-        live = {("host_mem", "1", "dirty"): 128}
-        _, errors = check_independent_reads(
-            schema,
-            "1000.0 j h\nhost_mem 1 7999000 100 0\n",
-            "1030.0 j h\nhost_mem 1 7999000 100 0\n",
-            1030.0,
-            1010.0,
-            live,
-            require_tier=False,
-            allowed_tier=None,
-        )
-        self.assertEqual(len(errors), 1)
-        self.assertIn("host_mem/1 dirty: emitted 0 in both captures, source reads 128", errors[0])
+    def test_host_mem_dirty_flat_zero_with_every_key_zero_fails(self) -> None:
+        _, errors = self._check_host_mem_dirty("0 0 0", 3024)
+        self.assertEqual(errors, ["FAIL independent_read host_mem/1 dirty: emitted 0 in both "
+                                  "captures, source reads 3024"])
 
     def test_new_sources_read_from_sysfs(self) -> None:
         from lib.independent_read import read_independent_sources
@@ -2341,125 +2354,59 @@ class IndependentReadTests(unittest.TestCase):
         self.assertGreater(t_read, read_at[0])
 
 
-class IndependentReadIbMadTests(unittest.TestCase):
-    """c317-016 (MAD build): emitted host_ib port_rcv_data is the 64-bit PortCountersExtended,
-    a separate counter ~36.4 M behind sysfs counters/port_rcv_data while both advance at the
-    same rate; the sysfs bracket must not FAIL that monitor, and must still FAIL on a non-MAD
-    build or a MAD build whose MAD query failed (sysfs fed the key)."""
+class IndependentReadIbSysfsTests(unittest.TestCase):
+    """host_ib has no MAD-sourced counter but sw_* since the MAD PortCountersExtended query was
+    retired: port_*_data and port_*_packets are sysfs counters/ on every build, so an ib / ibdyn
+    build brackets them too (c317-016 had excused a constant MAD offset on port_rcv_data)."""
 
-    _SCHEMA = {"host_ib": ["port_rcv_data,E,W=64,U=4B", "symbol_error,E,W=32", "port_select,c",
-                           "port_xmit_pkts,E"]}
-    _OFFSET = 36_430_379
-    _MAD_SLUG = "x86_64-ver3.1-debug-hw-ib-ibdyn-x86perf-sent1-slowtier1"
-    _SYSFS_SLUG = "x86_64-ver3.1-debug-hw-x86perf-sent1-slowtier1"
+    _SCHEMA = {"host_ib": ["port_rcv_data,E,W=64,U=4B", "symbol_error,E,W=32",
+                           "port_rcv_packets,E,W=64"]}
 
     @staticmethod
-    def _body(ts: float, rcv: int, sym: int, mad: tuple[str, str]) -> str:
-        return f"{ts:.6f} j h\nhost_ib mlx5_0.1 {rcv} {sym} {mad[0]} {mad[1]}\n"
+    def _body(ts: float, rcv: int, sym: int, pkts: int) -> str:
+        return f"{ts:.6f} j h\nhost_ib mlx5_0.1 {rcv} {sym} {pkts}\n"
 
-    def _check(self, slug, *, live_rcv, live_sym=5, mad_a=("1", "900"), mad_b=("1", "950"), schema=None):
+    def _check(self, live_rcv: int):
         from lib.independent_read import check_independent_reads
 
-        schema = schema or self._SCHEMA
         live = {("host_ib", "mlx5_0.1", "port_rcv_data"): live_rcv,
-                ("host_ib", "mlx5_0.1", "symbol_error"): live_sym}
+                ("host_ib", "mlx5_0.1", "symbol_error"): 5,
+                ("host_ib", "mlx5_0.1", "port_rcv_packets"): 920}
         return check_independent_reads(
-            schema, self._body(1000.0, 81_653_661_045, 4, mad_a),
-            self._body(1030.0, 81_653_967_045, 6, mad_b), 1030.0, 1010.0, live,
-            require_tier=False, allowed_tier=None, capability_slug=slug,
-        )
+            self._SCHEMA, self._body(1000.0, 81_653_661_045, 4, 900),
+            self._body(1030.0, 81_653_967_045, 6, 950), 1030.0, 1010.0, live,
+            require_tier=False, allowed_tier=None)
 
-    def test_mad_build_constant_offset_is_a_note_not_a_failure(self) -> None:
-        notes, errors = self._check(self._MAD_SLUG, live_rcv=81_653_800_000 + self._OFFSET)
-        self.assertEqual(errors, [])
-        self.assertTrue(any(n.startswith("NOTE independent_read host_ib MAD PortCountersExtended")
-                            and "mlx5_0.1 port_rcv_data" in n for n in notes), notes)
-        self.assertIn("PASS independent_read (1 keys)", notes)
-
-    def test_mad_build_still_brackets_sysfs_only_keys(self) -> None:
-        _, errors = self._check(self._MAD_SLUG, live_rcv=81_653_800_000 + self._OFFSET, live_sym=9)
-        self.assertEqual(len(errors), 1, errors)
-        self.assertIn("host_ib/mlx5_0.1 symbol_error: live 9 outside emitted [4, 6]", errors[0])
-
-    def test_non_mad_build_offset_still_fails(self) -> None:
-        _, errors = self._check(self._SYSFS_SLUG, live_rcv=81_653_800_000 + self._OFFSET,
-                                mad_a=("-10", "-10"), mad_b=("-10", "-10"))
-        self.assertEqual(len(errors), 1, errors)
-        self.assertIn("host_ib/mlx5_0.1 port_rcv_data: live", errors[0])
-        notes, errors = self._check(self._SYSFS_SLUG, live_rcv=81_653_800_000,
-                                    mad_a=("-10", "-10"), mad_b=("-10", "-10"))
-        self.assertEqual(errors, [])
-        self.assertIn("PASS independent_read (2 keys)", notes)
-
-    def test_mad_build_with_failed_mad_query_brackets_sysfs_value(self) -> None:
-        """MAD BACKEND_ERROR in both captures: port_rcv_data came from sysfs, so bracket it."""
-        _, errors = self._check(self._MAD_SLUG, live_rcv=81_653_800_000 + self._OFFSET,
-                                mad_a=("-7", "-7"), mad_b=("-7", "-7"))
-        self.assertTrue(any("port_rcv_data: live" in e for e in errors), errors)
-
-    def test_mad_filled_in_one_capture_is_not_bracketed(self) -> None:
-        notes, errors = self._check(self._MAD_SLUG, live_rcv=81_653_800_000 + self._OFFSET,
-                                    mad_a=("-7", "-7"))
-        self.assertEqual(errors, [])
-        self.assertTrue(any("MAD PortCountersExtended" in n for n in notes), notes)
-
-    def test_without_slug_the_payload_decides(self) -> None:
-        notes, errors = self._check(None, live_rcv=81_653_800_000 + self._OFFSET)
-        self.assertEqual(errors, [])
-        self.assertTrue(any("MAD PortCountersExtended" in n for n in notes), notes)
-        _, errors = self._check(None, live_rcv=81_653_800_000 + self._OFFSET,
-                                mad_a=("-10", "-10"), mad_b=("-10", "-10"))
-        self.assertTrue(any("port_rcv_data: live" in e for e in errors), errors)
-
-    def test_sysfs_served_row_brackets_data_and_packet_keys(self) -> None:
-        """c122-018: a port with every counters/ packet file gets port_xmit_pkts from
-        counters/port_xmit_packets and no MAD query (port_select NOT_PRESENT), so on a MAD build
-        port_rcv_data and port_xmit_pkts are both bracketed against sysfs."""
-        from lib.independent_read import check_independent_reads
-
-        def run(live_pkts: int):
-            live = {("host_ib", "mlx5_0.1", "port_rcv_data"): 81_653_800_000,
-                    ("host_ib", "mlx5_0.1", "symbol_error"): 5,
-                    ("host_ib", "mlx5_0.1", "port_xmit_pkts"): live_pkts}
-            return check_independent_reads(
-                self._SCHEMA, self._body(1000.0, 81_653_661_045, 4, ("-2", "900")),
-                self._body(1030.0, 81_653_967_045, 6, ("-2", "950")), 1030.0, 1010.0, live,
-                require_tier=False, allowed_tier=None, capability_slug=self._MAD_SLUG)
-
-        notes, errors = run(920)
+    def test_every_host_ib_counter_is_bracketed(self) -> None:
+        notes, errors = self._check(81_653_800_000)
         self.assertEqual(errors, [])
         self.assertIn("PASS independent_read (3 keys)", notes)
-        self.assertFalse(any("MAD PortCountersExtended" in n for n in notes), notes)
-        _, errors = run(1000)
-        self.assertEqual(errors, ["FAIL independent_read host_ib/mlx5_0.1 port_xmit_pkts: "
-                                  "live 1000 outside emitted [900, 950]"])
 
-    def test_packet_keys_read_from_their_counters_files(self) -> None:
+    def test_constant_offset_on_port_rcv_data_fails(self) -> None:
+        notes, errors = self._check(81_653_800_000 + 36_430_379)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("host_ib/mlx5_0.1 port_rcv_data: live", errors[0])
+        self.assertFalse(any("MAD" in n for n in notes), notes)
+
+    def test_no_mad_sourcing_input_left(self) -> None:
+        # The build's ib / ibdyn tokens no longer change what is bracketed.
+        import inspect
+
+        from lib.independent_read import check_independent_reads
+
+        self.assertNotIn("capability_slug", inspect.signature(check_independent_reads).parameters)
+
+    def test_packet_keys_read_from_their_own_counters_file(self) -> None:
         from lib.independent_read import read_independent_sources
 
         with tempfile.TemporaryDirectory() as td:
             counters = Path(td) / "class" / "infiniband" / "mlx5_0" / "ports" / "1" / "counters"
             counters.mkdir(parents=True)
-            (counters / "unicast_rcv_packets").write_text("734299600\n", encoding="utf-8")
+            (counters / "port_rcv_packets").write_text("800921948\n", encoding="utf-8")
             _, live = read_independent_sources(
-                {"host_ib": ["port_unicast_rcv_pkts,E"]}, "1.0 j h\nhost_ib mlx5_0.1 1\n",
+                {"host_ib": ["port_rcv_packets,E,W=64"]}, "1.0 j h\nhost_ib mlx5_0.1 1\n",
                 require_tier=False, allowed_tier=None, sys_root=Path(td))
-        self.assertEqual(live, {("host_ib", "mlx5_0.1", "port_unicast_rcv_pkts"): 734299600})
-
-    def test_mad_slug_without_extended_keys_in_schema_is_not_bracketed(self) -> None:
-        from lib.independent_read import check_independent_reads
-
-        schema = {"host_ib": ["port_rcv_data,E,W=64"]}
-        body = "{ts} j h\nhost_ib mlx5_0.1 {v}\n"
-        live = {("host_ib", "mlx5_0.1", "port_rcv_data"): 500 + self._OFFSET}
-        args = (schema, body.format(ts=1000.0, v=400), body.format(ts=1030.0, v=600), 1030.0, 1010.0, live)
-        notes, errors = check_independent_reads(*args, require_tier=False, allowed_tier=None,
-                                                capability_slug=self._MAD_SLUG)
-        self.assertEqual(errors, [])
-        self.assertTrue(any("MAD PortCountersExtended" in n for n in notes), notes)
-        _, errors = check_independent_reads(*args, require_tier=False, allowed_tier=None,
-                                            capability_slug=self._SYSFS_SLUG)
-        self.assertEqual(len(errors), 1, errors)
+        self.assertEqual(live, {("host_ib", "mlx5_0.1", "port_rcv_packets"): 800921948})
 
 
 def _x86_hw_schema() -> list[str]:
@@ -2757,19 +2704,6 @@ class FaultInjectSitesTests(unittest.TestCase):
                                  [(spec, keys, False)])
                 self.assertEqual(plan[0]["codes"], [fic.PMU_BUSY])
 
-    def test_validator_passes_the_slug_to_independent_reads(self) -> None:
-        # Regression: validate_shm_messages.py left capability_slug unset, so host_ib MAD sourcing
-        # was guessed from the payload instead of the build's ib / ibdyn tokens.
-        import ast
-
-        tree = ast.parse((Path(__file__).resolve().parents[1] / "scripts" / "validate_shm_messages.py")
-                         .read_text(encoding="utf-8"))
-        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
-                 and getattr(n.func, "id", None) == "check_independent_reads"]
-        self.assertTrue(calls)
-        for call in calls:
-            self.assertIn("capability_slug", [k.arg for k in call.keywords])
-
     def test_ci_list_matches_makefile(self) -> None:
         import io
         from contextlib import redirect_stdout
@@ -2783,7 +2717,7 @@ class FaultInjectSitesTests(unittest.TestCase):
 class FaultInjectScheduleTests(unittest.TestCase):
     """Collect-time faults arm after rows exist; the IB opendir fault runs after the MAD one."""
 
-    IB_SCHEMA = ["port_rcv_errors,", "port_xmit_pkts,"]
+    IB_SCHEMA = ["port_rcv_errors,", "sw_rx_bytes,"]
 
     def _ib_plan(self, ticks: int = 3) -> list[dict]:
         import fault_inject_check as fic
@@ -2795,32 +2729,11 @@ class FaultInjectScheduleTests(unittest.TestCase):
             return fic.build_plan({"capability_slug": "x86_64-ver3.1-debug-hw-ib-x86perf"}, manifest,
                                   ticks=ticks, sys_root=Path(td))
 
-    def _mad_keys(self, files: tuple[str, ...]) -> list[str]:
-        import fault_inject_check as fic
-        from lib.host_live_probes import IB_EXT_SYSFS_FILES
-
-        manifest = {"types": {"host_ib": {"schema_keys": self.IB_SCHEMA}}}
-        with tempfile.TemporaryDirectory() as td:
-            port = Path(td) / "class" / "infiniband" / "mlx5_0" / "ports" / "1"
-            (port / "counters").mkdir(parents=True)
-            for name, text in (("state", "4: ACTIVE"), ("phys_state", "5: LinkUp"),
-                               ("link_layer", "InfiniBand")):
-                (port / name).write_text(text + "\n", encoding="utf-8")
-            for key in files:
-                (port / "counters" / IB_EXT_SYSFS_FILES[key]).write_text("1\n", encoding="utf-8")
-            plan = fic.build_plan({"capability_slug": "aarch64-ver3.1-debug-ibdyn-arm"}, manifest,
-                                  ticks=3, sys_root=Path(td))
-        return next(e["keys"] for e in plan if e["spec"].startswith("mad_query"))
-
-    def test_mad_query_plans_extended_keys_only_where_mad_serves_them(self) -> None:
-        # c122-018: sysfs counters/ serve the extended packet keys on every port, so the MAD
-        # extended query (and a mad_query fault) never touches them; only the switch keys.
-        from lib.host_live_probes import IB_EXT_SYSFS_FILES
-
-        sw = ["sw_rx_bytes", "sw_rx_packets", "sw_tx_bytes", "sw_tx_packets"]
-        self.assertEqual(self._mad_keys(tuple(IB_EXT_SYSFS_FILES)), sw)
-        partial = self._mad_keys(tuple(IB_EXT_SYSFS_FILES)[:-1])
-        self.assertEqual(partial, ["port_select", "counter_select", *IB_EXT_SYSFS_FILES, *sw])
+    def test_mad_query_plans_only_the_switch_keys(self) -> None:
+        # The MAD extended query (port_select ... port_multicast_rcv_pkts) was retired; the
+        # switch-port query is the only MAD query a mad_query fault reaches.
+        mad = next(e for e in self._ib_plan() if e["spec"].startswith("mad_query"))
+        self.assertEqual(mad["keys"], ["sw_rx_bytes", "sw_rx_packets", "sw_tx_bytes", "sw_tx_packets"])
 
     def test_collect_faults_arm_after_one_clean_cycle(self) -> None:
         # Regression: every fault was armed from daemon start, before any row existed, so
@@ -2941,8 +2854,7 @@ class FaultInjectScheduleTests(unittest.TestCase):
                                     fired=f"{mad['spec']} 0\nother@1 4\n")
         self.assertEqual(errors, [])
         self.assertIn(f"NOTE fault_inject {mad['spec']}: fault point not reached on this node (0 fires; "
-                      "e.g. sysfs counters/ serve every port's extended packet keys and the switch "
-                      "MAD port is absent)", notes)
+                      "e.g. the switch MAD open was refused (sw_* NOT_PRESENT))", notes)
 
     def test_fault_point_that_fired_without_its_code_fails(self) -> None:
         mad = self._ib_plan()[0]

@@ -42,7 +42,8 @@ Configure selects optional collectors via Automake conditionals; use **`./config
 ### InfiniBand MAD (`host_ib`)
 
 - **Sysfs** counters under `/sys/class/infiniband` (non-`hfi1_*`) are always compiled.
-- **Extended packet keys** (`port_xmit_pkts`, `port_rcv_pkts`, `port_unicast_{xmit,rcv}_pkts`, `port_multicast_{xmit,rcv}_pkts`) come from the kernel's `ports/<p>/counters/` files (`port_xmit_packets`, `port_rcv_packets`, `unicast_{xmit,rcv}_packets`, `multicast_{xmit,rcv}_packets`; cumulative since boot) on every port that has all six. Such a port issues **no** MAD PortCountersExtended query: `port_xmit_data` / `port_rcv_data` stay on their sysfs reads, `port_select` / `counter_select` emit `NOT_PRESENT` (`-2`), and a source file that exists but does not read gives its key `READ_FAILED` (`-3`, or the errno code). A port missing any of the six (open reports absence) falls back to the MAD query for all extended keys as before (`NOT_BUILT` without MAD). Switch keys (`sw_*`) stay on MAD.
+- **Sysfs** supplies every host counter: `ports/<p>/counters/` and `hw_counters/`, including the 64-bit `port_{xmit,rcv}_data` and `port_{xmit,rcv}_packets` (cumulative since boot). There is no host-port MAD query: the PortCountersExtended keys (`port_select`, `counter_select`, `port_*_pkts`) are retired (*IB MAD extended keys retired* below).
+- **MAD** serves only the switch-side keys `sw_rx_bytes`, `sw_rx_packets`, `sw_tx_bytes`, `sw_tx_packets` (SMP PortInfo to the attached switch port, then its PortCountersExtended; per-port backoff `BACKOFF` / `BACKEND_ERROR`, `NOT_PRESENT` once the port refused the switch MAD open, `NOT_BUILT` without MAD).
 - Ports must be ACTIVE or phys LinkUp **and** `link_layer=InfiniBand` when that sysfs file exists (Ethernet-mode mlx HCAs, e.g. Horizon `mlx5_2`, are skipped so MAD is not attempted on them).
 - **`--enable-ib-mad-dlopen`:** compiles MAD against vendored `third_party/ibmad-shim/` and **`dlopen`s `libibmad`** (`HPCPERFSTATS_IBMAD_LIB`). No link-time `-libmad`. Stampede3 fleet default.
 - **`--enable-infiniband` (default, non-fleet):** link-time `-libmad` when devel is present; bundle may pass `--disable-infiniband` when the probe fails (sysfs-only).
@@ -490,23 +491,30 @@ with a single sysfs walk per cycle. Migration notes for historical archives:
 
 See `HPCPerfStats/docs/monitor_variable_rename_map.yaml` for rename-map entries.
 
-### IB extended packet keys from sysfs (`host_ib`)
+### IB MAD extended keys retired (`host_ib`)
 
-Horizon GB200 nodes (c122-018) showed the MAD PortCountersExtended query to the port's own LID
-timing out (`BACKEND_ERROR` on the MAD keys) and, where it worked, reading about 4x below the
-kernel counters: fabric management clears the PortCounters behind it. Key names, widths and the
-schema are unchanged; only the source moves.
+The host-port MAD PortCountersExtended query (from the 2016 `ib_ext` collector, merged into
+`host_ib`) is gone. On Horizon GB200 (c122-018) it timed out against the port's own LID
+(`BACKEND_ERROR`), and where it answered it read about 4x below the kernel counters because
+fabric management clears the PortCounters behind it. The same row already carries the kernel's
+64-bit sysfs counters.
 
-| Keys | Before | After | Notes |
-|------|--------|-------|-------|
-| `port_xmit_pkts`, `port_rcv_pkts`, `port_unicast_xmit_pkts`, `port_unicast_rcv_pkts`, `port_multicast_xmit_pkts`, `port_multicast_rcv_pkts` | MAD PortCountersExtended (cleared by fabric management) | sysfs `counters/` (`port_*_packets`, `unicast_*_packets`, `multicast_*_packets`), cumulative since boot, on ports with all six files; MAD only as the fallback for other ports | **One-time step at the upgrade** (e.g. ~4x on Horizon, where PortCounters are cleared); rates across the upgrade sample are not meaningful. Non-MAD builds now emit these keys instead of `NOT_BUILT` on such ports. |
-| `port_xmit_data`, `port_rcv_data` | MAD on ports where the query worked, else sysfs | sysfs on ports with all six packet files (no MAD query there) | Same one-time step where MAD used to serve them. |
-| `port_select`, `counter_select` | MAD | `NOT_PRESENT` (`-2`) on sysfs-served ports | Query metadata, not a counter. |
+| Retired key | Use instead | Notes |
+|-------------|-------------|-------|
+| `port_xmit_pkts`, `port_rcv_pkts` | `port_xmit_packets`, `port_rcv_packets` (sysfs `counters/`, `E,W=64`) | **Keys removed from the schema.** The consumer reads `port_*_packets` first and falls back to these keys for archives written before this monitor; **deploy the consumer change first**. |
+| `port_unicast_xmit_pkts`, `port_unicast_rcv_pkts`, `port_multicast_xmit_pkts`, `port_multicast_rcv_pkts` | none | Removed; nothing consumed them, so they do not move to sysfs. |
+| `port_select`, `counter_select` | none | Query metadata, not counters. |
 
-`hpcperfstats/` reads `port_xmit_pkts` / `port_rcv_pkts` (with `port_*_data`) only in the
-`avg_packetsize` and `max_packetrate` job metrics (`analysis/metrics/lib/metrics.py`), as
-cumulative counters; no consumer change is needed beyond expecting the step in jobs that span
-the upgrade.
+`port_xmit_data` / `port_rcv_data` keep their names and are now sysfs on every port (the MAD
+query used to overwrite them where it answered: a one-time step on such ports at the upgrade).
+The switch-side `sw_*` keys stay on MAD, unchanged. Rename-map entries live in
+`HPCPerfStats/docs/monitor_variable_rename_map.yaml` (`removed_legacy`).
+
+`hpcperfstats/` uses the IB packet counters only in the `avg_packetsize` and `max_packetrate` job
+metrics (`analysis/metrics/lib/metrics.py`): since 33a11f77 they read host_ib
+`port_xmit_packets` / `port_rcv_packets` first and fall back to `port_xmit_pkts` /
+`port_rcv_pkts` for history, and `avg_packetsize` scales `port_*_data` from 4-byte words to bytes
+(x4).
 
 ### `host_cpu_hw` util accumulators (`cpu_util_*_accum_us`, aarch64 `arm` backend, formerly `dcgm`)
 
@@ -1011,7 +1019,7 @@ node in bounded time). Summary names are the `checks[].name` values of the campa
 | plausibility | values inside plausible ranges | yes | `STRICT_PLAUSIBILITY` (`plausibility`) | |
 | cross-sample | cadence, `E`-counter monotonicity (width-aware wrap), bridge validity; the stimulus touches a Lustre mount so the llite source (procfs, else debugfs on Lustre 2.15) must move | yes | `CROSS_SAMPLE_CHECK`, `STRICT_CROSS_SAMPLE` (`cross_sample`) | |
 | live spot | emitted values match live `/proc`, `/sys`, `nvidia-smi` reads; `host_power_socket` is compared on the next fresh `fast` sample (`full` without the slow tier) with the meters read as soon as it lands, and skipped with a NOTE when none lands within `--spot-check-max-age` | yes | `STRICT_LIVE_SPOT_CHECK` (`live_spot`) | |
-| independent read (`INDEPENDENT_READ_CHECK`) | a live read of the collector's own source lies between two emitted values (`/proc/stat`, IB / OPA counters, block stat, node meminfo, hwmon power); MAD-sourced IB data and packet keys are bracketed only where sysfs supplied them (`port_select` / `counter_select` without a value); the packet keys are read from their `counters/*_packets` files | yes | `INDEPENDENT_READ_CHECK` (`independent_read`) | |
+| independent read (`INDEPENDENT_READ_CHECK`) | a live read of the collector's own source lies between two emitted values (`/proc/stat`, IB / OPA counters, block stat, node meminfo, hwmon power); every `host_ib` counter is sysfs `counters/` and bracketed on every build (`sw_*`, the only MAD keys, have no host file) | yes | `INDEPENDENT_READ_CHECK` (`independent_read`) | |
 | consumer parse | the consumer parser reads the capture: sentinels never enter a rate, no negative delta, Codon parity when built | yes | `CONSUMER_PARSE_CHECK` (`consumer_parse`) | |
 | golden diff | byte diff against a slug golden | opt-in | `GOLDEN_CHECK=1` / `GOLDEN_DIR` (`golden`) | |
 | counter accuracy (`canary_counter_check.sh --accuracy`) | daemon memory bytes, FLOPs, instructions, energy vs known loads (table above) | yes | `COUNTER_CHECK` (`mem_read`, `mem_write`, `mem_socket0`, `flops_dp`, `flops_sp`, `instructions`, `energy_pkg`, `energy_dram`) | |

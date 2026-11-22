@@ -16,11 +16,6 @@ echo "${block}" | grep -q 'test_ib_mad_backoff_SOURCES += .*dyn_lib_path\.c' \
     echo "test_ib_mad_backoff_SOURCES must add dyn_lib_path.c under IB_MAD_DLOPEN" >&2
     exit 1
   }
-echo "${block}" | grep -q 'test_ib_mad_decode_SOURCES += .*dyn_lib_path\.c' \
-  || {
-    echo "test_ib_mad_decode_SOURCES must add dyn_lib_path.c under IB_MAD_DLOPEN" >&2
-    exit 1
-  }
 echo "${block}" | grep -q 'test_ib_mad_sw_swap_SOURCES += .*dyn_lib_path\.c' \
   || {
     echo "test_ib_mad_sw_swap_SOURCES must add dyn_lib_path.c under IB_MAD_DLOPEN" >&2

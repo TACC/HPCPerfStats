@@ -441,7 +441,6 @@ def _run_cross_sample_validation(
             live,
             require_tier=enable_slow,
             allowed_tier=f"@{pair.kind}" if enable_slow else None,
-            capability_slug=manifest.get("capability_slug"),
         )
         notes.extend(ir_notes)
         errors.extend(ir_err)

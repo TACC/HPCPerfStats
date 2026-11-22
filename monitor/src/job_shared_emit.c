@@ -329,6 +329,9 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
 
 done:
   stats_buffer_debug_shm_burst_commit(burst_tier);
+#ifdef DEBUG
+  stats_sentinel_debug_write_shm();
+#endif
   stats_buffer_set_row_filter(NULL, NULL);
   stats_buffer_set_frozen_time(NULL);
   job_proc_discover_result_clear(&disc);

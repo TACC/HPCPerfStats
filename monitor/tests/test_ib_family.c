@@ -7,14 +7,6 @@
 #include "stats.h"
 
 #if defined(MONITOR_WITH_INFINIBAND)
-enum stats_sentinel ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
-{
-  (void)stats;
-  (void)hca;
-  (void)port;
-  return STATS_SENTINEL_OK;
-}
-
 enum stats_sentinel ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
 {
   (void)stats;
@@ -48,20 +40,6 @@ int path_collect_key_value_dir(const char *path, struct stats *stats)
   (void)path;
   (void)stats;
   return 0;
-}
-
-void stats_set(struct stats *stats, const char *key, unsigned long long val)
-{
-  (void)stats;
-  (void)key;
-  (void)val;
-}
-
-int path_collect_single(const char *path, unsigned long long *dest)
-{
-  (void)path;
-  (void)dest;
-  return -1;
 }
 
 static void test_disable_all_clears_enabled(void)

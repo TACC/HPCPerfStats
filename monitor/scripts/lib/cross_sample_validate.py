@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 
 from .daemon_conf import DaemonTiming, WaitBounds, is_debug_rpm_timing, wait_bounds_from_timing
-from .message_parse import schema_key_name, schema_token_is_event_counter
+from .message_parse import fast_schema_keys, schema_key_name, schema_token_is_event_counter
 from .payload_parse import metric_sentinel_at_key, metric_value_at_key, rows_by_type
 from .sentinel_catalog import is_bridgeable, sentinel_slug
 from .shm_snapshot import SnapshotPair
@@ -61,9 +61,12 @@ def _build_event_map(
     for type_name, type_rows in rows.items():
         info = manifest.get("types", {}).get(type_name, {})
         schema_keys = info.get("schema_keys") or schema_by_type.get(type_name, [])
-        key_names = info.get("schema_key_names") or [schema_key_name(k) for k in schema_keys]
+        full_names = info.get("schema_key_names") or [schema_key_name(k) for k in schema_keys]
+        fast_names = [schema_key_name(k) for k in fast_schema_keys(schema_keys)]
         event_keys = _event_key_names(schema_keys)
         for row in type_rows:
+            # An @fast row carries only the fast-tier keys, in schema order.
+            key_names = fast_names if row.tier == "@fast" else full_names
             for key in event_keys:
                 val = metric_value_at_key(row.values, key_names, key)
                 if val is None:

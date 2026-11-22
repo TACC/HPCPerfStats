@@ -10,20 +10,15 @@ and the ACPI hwmon power meters (host_power_socket).
   after collecting, so ``t_read < ts_b`` (``t_read`` = end of the read) is necessary but not
   sufficient; the capture starts the read right after a fresh A, about one interval before B.
 - Gauges cannot be bracketed: a gauge FAILs when it was emitted 0 in both captures while the
-  source reads non-zero. ``host_mem`` ``dirty`` and ``writeback`` swing quickly (kB-scale); when
-  the live read is below 64 kB that mismatch is a NOTE, not a FAIL.
+  source reads non-zero. ``host_mem`` ``dirty`` and ``writeback`` swing by MB within an interval
+  (journald, the verifier's own /tmp stimulus), so for them that mismatch is a NOTE when another
+  ``host_mem`` key on the same row was emitted non-zero in either capture (the meminfo parse
+  runs), and a FAIL only when none was.
 
 A collector that silently stopped reading (flat, or stuck at 0) fails this even when idle.
 
-host_ib ports with every ``counters/`` packet file (``IB_EXT_SYSFS_FILES``) serve the extended
-packet keys (``port_xmit_pkts`` ...) from those files and skip the MAD extended query. On a MAD
-build (capability slug token ``ib`` or ``ibdyn``) any other port gets port_xmit_data /
-port_rcv_data and the packet keys from the 64-bit PortCountersExtended, a separate counter that
-can sit a constant away from sysfs (a reset of one but not the other) while advancing at the
-same rate. One live read cannot bound an unknown offset, so those keys are bracketed only on rows
-the MAD query did not fill in either capture (port_select / counter_select, which only MAD sets,
-a sentinel) and are otherwise reported as one NOTE. Every other host_ib key is sysfs on every
-build.
+Every host_ib counter here is sysfs ``counters/`` on every build: the only MAD query left fills
+the switch-side ``sw_*`` keys, which have no host file.
 """
 from __future__ import annotations
 
@@ -31,7 +26,7 @@ import re
 import time
 from pathlib import Path
 
-from .host_live_probes import IB_EXT_SYSFS_FILES, probe_power_socket_watts
+from .host_live_probes import probe_power_socket_watts
 from .message_parse import schema_key_name, schema_token_is_event_counter
 from .payload_parse import metric_value_at_key, row_key_names, rows_by_type
 
@@ -46,13 +41,6 @@ _OPA_HW_COUNTERS = {
     "port_xmit_data": "TxWords", "port_rcv_data": "RxWords", "port_xmit_pkts": "TxPkt",
     "port_rcv_pkts": "RxPkt", "port_xmit_wait": "TxWait",
 }
-# host_ib keys the MAD extended query fills on a port it serves (ib_mad.c IB_PC_EXT_F) that
-# sysfs fills elsewhere; port_select / counter_select only MAD sets, so a value there proves MAD
-# filled the row.
-_IB_MAD_SYSFS_KEYS = frozenset({"port_xmit_data", "port_rcv_data", *IB_EXT_SYSFS_FILES})
-_IB_MAD_ONLY_KEYS = ("port_select", "counter_select")
-_IB_MAD_SLUG_TOKENS = frozenset({"ib", "ibdyn"})
-_HOST_MEM_VOLATILE_GAUGE_MIN_KB = 64
 _HOST_MEM_VOLATILE_GAUGE_KEYS = frozenset({"dirty", "writeback"})
 _HOST_KEY_ALIAS = Path(__file__).resolve().parents[2] / "src" / "host_key_alias.c"
 
@@ -92,7 +80,7 @@ def _read_ib_counters(sys_root: Path, devs: list[str], keys: list[str]) -> dict[
         counters = sys_root / "class" / "infiniband" / hca / "ports" / port / "counters"
         for key in keys:
             try:
-                text = (counters / IB_EXT_SYSFS_FILES.get(key, key)).read_text(encoding="utf-8").strip()
+                text = (counters / key).read_text(encoding="utf-8").strip()
             except OSError:
                 continue
             if text.isdigit():
@@ -202,19 +190,6 @@ def _width(token: str) -> int:
     return int(w[0]) if w else 64
 
 
-def _ib_mad_filled(values: dict[tuple[str, str, str], int], dev: str, evidence: list[str],
-                   slug_mad: bool | None) -> bool:
-    """True when the MAD extended query, not sysfs, supplied the _IB_MAD_SYSFS_KEYS on host_ib
-    ``dev`` in this capture. ``slug_mad``: the slug has a MAD token (None: no slug). With
-    port_select / counter_select in the schema their values decide; without them only a MAD slug
-    says MAD."""
-    if slug_mad is False:
-        return False
-    if evidence:
-        return any(("host_ib", dev, k) in values for k in evidence)
-    return bool(slug_mad)
-
-
 def check_independent_reads(
     schema_by_type: dict[str, list[str]],
     body_a: str,
@@ -225,20 +200,11 @@ def check_independent_reads(
     *,
     require_tier: bool,
     allowed_tier: str | None,
-    capability_slug: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Notes and errors: FAIL for a counter read outside [v_a, v_b] (mod 2^W), or a gauge emitted 0
-    in both captures while its source reads non-zero.
-
-    ``capability_slug`` says whether host_ib may be MAD-sourced (tokens ``ib`` / ``ibdyn``);
-    without it the payload decides (port_select / counter_select carrying a value)."""
+    in both captures while its source reads non-zero."""
     notes: list[str] = []
     errors: list[str] = []
-    slug_mad = None if capability_slug is None else bool(
-        set(capability_slug.split("-")) & _IB_MAD_SLUG_TOKENS
-    )
-    ib_names = {schema_key_name(k) for k in schema_by_type.get("host_ib", [])}
-    evidence = [k for k in _IB_MAD_ONLY_KEYS if k in ib_names]
     if not live:
         notes.append("SKIP independent_read: no covered source on this host")
         return notes, errors
@@ -258,14 +224,8 @@ def check_independent_reads(
                         values[(type_name, row.dev, name)] = v
         maps.append(values)
     checked = 0
-    mad_skipped: list[str] = []
     for key, r in sorted(live.items()):
         if key not in maps[0] or key not in maps[1]:
-            continue
-        if key[0] == "host_ib" and key[2] in _IB_MAD_SYSFS_KEYS and any(
-            _ib_mad_filled(m, key[1], evidence, slug_mad) for m in maps
-        ):
-            mad_skipped.append(f"{key[1]} {key[2]}")
             continue
         va, vb = maps[0][key], maps[1][key]
         token = _token(schema_by_type[key[0]], key[2])
@@ -275,12 +235,14 @@ def check_independent_reads(
                 if (
                     key[0] == "host_mem"
                     and key[2] in _HOST_MEM_VOLATILE_GAUGE_KEYS
-                    and r < _HOST_MEM_VOLATILE_GAUGE_MIN_KB
+                    and any(v and k[0] == "host_mem" and k[1] == key[1]
+                            and k[2] not in _HOST_MEM_VOLATILE_GAUGE_KEYS
+                            for m in maps for k, v in m.items())
                 ):
                     notes.append(
                         f"NOTE independent_read {key[0]}/{key[1]} {key[2]}: emitted 0 in both"
-                        f" captures, source reads {r} kB"
-                        f" (< {_HOST_MEM_VOLATILE_GAUGE_MIN_KB} kB volatile gauge)"
+                        f" captures, source reads {r} kB (volatile gauge; meminfo parsed on"
+                        " this row)"
                     )
                 else:
                     errors.append(
@@ -293,11 +255,6 @@ def check_independent_reads(
             errors.append(
                 f"FAIL independent_read {key[0]}/{key[1]} {key[2]}: live {r} outside emitted [{va}, {vb}]"
             )
-    if mad_skipped:
-        notes.append(
-            "NOTE independent_read host_ib MAD PortCountersExtended (may differ from sysfs by a"
-            f" constant), not bracketed: {', '.join(mad_skipped)}"
-        )
     if checked and not errors:
         notes.append(f"PASS independent_read ({checked} keys)")
     elif not checked:

@@ -1,8 +1,7 @@
 /* Fault-injection matrix for the hardware fault points (built with -DDEBUG in every build):
  * perf_open (EBUSY PMU_BUSY, EACCES PERMISSION_DENIED), mad_query (BACKEND_ERROR, then BACKOFF
  * once the fail streak triggers), dcgm_fetch (BACKEND_ERROR on every GPU row) and hwmon_read
- * (READ_FAILED), plus a failed host_ib port walk (opendir errno code on every row), a host_ib
- * port whose extended packet keys sysfs serves (mad_query reaches only the switch query), a DCGM
+ * (READ_FAILED), plus a failed host_ib port walk (opendir errno code on every row), a DCGM
  * fetch that fails from the first cycle (rows still appear) and nvml_fetch (BACKEND_ERROR for one
  * cycle, then the DCGM path serves the GPU). Each is forced through the debug_fault_inject table
  * over the existing fakes (fake perf, MAD, NVML and DCGM test hooks, a fake hwmon tree), lands on
@@ -10,7 +9,6 @@
  * must have fired. */
 #include <assert.h>
 #include <errno.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -53,26 +51,12 @@ static struct stats_type g_power;
 struct stats_type *const stats_type_table[] = {&g_ib, &g_power, &nvidia_gpu_stats_type};
 const size_t stats_type_nr = sizeof(stats_type_table) / sizeof(stats_type_table[0]);
 
-/* Link stubs: the host_ib sysfs side and the MAD lid read are outside this test. With
- * g_ib_sysfs_ext the port has the extended packet keys' counters/ files (one unreadable), so sysfs
- * serves those keys and the MAD extended query is skipped; otherwise the files are absent. */
-static int g_ib_sysfs_ext;
-
+/* Link stub: the host_ib sysfs side is outside this test. */
 int path_collect_key_value_dir(const char *dir_path, struct stats *stats)
 {
   (void)dir_path;
   stats_set(stats, "port_rcv_errors", 3);
   return 0;
-}
-
-int path_collect_single(const char *path, unsigned long long *dest)
-{
-  if (!g_ib_sysfs_ext || strstr(path, "/unicast_rcv_packets") != NULL) {
-    errno = g_ib_sysfs_ext ? EIO : ENOENT;
-    return -1;
-  }
-  *dest = 5;
-  return 1;
 }
 
 static int g_ib_walk_errno; /* nonzero: /sys/class/infiniband fails to open with it */
@@ -85,18 +69,6 @@ int ib_foreach_hca_port(ib_hca_port_fn fn, void *ctx)
   }
   fn("mlx5_0", 1, ctx);
   return 0;
-}
-
-int pscanf(const char *path, const char *fmt, ...)
-{
-  va_list ap;
-
-  if (strstr(path, "/lid") == NULL)
-    return -1;
-  va_start(ap, fmt);
-  *va_arg(ap, unsigned int *) = 1;
-  va_end(ap);
-  return 1;
 }
 
 static unsigned int state(struct stats *s, const char *key)
@@ -176,25 +148,25 @@ static uint8_t *fake_pma(void *buf, ib_portid_t *dest, int port, unsigned timeou
   return (uint8_t *)buf;
 }
 
-/* No switch behind the fake port: the sw query fails the same way with or without a fault. */
+/* A switch answers PortInfo behind the fake port. */
 static uint8_t *fake_smp(void *buf, ib_portid_t *id, unsigned attr, unsigned mod, unsigned timeout,
                          const struct ibmad_port *src)
 {
-  (void)buf;
   (void)id;
   (void)attr;
   (void)mod;
   (void)timeout;
   (void)src;
-  return NULL;
+  return (uint8_t *)buf;
 }
 
-/* The counters decode as 0, sized like the IB_PC_EXT_F locals they land in. */
+/* Fields decode as 0, sized like the locals ib_mad.c decodes into: the switch LID and port are
+ * int, the switch counters uint64_t. */
 static void fake_decode(uint8_t *buf, enum MAD_FIELDS field, void *val)
 {
   (void)buf;
-  if (field == IB_PC_EXT_PORT_SELECT_F || field == IB_PC_EXT_COUNTER_SELECT_F)
-    *(uint32_t *)val = 0;
+  if (field == IB_PORT_LID_F || field == IB_PORT_LOCAL_PORT_F)
+    *(int *)val = 0;
   else
     *(uint64_t *)val = 0;
 }
@@ -222,43 +194,31 @@ static void test_mad_query(void)
 
   ib_tick();
   s = get_current_stats(&g_ib, "mlx5_0.1");
-  assert(state(s, "port_xmit_pkts") == STATS_SENTINEL_OK);
+  assert(state(s, "sw_rx_bytes") == STATS_SENTINEL_OK);
 
   assert(stats_fault_inject_set("mad_query:mlx5_0") == 1);
   ib_tick();
-  assert(state(s, "port_xmit_pkts") == STATS_SENTINEL_BACKEND_ERROR);
   assert(state(s, "sw_rx_bytes") == STATS_SENTINEL_BACKEND_ERROR);
+  assert(state(s, "sw_tx_packets") == STATS_SENTINEL_BACKEND_ERROR);
   assert(state(s, "port_rcv_errors") == STATS_SENTINEL_OK); /* sysfs key untouched */
   for (int i = 0; i < 8; i++)
     ib_tick();
-  assert(state(s, "port_xmit_pkts") == STATS_SENTINEL_BACKOFF); /* fail streak hit */
+  assert(state(s, "sw_rx_bytes") == STATS_SENTINEL_BACKOFF); /* fail streak hit */
   assert(state(s, "port_rcv_errors") == STATS_SENTINEL_OK);
 
   assert(stats_fault_inject_set(NULL) == 0);
   ib_mad_test_reset_backoff();
   ib_tick();
-  assert(state(s, "port_xmit_pkts") == STATS_SENTINEL_OK);
+  assert(state(s, "sw_rx_bytes") == STATS_SENTINEL_OK);
 
   /* Regression: a failed port walk left every host_ib key NOT_UPDATED (no code). */
   g_ib_walk_errno = EIO;
   ib_tick();
   assert(state(s, "port_rcv_errors") == STATS_SENTINEL_READ_FAILED);
-  assert(state(s, "port_xmit_pkts") == STATS_SENTINEL_READ_FAILED);
+  assert(state(s, "sw_rx_bytes") == STATS_SENTINEL_READ_FAILED);
   g_ib_walk_errno = 0;
   ib_tick();
   assert(state(s, "port_rcv_errors") == STATS_SENTINEL_OK);
-
-  /* sysfs serves the extended packet keys: a mad_query fault reaches only the switch query, the
-   * extended keys keep their sysfs reading (or that read's code) and port_select has no source. */
-  g_ib_sysfs_ext = 1;
-  assert(stats_fault_inject_set("mad_query:mlx5_0") == 1);
-  ib_tick();
-  assert(state(s, "port_xmit_pkts") == STATS_SENTINEL_OK);
-  assert(state(s, "port_unicast_rcv_pkts") == STATS_SENTINEL_READ_FAILED);
-  assert(state(s, "port_select") == STATS_SENTINEL_NOT_PRESENT);
-  assert(state(s, "sw_rx_bytes") == STATS_SENTINEL_BACKEND_ERROR);
-  assert(stats_fault_inject_set(NULL) == 0);
-  g_ib_sysfs_ext = 0;
   ib_mad_test_reset_backoff();
   ib_mad_dyn_test_set_hooks(NULL);
 }

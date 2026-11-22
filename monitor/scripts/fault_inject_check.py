@@ -19,9 +19,8 @@ collect-time fault arms after ARM_DELAY clean cycles (`@delay+ticks`), so the ro
 already exist; perf_open faults act at begin and hold for the whole run. The opendir fault on
 /sys/class/infiniband runs last: it stops the port walk (no MAD query is reached) and the
 directory latch holds it until the restart, so it starts after every other host_ib fault has
-been checked for resume. mad_query plans the switch keys, plus the extended keys unless sysfs
-counters/ serve them on every port (then the MAD extended query never runs; a node whose switch
-MAD port is also absent never reaches the point: NOTE).
+been checked for resume. mad_query plans the switch keys (the only MAD query); a node whose switch
+MAD open is refused never reaches the point (NOTE).
 
 nvidia_gpu gets both GPU fault points, since only the run shows which source serves the node:
 nvml_fetch first (a failed GPM sample hands the GPUs to the DCGM path for the rest of the run),
@@ -50,7 +49,6 @@ sys.path.insert(0, str(MONITOR / "scripts"))
 
 from lib.cross_sample_validate import check_sentinel_bridges  # noqa: E402
 from lib.fault_ci_files import CI_COVERED_FILES  # noqa: E402
-from lib.host_live_probes import IB_EXT_SYSFS_FILES, ib_port_ext_from_sysfs, probe_ib_devices  # noqa: E402
 from lib.message_parse import parse_schema_counts, schema_key_name  # noqa: E402
 from lib.payload_parse import iter_metric_rows, row_key_names, sample_header_timestamp  # noqa: E402
 from lib.row_validate import token_is_uint, token_sentinel_code  # noqa: E402
@@ -78,13 +76,10 @@ POLL_SEC = 0.5
 # Why a planned point may never run on a node that has its collector.
 _NOT_REACHED_HINT = {"dcgm_fetch": "NVML+GPM serves the GPUs and DCGM never fetched",
                      "nvml_fetch": "DCGM serves the GPUs (not every GPU has GPM)",
-                     "mad_query": "sysfs counters/ serve every port's extended packet keys and "
-                                  "the switch MAD port is absent"}
+                     "mad_query": "the switch MAD open was refused (sw_* NOT_PRESENT)"}
 
-# A mad_query fault reaches the extended query's keys (run only on ports without every counters/
-# packet file, ib_family.c ib_ext_collect_sysfs) and the switch query's.
-_IB_MAD_EXT_KEYS = ["port_select", "counter_select", *IB_EXT_SYSFS_FILES]
-_IB_MAD_SW_KEYS = ["sw_rx_bytes", "sw_rx_packets", "sw_tx_bytes", "sw_tx_packets"]
+# A mad_query fault reaches the switch query's keys (ib_mad.c), the only MAD query on host_ib.
+_IB_MAD_KEYS = ["sw_rx_bytes", "sw_rx_packets", "sw_tx_bytes", "sw_tx_packets"]
 
 # Collector types whose failure sites live in each source file (the site registry names files).
 _FILE_TYPES = {
@@ -119,15 +114,6 @@ def _schema(manifest: dict) -> dict[str, list[str]]:
     return {t: info.get("schema_keys", []) for t, info in manifest.get("types", {}).items()}
 
 
-def _ib_mad_fault_keys(ib_dir: Path) -> list[str]:
-    """Keys a mad_query fault may mark: the switch keys, plus the extended keys unless sysfs
-    serves them on every collectible port (no port: keep them, nothing says sysfs serves)."""
-    ports = [ib_dir / hca / "ports" / port
-             for hca, _, port in (d.rpartition(".") for d in probe_ib_devices(str(ib_dir)))]
-    ext = [] if ports and all(map(ib_port_ext_from_sysfs, ports)) else _IB_MAD_EXT_KEYS
-    return ext + _IB_MAD_SW_KEYS
-
-
 def build_plan(caps: dict, manifest: dict, *, ticks: int, sys_root: Path) -> list[dict]:
     """Fault points present on this node, each with its spec entry, type, keys and codes."""
     schema = _schema(manifest)
@@ -156,7 +142,7 @@ def build_plan(caps: dict, manifest: dict, *, ticks: int, sys_root: Path) -> lis
             ["load_1", "load_5", "load_15", "nr_running", "nr_threads"], [READ_FAILED], True)
     if "host_ib" in schema and has_ib and tokens & {"ib", "ibdyn"}:
         # Fewer ticks than the MAD fail threshold: BACKEND_ERROR, BACKOFF only on a long run.
-        add("mad_query", "host_ib", _ib_mad_fault_keys(ib_dir), [BACKEND_ERROR, BACKOFF], True)
+        add("mad_query", "host_ib", list(_IB_MAD_KEYS), [BACKEND_ERROR, BACKOFF], True)
     if "nvidia_gpu" in schema:
         add("nvml_fetch", "nvidia_gpu", ["*"], [BACKEND_ERROR], True,
             also=(NOT_PRESENT, READ_FAILED, INVALID_VALUE), fallback=True)
