@@ -50,21 +50,25 @@ while :; do
   { printf '$x\n%s\n' "$hw"
     printf '!arm_aarch64_imc dram_cas_reads,E,W=48 dram_cas_writes,E,W=48\n'; } >"$D/schema.tmp" &&
     mv "$D/schema.tmp" "$D/schema"
-  i=$((i + 1000))
-  case $m in dp) d=$((d + 100)); r=$((r + 20000000)); w=$((w + 10000000)) ;;
-    sp) s=$((s + 100)) ;; hp) h=$((h + 100)) ;; esac
-  en=$((en + 9000)); solo=$((solo + 7000))
-  if [ "$sh_mode" = outside ]; then run=$((run + 2500)); else run=$((run + 7000)); fi
+  # ../tick: seconds per sample (default 1). ../scfvary: the SCF load runs 3x faster whenever
+  # perf is not counting (../perfon absent), a load that varies across the perf window.
+  k=$(cat "$D/../tick" 2>/dev/null || echo 1); f=1
+  [ -e "$D/../scfvary" ] && [ ! -e "$D/../perfon" ] && f=3
+  i=$((i + 1000 * k))
+  case $m in dp) d=$((d + 100 * k)); r=$((r + 20000000 * k * f)); w=$((w + 10000000 * k * f)) ;;
+    sp) s=$((s + 100 * k)) ;; hp) h=$((h + 100 * k)) ;; esac
+  en=$((en + 9000 * k)); solo=$((solo + 7000 * k))
+  if [ "$sh_mode" = outside ]; then run=$((run + 2500 * k)); else run=$((run + 7000 * k)); fi
   extra=""
   [ "$sh_mode" = none ] || extra=" $en $run $solo"
-  t=$((t + 1))
+  t=$((t + k))
   { printf '\n%d.000000 job host\n' "$t"
     printf 'host_cpu_hw 0 @fast %d %d %d %d%s\n' "$i" "$d" "$s" "$h" "$extra"
     printf 'host_cpu_hw 1 @fast %d %d %d %d%s\n' "$i" "$d" "$s" "$h" "$extra"
     printf 'arm_aarch64_imc scf0 @fast %d %d\n' "$r" "$w"
     printf 'arm_aarch64_imc scf1 @fast %d %d\n' "$r" "$w"
   } >"$D/fast.tmp" && mv "$D/fast.tmp" "$D/fast"
-  sleep 1
+  sleep "$k"
 done
 EOF
 # Fake perf stat: instructions 2000/s, the mode's FP event 200/s; appends one GEMM log line
@@ -72,25 +76,33 @@ EOF
 # the sp / hp ceilings are 8 / 16). FAKE_NOT_COUNTED=1 makes instructions "<not counted>".
 cat >"${T}/perf" <<'EOF'
 #!/usr/bin/env bash
-w="${*: -1}"
-m=$(cat "$(dirname "$0")/mode" 2>/dev/null || echo idle)
-for _ in $(seq "$w"); do
-  sleep 1
-  [ "$m" = idle ] || echo "gemm_load $m GFLOP/s=${FAKE_GFLOPS:-7e-7} elapsed=1s check=1.000" \
-    >>"$(dirname "$0")/gemm.log"
-done
+s=$(date +%s.%N)
+H=$(dirname "$0")
 case "$*" in
 *cmem_rd_data*)
-  # SCF: per PMU, read beats (2 per 64-byte transfer) and write bytes; FAKE_SCF_SKEW scales
-  # the read count to model a monitor/perf mismatch.
-  rd=$(awk -v w="$w" -v k="${FAKE_SCF_SKEW:-1}" 'BEGIN { printf "%.0f", 40000000 * w * k }')
-  for p in $(echo "$*" | grep -o 'nvidia_scf_pmu_[0-9]*/cmem_rd_data' | cut -d/ -f1); do
+  # SCF: runs the command after --, counting the base load (per PMU 4e7 read beats/s, 2 per
+  # 64-byte transfer, and 6.4e8 write bytes/s) over its own lifetime like perf, with ../perfon
+  # present while the command runs. FAKE_SCF_SKEW scales the read count (monitor/perf mismatch).
+  ev=""
+  while [ "$#" -gt 0 ] && [ "$1" != -- ]; do ev="$ev $1"; shift; done
+  shift
+  touch "$H/perfon"; "$@"; rm -f "$H/perfon"
+  read -r rd wr < <(awk -v a="$s" -v b="$(date +%s.%N)" -v k="${FAKE_SCF_SKEW:-1}" \
+    'BEGIN { printf "%.0f %.0f\n", 4e7 * (b - a) * k, 6.4e8 * (b - a) }')
+  for p in $(echo "$ev" | grep -o 'nvidia_scf_pmu_[0-9]*/cmem_rd_data' | cut -d/ -f1); do
     echo "${rd},,${p}/cmem_rd_data/,100,100.00,," >&2
-    echo "$((640000000 * w)),,${p}/cmem_wr_total_bytes/,100,100.00,," >&2
+    echo "${wr},,${p}/cmem_wr_total_bytes/,100,100.00,," >&2
   done
   exit 0
   ;;
 esac
+w="${*: -1}"
+m=$(cat "$H/mode" 2>/dev/null || echo idle)
+for _ in $(seq "$w"); do
+  sleep 1
+  [ "$m" = idle ] || echo "gemm_load $m GFLOP/s=${FAKE_GFLOPS:-7e-7} elapsed=1s check=1.000" \
+    >>"$H/gemm.log"
+done
 dp=0; sp=0; hp=0
 case $m in dp) dp=$((200 * w)) ;; sp) sp=$((200 * w)) ;; hp) hp=$((200 * w)) ;; esac
 ins=$((2000 * w)); [ "${FAKE_NOT_COUNTED:-0}" = 1 ] && ins="<not counted>"
@@ -189,16 +201,43 @@ FAKE_GFLOPS=9e-7 run 1 --warm 0 --window 2 --precisions dp
 has '^accuracy dp .*> 4: monitor FP count at least 11.1% low FAIL' ||
   fail "low count not reported: ${out}"
 has '^O3 dp .*PASS' || fail "O3 should still pass when both scale alike"
+# Shared counters (c122-018: running ~20%, dp read 1-4% low run to run): with running under
+# 50% (here 27.8%) 4.1 flops per dp op passes on the wider margin; the same count fails when
+# the events ran unshared (77.8%).
+echo outside >"${T}/sharing"
+sleep 2
+FAKE_GFLOPS=8.2e-7 run 0 --warm 0 --window 2 --precisions dp
+has '^accuracy dp .*<= 4 (+5% margin, counters shared) PASS' ||
+  fail "shared-counter margin not applied: ${out}"
+echo solo >"${T}/sharing"
+sleep 2
+FAKE_GFLOPS=8.2e-7 run 1 --warm 0 --window 2 --precisions dp
+has '^accuracy dp .*> 4: monitor FP count at least .* low FAIL' ||
+  fail "unshared count 2.5% low not failed: ${out}"
 
 # SCF: monitor arm_aarch64_imc (both sockets) matches perf on both nvidia_scf_pmu_<N>.
 run 0 --scf --warm 0 --window 2
 has '2 SCF PMU(s)' || fail "SCF PMUs not counted: ${out}"
-has 'read  monitor 2.56 GB/s perf 2.56 GB/s mon/perf 1.000' ||
+# perf is divided by its wall time, which includes ~50 ms of process start-up: up to 2% of
+# this 3 s window (under 0.05% of a node's 120 s one).
+has 'read  monitor 2.56 GB/s perf 2.5[0-9] GB/s mon/perf \(1\.0[0-2]\|0\.99\)' ||
   fail "SCF read bandwidth wrong: ${out}"
-has 'write monitor 1.28 GB/s perf 1.28 GB/s mon/perf 1.000' ||
+has 'write monitor 1.28 GB/s perf 1.2[0-9] GB/s mon/perf \(1\.0[0-2]\|0\.99\)' ||
   fail "SCF write bandwidth wrong: ${out}"
 has '^RESULT: PASS' || fail "SCF run did not PASS: ${out}"
 [ "$(cat "${T}/mode")" = idle ] || fail "load still running after SCF run"
+# Varying load (c122-018 2026-11-22, read 1.062 / write 1.058): samples every 3 s and the load
+# 3x faster whenever perf is not counting. perf must span the daemon's own sample window, or
+# read and write drift together.
+echo 3 >"${T}/tick"
+touch "${T}/scfvary"
+sleep 4
+run 0 --scf --warm 0 --window 2
+{ has '^scf read  PASS' && has '^scf write PASS'; } ||
+  fail "SCF windows differ on a varying load: ${out}"
+rm -f "${T}/scfvary"
+echo 1 >"${T}/tick"
+sleep 4
 # A 20% read mismatch fails; no SCF PMU fails without starting a load.
 FAKE_SCF_SKEW=1.2 run 1 --scf --warm 0 --window 2
 has '^scf read  FAIL' || fail "SCF mismatch not caught: ${out}"

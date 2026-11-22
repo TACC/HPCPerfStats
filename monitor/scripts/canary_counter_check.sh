@@ -6,7 +6,8 @@
 # PASS/FAIL line. monitor/perf agreement cannot prove absolute accuracy (both scale by
 # enabled/running), so it also divides the GEMM's own GFLOP/s over the same window by the
 # monitor FP rate: a 128-bit SVE FMA is at most 4 / 8 / 16 FLOPs per dp / sp / hp operation,
-# and a ratio above that ceiling means the scaled count reads low. On builds with the Phase 1b keys it also
+# and a ratio above that ceiling (1% margin, 5% when the core events ran under half of enabled
+# time because another PMU user holds counters) means the scaled count reads low. On builds with the Phase 1b keys it also
 # prints the D6 sharing keys per load: the share of enabled time the core events ran, the share
 # expected with no other PMU user (solo), and the outside share; running above 100% fails, and a
 # daemon built before Phase 1b (keys absent) is reported, not failed. Run as root on a node with
@@ -18,7 +19,8 @@
 # (--size 4096, matrices larger than L3) and compares the monitor's arm_aarch64_imc
 # dram_cas_reads / dram_cas_writes (64-byte transfers, summed over every scf<N> row) with
 # `perf stat -a` on every nvidia_scf_pmu_<N> (cmem_rd_data 32-byte beats, cmem_wr_total_bytes)
-# over the same window; PASS when both agree within 5% and reads exceed 1 GB/s.
+# over the same window (perf runs until the daemon's next sample and is divided by its own wall
+# time); PASS when both agree within 5% and reads exceed 1 GB/s.
 #
 # --sharing-only reads just the D6 sharing keys over one --window with no load and no perf,
 # so this script holds no counters: a quiet Neoverse V2 node reads running ~75% against
@@ -79,6 +81,11 @@ ACC_LIB="${HERE}/lib/counter_accuracy.py"
 ACC_PID=""
 IMC_KEYS="dram_cas_reads dram_cas_writes"
 SHARE_KEYS="pmu_enabled_time pmu_running_time pmu_solo_running_time"
+# flops/op ceiling margin: strict, or wider when the core events ran under SHARED_RUNNING_PCT
+# of enabled time (another PMU user; the scaled count then scatters by a few percent).
+FLOPS_MARGIN=0.01
+SHARED_FLOPS_MARGIN=0.05
+SHARED_RUNNING_PCT=50
 
 die() {
   echo "canary_counter_check: $*" >&2
@@ -231,16 +238,22 @@ scf_check() {
   sleep "${WARM}"
   wait_new
   snap arm_aarch64_imc "${IMC_KEYS}" >"${WORK}/a"
-  timeout $((WINDOW + 60)) "${PERF}" stat -a -x, -e "${ev}" -- sleep "${WINDOW}" \
-    2>"${WORK}/perf" >/dev/null
+  # perf runs from just after sample a until the daemon writes the first sample after WINDOW,
+  # and is divided by its own wall time, so both rates cover the same span of a varying load.
+  t0=$(date +%s.%N)
+  timeout $((WINDOW + WAIT_MAX + 60)) "${PERF}" stat -a -x, -e "${ev}" -- sh -c '
+    sleep "$1"; ts() { awk "NF { print \$1; exit }" "$2" 2>/dev/null; }
+    t=$(ts "$@"); i=0
+    while [ "$(ts "$@")" = "$t" ] && [ "$i" -lt "$3" ]; do sleep 1; i=$((i + 1)); done
+  ' sh "${WINDOW}" "${SHM}/fast" "${WAIT_MAX}" 2>"${WORK}/perf" >/dev/null
   prc=$?
+  pwin=$(awk -v a="${t0}" -v b="$(date +%s.%N)" 'BEGIN { printf "%.3f", b - a }')
   [ "${prc}" -eq 0 ] || say "WARN: perf exit ${prc}"
-  wait_new
   snap arm_aarch64_imc "${IMC_KEYS}" >"${WORK}/b"
   stop_load
   rates "${WORK}/a" "${WORK}/b" "${IMC_KEYS}" >"${WORK}/m"
   # perf lines alternate rd (32-byte beats), wr (bytes) per PMU; sum each, keep any unit.
-  awk -F, -v win="${WINDOW}" '
+  awk -F, -v win="${pwin}" '
     NF>4 { n++; ok = ($1 ~ /^[0-9.]+$/); if (!ok) bad=1
            if (n % 2) { rd += $1; ru = $2 } else { wr += $1; wu = $2 } }
     END { if (bad || n == 0 || n % 2) print "NA NA - -"
@@ -443,20 +456,26 @@ for p in ${PRECISIONS}; do
 done
 
 say "===== summary"
-awk '
+# A precision's sharing row precedes its gemm row, so run[] is set when the ceiling is judged.
+awk -v strict="${FLOPS_MARGIN}" -v wide="${SHARED_FLOPS_MARGIN}" \
+  -v shared_pct="${SHARED_RUNNING_PCT}" '
   $2=="instr_retired" && $5!="NA" && $1!="idle" {
     d=$5-1; if (d<0) d=-d; v=(d<=0.05)?"PASS":"FAIL"; if (v=="FAIL") bad=1
     printf "O3 %-4s instr_retired monitor/perf %s %s (limit 5%%)\n", $1, $5, v; seen=1 }
   $2=="gemm" && $3!="NA" {
-    low = 100*(1 - $4/$3); v=($3<=$4*1.01)?"PASS":"FAIL"; if (v=="FAIL") bad=1
-    if (v=="PASS") printf "accuracy %-2s flops/op %s <= %d %s\n", $1, $3, $4, v
-    else printf "accuracy %-2s flops/op %s > %d: monitor FP count at least %.1f%% low %s\n",
-      $1, $3, $4, low, v
+    shared = ($1 in run) && run[$1] < shared_pct
+    low = 100*(1 - $4/$3); v=($3<=$4*(1 + (shared ? wide : strict)))?"PASS":"FAIL"
+    if (v=="FAIL") bad=1
+    note = shared ? sprintf(" (+%d%% margin, counters shared)", 100*wide) : ""
+    if (v=="PASS") printf "accuracy %-2s flops/op %s <= %d%s %s\n", $1, $3, $4, note, v
+    else printf "accuracy %-2s flops/op %s > %d%s: monitor FP count at least %.1f%% low %s\n",
+      $1, $3, $4, note, low, v
     next }
   $2=="gemm" { print "accuracy " $1 " not measured (no GEMM log lines)"; next }
   $2=="sharing" && $3=="NA" { printf "sharing %-4s not published (daemon without the Phase 1b keys)\n", $1
     next }
   $2=="sharing" {
+    run[$1]=$3
     v=($3<=100.5 && ($4=="NA" || $4<=100.5))?"PASS":"FAIL"; if (v=="FAIL") bad=1
     printf "sharing %-4s running %s%% solo-expected %s%% outside %s%% %s\n", $1, $3, $4, $5, v
     next }

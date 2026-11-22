@@ -916,7 +916,10 @@ with the debug RPM installed (it reads the `/dev/shm/hpcperfstatsd-debug` mirror
 - **accuracy** — GEMM GFLOP/s over the window ÷ monitor FP rate must not exceed the 128-bit SVE
   FMA ceiling (4 / 8 / 16 FLOPs per dp / sp / hp operation). The monitor and perf both scale by
   enabled/running time, so their agreement cannot show a count that reads low when another
-  program (for example `nvidia-powerd`) holds most counters; this check can.
+  program (for example `nvidia-powerd`) holds most counters; this check can. The margin is 1%,
+  or 5% when the core events ran under 50% of enabled time (the sharing line's `running`): a
+  count scaled up from a fifth of the time scatters by a few percent run to run (c122-018:
+  dp read 1-4% low at 20% running, while sp / hp passed).
 
 ```bash
 ./scripts/canary_counter_check.sh                        # dp sp hp idle, exit 0 only on RESULT: PASS
@@ -928,7 +931,9 @@ with the debug RPM installed (it reads the `/dev/shm/hpcperfstatsd-debug` mirror
 (`--size 4096`, matrices larger than L3) and compares `dram_cas_reads` / `dram_cas_writes`
 (64-byte transfers, summed over every `scf<N>` row) with `perf stat -a` on every
 `nvidia_scf_pmu_<N>` (`cmem_rd_data` 32-byte beats, `cmem_wr_total_bytes`) over the same
-window. PASS needs read and write within 5% and at least 1 GB/s of reads.
+window: perf starts right after one daemon sample, runs until the first sample after `--window`,
+and is divided by its own wall time, so a load that varies cannot push both ratios off together.
+PASS needs read and write within 5% and at least 1 GB/s of reads.
 
 `--accuracy` (every architecture) is the counter-accuracy layer of `rpm_debug_shm_verify.sh`:
 see [Counter accuracy](#counter-accuracy-counter_check-default-1).
