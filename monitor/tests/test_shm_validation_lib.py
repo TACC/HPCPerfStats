@@ -2920,7 +2920,8 @@ class FaultInjectGpuSourceTests(unittest.TestCase):
             cap = Path(td)
             (cap / "schema").write_text("$hpcperfstats 3.1\n$sentinels 1\n!nvidia_gpu "
                                         + " ".join(self.SCHEMA) + "\n", encoding="utf-8")
-            (cap / "baseline.full").write_text("1.0 j1 h1\nnvidia_gpu 0 40 12\n", encoding="utf-8")
+            (cap / "baseline.full").write_text(f"1.0 j1 h1\nnvidia_gpu 0 {row_for(0, nvml, dcgm)}\n",
+                                               encoding="utf-8")
             for i in range(fic.capture_count(plan) + 1):
                 row = row_for(i, nvml, dcgm)
                 (cap / f"t{i}.full").write_text(f"{100 + 30 * i}.0 j1 h1\n"
@@ -2989,6 +2990,23 @@ class FaultInjectGpuSourceTests(unittest.TestCase):
         errors = self._check(rows, self._fired(1, 3))[1]
         self.assertEqual(errors, ["FAIL fault_inject nvml_fetch@1+3: nvidia_gpu/0 values frozen at the "
                                   "pre-fault reading after the fallback"])
+
+    def test_integrated_counter_not_scheduled_is_fetch_aftermath(self) -> None:
+        # c122-018 / c642-041 / c561-009 2026-11-22: gpu_flops and the link byte keys are E keys
+        # the daemon integrates from rates, so a fetch fault gives them NOT_SCHEDULED (no bridge
+        # over an unintegrated tick), not the forced BACKEND_ERROR.
+        self.SCHEMA = ["gpu_util,", "tensor_dmma_active,", "gpu_flops,E"]
+
+        def rows(i: int, nvml: dict, dcgm: dict) -> str:
+            if i < nvml["delay"]:
+                return f"40 12 {1000 + i}"
+            if i == nvml["delay"] or self._in(i, dcgm):
+                return "-7 -7 -6"
+            return f"{41 + i} -2 {2000 + i}"
+
+        notes, errors = self._check(rows, self._fired(1, 3))
+        self.assertEqual(errors, [])
+        self.assertTrue(any(n.startswith("PASS fault_inject dcgm_fetch@") for n in notes), notes)
 
     def test_unreached_nvml_fetch_is_a_note_and_leaves_no_aftermath(self) -> None:
         # DCGM serves the node: nvml_fetch never runs, dcgm_fetch fires in its own window.

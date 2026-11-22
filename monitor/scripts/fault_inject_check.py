@@ -68,6 +68,7 @@ INVALID_VALUE = _code("INVALID_VALUE")
 BACKOFF = _code("BACKOFF")
 PMU_BUSY = _code("PMU_BUSY")
 NOT_PRESENT = _code("NOT_PRESENT")
+NOT_SCHEDULED = _code("NOT_SCHEDULED")
 EBUSY = 16
 ARM_DELAY = 1  # clean collect cycles before a collect-time fault fires
 RESUME_AFTER = 2  # released cycles before the resume check
@@ -144,9 +145,12 @@ def build_plan(caps: dict, manifest: dict, *, ticks: int, sys_root: Path) -> lis
         # Fewer ticks than the MAD fail threshold: BACKEND_ERROR, BACKOFF only on a long run.
         add("mad_query", "host_ib", list(_IB_MAD_KEYS), [BACKEND_ERROR, BACKOFF], True)
     if "nvidia_gpu" in schema:
+        # E keys the daemon integrates from rates (gpu_flops, link bytes) carry NOT_SCHEDULED for
+        # an unread tick instead of the forced code (nvidia_gpu_estimate_counter_code).
         add("nvml_fetch", "nvidia_gpu", ["*"], [BACKEND_ERROR], True,
-            also=(NOT_PRESENT, READ_FAILED, INVALID_VALUE), fallback=True)
-        add("dcgm_fetch", "nvidia_gpu", ["*"], [BACKEND_ERROR], True, delay=after_resume("nvidia_gpu"))
+            also=(NOT_PRESENT, READ_FAILED, INVALID_VALUE, NOT_SCHEDULED), fallback=True)
+        add("dcgm_fetch", "nvidia_gpu", ["*"], [BACKEND_ERROR], True, delay=after_resume("nvidia_gpu"),
+            also=(NOT_SCHEDULED,))
     if "host_power_socket" in schema:
         add("hwmon_read", "host_power_socket", ["*"], [READ_FAILED], True)
     if "host_cpu_hw" in schema and backend == "arm":
