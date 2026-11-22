@@ -1,7 +1,10 @@
 from collections import OrderedDict
 
 import numpy as np
+import pytest
 
+from hpcperfstats.analysis.metrics.lib.columnar.kernels import HostSeries
+from hpcperfstats.analysis.metrics.lib.columnar.testing import host_series
 from hpcperfstats.analysis.metrics.lib.gen import utils as utils_mod
 from hpcperfstats.analysis.metrics.lib.gen.utils import utils
 
@@ -19,15 +22,16 @@ class _MockJob:
       "host1": _MockHost(
         {
           "nvidia_gpu": {
-            "gpu0": np.array([[0.0], [50.0], [100.0]], dtype=np.float64),
+            "gpu0": host_series(
+              np.array([[0.0], [50.0], [100.0]], dtype=np.float64)
+            ),
           }
         }
       ),
       "host2": _MockHost({}),
     }
-    # Minimal acct/times required by utils.__init__
+    # Minimal acct required by utils.__init__
     self.acct = {"cores": 1, "nodes": 1}
-    self.times = np.array([0.0, 1.0], dtype=np.float64)
 
 
 def test_get_type_skips_hosts_without_typename():
@@ -51,7 +55,9 @@ def test_amd64_pmc_sets_pmc_and_freq_for_get_type():
     "h1": _MockHost(
       {
         "amd64_pmc": {
-          "0": np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float64),
+          "0": host_series(
+            np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float64)
+          ),
         }
       }
     ),
@@ -72,7 +78,9 @@ def test_cpu_counter_metrics_sets_pmc_for_get_type():
     "h1": _MockHost(
       {
         "cpu_counter_metrics": {
-          "0": np.array([[0.0, 0.0], [1.0, 2.0]], dtype=np.float64),
+          "0": host_series(
+            np.array([[0.0, 0.0], [1.0, 2.0]], dtype=np.float64)
+          ),
         }
       }
     ),
@@ -95,7 +103,9 @@ def test_pmc_prefers_amd64_over_intel_when_both_in_schema():
     "h1": _MockHost(
       {
         "amd64_pmc": {
-          "0": np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float64),
+          "0": host_series(
+            np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float64)
+          ),
         },
       }
     ),
@@ -145,15 +155,88 @@ def test_pick_pmc_typename_set_build_handles_sequence_typenames():
 def test_get_type_returns_read_only_views_not_copies():
   """Regression (hs04 OOM, 2026-11-21): ``get_type`` copied every host's
   grid with ``astype`` (3.3-3.9 GiB per call on a 162-host job). It now
-  returns read-only float64 views of the pivot grids, same values."""
+  returns read-only views of the pivot arrays, same values."""
   job = _MockJob()
-  grid = job.hosts["host1"].stats["nvidia_gpu"]["gpu0"]
+  series = job.hosts["host1"].stats["nvidia_gpu"]["gpu0"]
   u = utils(job)
   _, split = u.get_type("nvidia_gpu", aggregate=False)
   view = split["host1"]["gpu0"]
-  assert np.shares_memory(view, grid) and not view.flags.writeable
-  assert np.array_equal(view, grid)
+  for name in ("t_s", "t_us", "values", "arc"):
+    got, src = getattr(view, name), getattr(series, name)
+    assert np.shares_memory(got, src) and not got.flags.writeable, name
+    assert np.array_equal(got, src, equal_nan=True)
   _, agg = u.get_type("nvidia_gpu", aggregate=True)
-  assert np.shares_memory(agg["host1"], grid)
-  # The caller's grid stays writable; only the returned view is locked.
-  assert grid.flags.writeable
+  assert np.shares_memory(agg["host1"].values, series.values)
+  # The caller's series stays writable; only the returned view is locked.
+  assert series.values.flags.writeable
+
+
+def test_host_series_array_like():
+  """``HostSeries`` indexes and shapes like its value grid, so ``stats[:, j]``
+  call sites keep working; ``aggregate=False`` keeps one series per device;
+  several device series of one host sum on their shared times."""
+  values = np.array([[1.0, 2.0], [3.0, 5.0], [6.0, 9.0]])
+  s = host_series(values, [10.0, 20.0, 30.0])
+  assert isinstance(s, HostSeries)
+  assert s.shape == (3, 2)
+  assert s[:, 1].tolist() == [2.0, 5.0, 9.0]
+  assert s[-1, 0] == 6.0
+  assert s.t_us.dtype == np.int64 and s.t_us.tolist()[0] == 10_000_000
+  job = _MockJob()
+  job.schemas = {"host_cpu": ["user", "system"]}
+  job.hosts = {"h1": _MockHost({"host_cpu": {"0": s, "1": s}})}
+  u = utils(job)
+  _, per_dev = u.get_type("host_cpu", aggregate=False)
+  assert set(per_dev["h1"]) == {"0", "1"}
+  _, agg = u.get_type("host_cpu", aggregate=True)
+  assert agg["h1"].values.tolist() == (2 * values).tolist()
+  assert agg["h1"].t_s.tolist() == [10.0, 20.0, 30.0]
+  with pytest.raises(ValueError):
+    shifted = host_series(values, [11.0, 20.0, 30.0])
+    job.hosts = {"h1": _MockHost({"host_cpu": {"0": s, "1": shifted}})}
+    utils(job).get_type("host_cpu")
+
+
+def test_get_type_columnar_series_on_each_hosts_own_times():
+  """Columnar view: each host's series of a type is on that host's own
+  sample times of the type (no job-wide axis, no NaN padding)."""
+  from hpcperfstats.analysis.metrics.tests import per_host_axis_fixtures as F
+
+  table = F.unaligned_17_41_table()
+  u = utils(table.metrics_view())
+  _, stats = u.get_type("host_cpu")
+  oracle = F.host_series(table, "host_cpu", table.schema["host_cpu"])
+  assert stats.keys() == oracle.keys()
+  for host, s in stats.items():
+    assert np.array_equal(s.t_us, oracle[host].t_us)
+    np.testing.assert_array_equal(s.values, oracle[host].grid)
+    assert not np.isnan(s.values).any()
+
+
+def test_single_host_irregular_sampling_unchanged():
+  """Single host, corpus-like irregular intervals, a duplicate floored
+  second and sparse types (host_vm, host_lnet): every complex metric equals
+  the pinned union-axis value (no binning path), except max_lnetbw, which
+  the union axis left None (sparse host_lnet plus the "lnet" cluster lookup
+  miss) and is now the host's own cluster arc peak."""
+  from hpcperfstats.analysis.metrics.tests import per_host_axis_fixtures as F
+
+  table = F.single_irregular_table()
+  base = F.load_baseline()
+  pinned = base["fixtures"]["single_irregular"]["metrics"]
+  assert set(base["known_head_defects"]["single_irregular"]) == {"max_lnetbw"}
+  got = {r["metric"]: r["value"] for r in F.compute_rows(table)}
+  for metric, exp in pinned.items():
+    if metric == "max_lnetbw":
+      assert exp is None
+      oracle = F.cluster_arc_peak_oracle(
+        table, "host_lnet", ("tx_bytes", "rx_bytes"), 1024 * 1024
+      )
+      assert oracle is not None and got[metric] == oracle
+    else:
+      assert got[metric] == exp, (metric, got[metric], exp)
+  # The sparse types keep only their own samples.
+  _, vm = utils(table.metrics_view()).get_type("host_vm")
+  assert vm["c001"].shape[0] == len(
+    F.host_series(table, "host_vm", ["pgpgin"])["c001"].t_us
+  )

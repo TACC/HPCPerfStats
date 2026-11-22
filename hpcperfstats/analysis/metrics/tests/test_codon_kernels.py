@@ -242,13 +242,22 @@ def _frame_index_snapshot():
         ("host_cpu", ["user", "nice", "idle"]),
       ):
         out[f"{seed}:{label}:delta:{typ}"] = idx.delta_sum_by_event(typ, events)
-      piv = idx.metrics_pivot("host_cpu", ["user", "ghost", "nice"])
-      out[f"{seed}:{label}:pivot"] = (
-        piv["per_host"].copy(),
-        piv["cluster_value"].copy(),
-        piv["cluster_arc"].copy(),
-      )
+      events = ["user", "ghost", "nice"]
+      out[f"{seed}:{label}:pivot"] = _pivot_snapshot(idx, "host_cpu", events)
   return out
+
+
+def _pivot_snapshot(idx, typ, events):
+  """Ragged pivot arrays plus the cluster grids binned one bin per distinct
+  sample time (ragged and binned ``grid_mean`` keys)."""
+  piv = idx.metrics_pivot(typ, events)
+  ticks, bins = np.unique(piv["times_us"], return_inverse=True)
+  value, arc = idx.metrics_binned(typ, events, bins, ticks.size)
+  return (
+    *(piv[k].copy() for k in sorted(piv)),
+    value,
+    arc,
+  )
 
 
 @pytest.mark.usefixtures("kern")
@@ -878,13 +887,7 @@ def test_golden_frames_codon_equals_numpy(monkeypatch, jid):
           agg.time_us.copy(),
           agg.sum_val.copy(),
         )
-      piv = jt.index.metrics_pivot(typ, list(events))
-      out[f"pivot:{typ}"] = (
-        piv["host_ids"].copy(),
-        piv["per_host"].copy(),
-        piv["cluster_value"].copy(),
-        piv["cluster_arc"].copy(),
-      )
+      out[f"pivot:{typ}"] = _pivot_snapshot(jt.index, typ, list(events))
     try:
       summary = build_summary_series(jt)
     except ValueError:

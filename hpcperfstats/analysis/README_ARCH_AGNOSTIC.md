@@ -47,7 +47,7 @@ Typenames must match the **shipped** monitor `st_name` values for new ingest. Hi
 
 Need per-event FP counters (Intel FP_ARITH and/or legacy SSE names). Aggregate AMD `fp_ops_retired` does not decompose by width.
 
-**x86 direct perf (contract 12):** `avg_flops` reads `host_cpu_hw` AMD `fp_ops_retired` (Zen3 / Zen4 / Zen5), lane-weighted lowercase Intel FP_ARITH, or Grace `arm_est_flops` (a positive rate wins over another family's 0). The CPU pie inputs `avg_fp64_instr` / `avg_fp32_instr` take Grace FP instructions, Intel FP_ARITH instruction counts (direct-perf rows only: positive `pmu_enabled_time`), or Zen5 FLOPs by precision (`amd_fp_dp_ops`, FP32 = total - FP64, bf16 in FP32); Zen3 / Zen4 have no split and show no CPU pie. The vector-width metrics (`vecpercent_*`, `avg_vector_width_*`) and `flops_node_imbalance` still read only the historical uppercase / `FLOPS` names.
+**x86 direct perf (contract 12):** `avg_flops` reads `host_cpu_hw` AMD `fp_ops_retired` (Zen3 / Zen4 / Zen5), lane-weighted lowercase Intel FP_ARITH, or Grace `arm_est_flops` (a positive rate wins over another family's 0). The CPU pie inputs `avg_fp64_instr` / `avg_fp32_instr` take Grace FP instructions, Intel FP_ARITH instruction counts (direct-perf rows only: positive `pmu_enabled_time`), or Zen5 FLOPs by precision (`amd_fp_dp_ops`, FP32 = total - FP64, bf16 in FP32); Zen3 / Zen4 have no split and show no CPU pie. `flops_node_imbalance` / `dram_bw_node_imbalance` resolve the same family as `avg_flops` / `avg_mbw` (shared family tables; the Intel lanes' PMU gate applies per host). The vector-width metrics (`vecpercent_*`, `avg_vector_width_*`) still read only the historical uppercase names.
 
 ## New CPU types
 

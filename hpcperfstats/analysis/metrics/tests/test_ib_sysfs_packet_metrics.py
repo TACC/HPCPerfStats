@@ -11,6 +11,11 @@ import numpy as np
 import pytest
 
 from hpcperfstats.analysis.metrics.lib import metrics
+from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+  host_series,
+  table_from_records,
+)
+from hpcperfstats.analysis.metrics.lib.gen.utils import utils
 from hpcperfstats.dbload.lib.monitor_naming.load_map import (
   load_monitor_rename_map,
 )
@@ -19,6 +24,7 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
 )
 
 MIB = 1024 * 1024
+US = 1_000_000
 
 RETIRED_HOST_IB_KEYS = (
   "port_select",
@@ -33,21 +39,31 @@ RETIRED_HOST_IB_KEYS = (
 
 
 class _StubU:
-  def __init__(self, type_map, t):
+  def __init__(self, type_map):
     self._map = type_map
-    self.t = np.asarray(t, dtype=np.float64)
-    self.job = type(
-      "J", (), {"cluster_mean_by_type": {}, "cluster_mean_arc_by_type": {}}
-    )()
 
   def get_type(self, typename):
     return self._map.get(typename, (None, {}))
 
 
 def _ib(events, rows, t=(0.0, 10.0)):
+  """Fake utils with one host_ib host and no arc (per-host value path)."""
   schema = metrics._Schema(list(events))
-  stats = np.asarray(rows, dtype=np.float64)
-  return _StubU({"host_ib": (schema, {"h1": stats})}, t)
+  rows = np.asarray(rows, dtype=np.float64)
+  stats = host_series(rows, t, arc=np.full_like(rows, np.nan))
+  return _StubU({"host_ib": (schema, {"h1": stats})})
+
+
+def _ib_view(rows, arcs):
+  """utils over a real metrics view: one host_ib host, 10 s apart."""
+  recs = [
+    (k * 10 * US, "h1", "host_ib", ev, None, 1, v, a, None)
+    for k, (row, arc) in enumerate(zip(rows, arcs, strict=True))
+    for ev, v, a in zip(_DATA, row, arc, strict=True)
+  ]
+  return utils(
+    table_from_records(recs, schema={"host_ib": list(_DATA)}).metrics_view()
+  )
 
 
 _BOTH = (
@@ -127,15 +143,13 @@ def test_max_fabricbw_per_host_value_scales_words():
 
 
 def test_max_fabricbw_cluster_value_mean_scales_words():
-  u = _ib(_DATA, [[0.0, 0.0], [1.0, 1.0]])
-  u.job.cluster_mean_by_type = {"host_ib": np.asarray(_DATA_ROWS)}
+  u = _ib_view(_DATA_ROWS, [[None, None], [None, None]])
   value, _, _ = metrics.max_fabricbw().compute_metric(u)
   assert value == pytest.approx(_DATA_MB_S)
 
 
 def test_max_fabricbw_cluster_arc_is_already_bytes():
-  u = _ib(_DATA, [[0.0, 0.0], [1.0, 1.0]])
-  arc = np.asarray([[0.0, 0.0], [4 * 2.0**20 / 10.0, 4 * 2.0**20 / 10.0]])
-  u.job.cluster_mean_arc_by_type = {"host_ib": arc}
+  rate = 4 * 2.0**20 / 10.0
+  u = _ib_view([[0.0, 0.0], [1.0, 1.0]], [[None, None], [rate, rate]])
   value, _, _ = metrics.max_fabricbw().compute_metric(u)
   assert value == pytest.approx(_DATA_MB_S)

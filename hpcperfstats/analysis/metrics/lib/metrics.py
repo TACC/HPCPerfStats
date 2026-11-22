@@ -15,11 +15,15 @@ Attributes:
   METRICS_HOST_QUERY_BATCH: Attribute.
   METRIC_NOT_COMPUTED_YET: Attribute.
   NO_GPU_AGGREGATE_TELEMETRY: Attribute.
+  NON_FINITE_RESULT_MSG: no_data_reason of a metric whose computed value
+    was NaN or infinite (stored as None, never as NaN).
   NO_SIMPLE_SAMPLES_MSG: Attribute.
   NO_TIME_SERIES_MSG: Attribute.
   NUMEXPR_MIN_ARRAY_SIZE: Attribute.
   STAFF_ONLY_JOB_METRICS: Catalog metrics computed for every job but shown
     to staff sessions only (PMU sharing diagnostics).
+  _BIN_PHASE_MIN_RESULTANT: Mean resultant length below which the sample
+    phases are spread over the bin period and the bin phase is 0.
   _COMPLEX_NO_DATA_REASONS: Attribute.
   _COMPLEX_PLACEHOLDER_TYPE_UNITS: Attribute.
   _GPU_JOB_DETAIL_CATALOG: Attribute.
@@ -39,18 +43,25 @@ Attributes:
   _NV_AMD_GPU_TYPES: Vendor order of the NVIDIA / AMD GPU gauge metrics.
   _PARENT_PERSIST_TIMEOUT_MARKERS: Attribute.
   _TIME_IMBALANCE_MAX_SLICE_RATIO: Attribute.
+  _US_PER_S: Microseconds per second (frame times are int64 us).
+  _VECTOR_WIDTHS_32B: Single-precision PMC FP event to FLOP lanes per
+    instruction (1 = scalar).
+  _VECTOR_WIDTHS_64B: Double-precision PMC FP event to FLOP lanes per
+    instruction (1 = scalar).
 """
 
 from __future__ import annotations
 
 import contextlib
+import itertools
 import json
+import math
 import sys
 import threading
 import time
 import traceback
-from collections.abc import Iterator
-from typing import Any
+from collections.abc import Collection, Iterator, Mapping, Sequence
+from typing import Any, NamedTuple
 
 import numexpr as ne
 import numpy as np
@@ -58,7 +69,7 @@ from django.db import connections, transaction
 from django.db.models import Max, Min
 from django.db.utils import DatabaseError, OperationalError
 from django.utils import timezone as django_timezone
-from numpy import amax, diff, isnan, maximum, mean, zeros
+from numpy import amax, diff, mean
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.analysis.metrics.lib import phase_profile
@@ -87,9 +98,7 @@ from hpcperfstats.analysis.metrics.lib.gen.cpu_fp_events import (
   INTEL_FP_ARITH_SINGLE_LANES,
 )
 from hpcperfstats.analysis.metrics.lib.gen.imc_cas_bw import (
-  DDR_CAS_BYTES,
   DDR_CAS_GIB,
-  HBM_CAS_BYTES,
   HBM_CAS_GIB,
   combine_cas_bw_scalars,
 )
@@ -109,6 +118,7 @@ from hpcperfstats.analysis.metrics.lib.sentinel_reasons import (
 )
 from hpcperfstats.dbload.lib.db_unavailable import DatabaseUnavailableExit
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+  AMD_DF_STATS_TYPES,
   AMD_FP_DP_OPS,
   FP_OPS_RETIRED,
   HOST_BLOCK_TYPE,
@@ -145,7 +155,6 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
   dram_cas_read_write_pairs,
   event_probe_names_for_type,
   events_probe_names,
-  fp_ops_retired_event_names,
   grace_fp_scalar_double_event_names,
   grace_fp_scalar_single_event_names,
   hbm_cas_read_write_pairs,
@@ -416,14 +425,23 @@ def _sanitize_metrics_compute_rows(rows: Any) -> Any:
   """
   Normalize type/metric/units on every worker-produced row before persist.
 
+  Central non-finite guard: a real ``value`` (``float`` / NumPy floating;
+  integers are always finite) that is NaN or infinite is stored as None with
+  ``NON_FINITE_RESULT_MSG`` and ``{"codes": {}, "non_finite": True}``, so no
+  metric can persist NaN or inf.
+
   Args:
-    rows (Any): Rows passed to this helper.
+    rows (Any): Iterable of row dicts (others and rows without ``jid`` are
+      dropped).
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: list of normalized row dicts.
 
   Examples:
-    >>> _sanitize_metrics_compute_rows(None)  # doctest: +SKIP
+    >>> _sanitize_metrics_compute_rows(
+    ...   [{"jid": "1", "metric": "m", "value": float("nan")}]
+    ... )[0]["no_data_codes"]
+    {'codes': {}, 'non_finite': True}
   """
   out = []
   for row in rows:
@@ -432,15 +450,23 @@ def _sanitize_metrics_compute_rows(rows: Any) -> Any:
     jid = row.get("jid")
     if jid is None:
       continue
+    value = row.get("value")
+    non_finite = isinstance(value, (float, np.floating)) and not np.isfinite(
+      value
+    )
     out.append(
       {
         "jid": jid,
         "type": _coerce_metrics_identity_str(row.get("type")),
         "metric": _coerce_metrics_identity_str(row.get("metric")),
         "units": _coerce_metrics_identity_str(row.get("units")),
-        "value": row.get("value"),
-        "no_data_reason": row.get("no_data_reason"),
-        "no_data_codes": row.get("no_data_codes"),
+        "value": None if non_finite else value,
+        "no_data_reason": NON_FINITE_RESULT_MSG
+        if non_finite
+        else row.get("no_data_reason"),
+        "no_data_codes": {"codes": {}, "non_finite": True}
+        if non_finite
+        else row.get("no_data_codes"),
       }
     )
   return out
@@ -658,6 +684,7 @@ _COMPLEX_NO_DATA_REASONS = {
 
 NO_TIME_SERIES_MSG = "No time-series telemetry for this job"
 NO_SIMPLE_SAMPLES_MSG = "No host_data samples for this metric in the job window"
+NON_FINITE_RESULT_MSG = "non-finite result"
 METRIC_NOT_COMPUTED_YET = "Metric not computed"
 INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
   "Insufficient Data For Metrics Processing"
@@ -941,39 +968,248 @@ def _sane_peak_from_rates(
   return float(positive.max())
 
 
-def _peak_from_cluster_arc(
-  u: Any,
-  typename: Any,
-  column_indices: Any,
-  divisor: Any,
-  max_sane: Any | None = None,
-) -> Any:
+_US_PER_S = 1_000_000
+# Below this mean resultant length the sample phases are spread over the
+# period and their circular mean says nothing; the bin phase is then 0.
+_BIN_PHASE_MIN_RESULTANT = 0.5
+
+
+class _BinGrid(NamedTuple):
   """
-  Peak of host-averaged ingest ``arc`` (already a rate) when available.
+  Common time bins of one job and type, for comparing hosts that sample at
+  different offsets.
+
+  Attributes:
+    period_us: Bin width (median of every host's own sample intervals).
+    phase_us: Circular mean of the samples' ``t mod period`` (0 when the
+      phases are spread out); samples sit at bin centres.
+    raw_bins: Sorted distinct raw bin numbers that hold a sample (compacted
+      bin ``k`` is ``raw_bins[k]``).
+  """
+
+  period_us: int
+  phase_us: int
+  raw_bins: np.ndarray
+
+  def bin_of(self, t_us: np.ndarray) -> np.ndarray:
+    """
+    Compacted bin of each sample time (a time on an edge takes the later
+    bin).
+
+    Args:
+      t_us (np.ndarray): int64 epoch-us sample times of the grid's samples.
+
+    Returns:
+      np.ndarray: int64 bin ids in ``[0, raw_bins.size)``.
+
+    Examples:
+      >>> g = _bin_grid([np.array([0, 60_000_000]), np.array([1_000_000])])
+      >>> g.bin_of(np.array([0, 1_000_000, 60_000_000])).tolist()
+      [0, 0, 1]
+    """
+    return np.searchsorted(self.raw_bins, self._raw(t_us)).astype(np.int64)
+
+  def _raw(self, t_us: np.ndarray) -> np.ndarray:
+    """
+    Raw bin number ``floor((t - phase + period / 2) / period)``.
+
+    Args:
+      t_us (np.ndarray): int64 epoch-us times.
+
+    Returns:
+      np.ndarray: int64 raw bin numbers.
+
+    Examples:
+      >>> _BinGrid(60, 0, np.array([0]))._raw(np.array([29, 30])).tolist()
+      [0, 1]
+    """
+    return np.floor_divide(
+      np.asarray(t_us, dtype=np.int64) - self.phase_us + self.period_us // 2,
+      self.period_us,
+    )
+
+
+def _bin_grid(times_by_host: Sequence[np.ndarray]) -> _BinGrid | None:
+  """
+  Bin grid of one job and type from every host's own sample times.
+
+  The period is the median of the intervals between each host's distinct
+  samples. The phase is the circular mean of ``t mod period``, so phases
+  that straddle the period edge (59.9 s and 0.1 s) average to the edge, not
+  to its opposite; when the mean resultant length is below
+  ``_BIN_PHASE_MIN_RESULTANT`` the phases are spread over the period and
+  the phase is 0. Samples sit at bin centres, so hosts that sample in the
+  same second at different sub-second offsets share bins. Bins are
+  compacted to the ones a sample falls in, so a stray far sample adds one
+  bin, never a long run of empty ones.
 
   Args:
-    u (Any): U passed to this helper.
-    typename (Any): Typename passed to this helper.
-    column_indices (Any): Column indices passed to this helper.
-    divisor (Any): Divisor passed to this helper.
-    max_sane (Any | None): One of ``Any``, ``None``.
+    times_by_host (Sequence[np.ndarray]): int64 epoch-us sample times per
+      host (duplicates allowed).
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    _BinGrid | None: The grid, or None when no host has two distinct
+    samples (no period).
 
   Examples:
-    >>> _peak_from_cluster_arc(None, None, None, None, None)  # doctest: +SKIP
+    >>> g = _bin_grid([np.array([0, 60, 120]), np.array([2, 62, 122])])
+    >>> g.period_us, g.phase_us, g.raw_bins.tolist()
+    (60, 1, [0, 1, 2])
+    >>> _bin_grid([np.array([5]), np.array([9])]) is None
+    True
   """
-  cmap = getattr(u.job, "cluster_mean_arc_by_type", None) or {}
-  cm = cmap.get(typename)
-  if cm is None or cm.size == 0:
+  uniq = [np.unique(np.asarray(t, dtype=np.int64)) for t in times_by_host]
+  gaps = np.concatenate([np.diff(t) for t in uniq] or [np.empty(0, np.int64)])
+  if gaps.size == 0:
     return None
-  s = np.zeros(cm.shape[0], dtype=np.float64)
-  for j in column_indices:
-    if j < 0 or j >= cm.shape[1]:
+  period = max(1, round(float(np.median(gaps))))
+  all_t = np.concatenate(uniq)
+  angle = (2 * np.pi / period) * np.mod(all_t, period).astype(np.float64)
+  c, s = float(np.mean(np.cos(angle))), float(np.mean(np.sin(angle)))
+  phase = (
+    round(period / (2 * np.pi) * math.atan2(s, c))
+    if math.hypot(c, s) >= _BIN_PHASE_MIN_RESULTANT
+    else 0
+  )
+  grid = _BinGrid(period, phase, np.empty(0, dtype=np.int64))
+  return grid._replace(raw_bins=np.unique(grid._raw(all_t)))
+
+
+def _binned_imbalance_percent(
+  sample_times: Sequence[np.ndarray],
+  value_times: Sequence[np.ndarray],
+  values: Sequence[np.ndarray],
+  weights: Sequence[np.ndarray],
+) -> float | None:
+  """
+  Relative node imbalance (%) of per-host values compared per time bin.
+
+  One host is compared with itself on its own samples (no binning), so the
+  result is 0.0 there. Several hosts share :func:`_bin_grid` over their
+  sample times; each value goes to the bin of its ``value_times`` entry,
+  and a host's values in one bin are averaged with ``weights``. Per bin the
+  peak is the max over the hosts present (and 0); per host the mean of
+  ``(peak - v) / peak`` over its bins with a positive peak; the result is
+  100 x the largest host mean (a host without such bins counts 0).
+
+  Args:
+    sample_times (Sequence[np.ndarray]): Each host's int64 us sample times
+      (defines the grid).
+    value_times (Sequence[np.ndarray]): Per host, the us time whose bin each
+      value goes to.
+    values (Sequence[np.ndarray]): Per host values (NaN skipped).
+    weights (Sequence[np.ndarray]): Per host positive weights of the values
+      in a bin's mean.
+
+  Returns:
+    float | None: Imbalance percent; None without hosts or, with several
+    hosts, when no host has two distinct samples.
+
+  Examples:
+    >>> t = [np.array([0, 60]), np.array([1, 61])]
+    >>> v = [np.array([4.0, 4.0]), np.array([2.0, 4.0])]
+    >>> w = [np.ones(2), np.ones(2)]
+    >>> _binned_imbalance_percent(t, t, v, w)
+    25.0
+  """
+  if not values:
+    return None
+  if len(values) == 1:
+    bins = [np.arange(values[0].size)]
+    n_bins = values[0].size
+  else:
+    grid = _bin_grid(sample_times)
+    if grid is None:
       return None
-    s = s + cm[:, j]
-  return _sane_peak_from_rates(s, divisor=divisor, max_sane=max_sane)
+    bins = [grid.bin_of(t) for t in value_times]
+    n_bins = grid.raw_bins.size
+  means = np.full((len(values), n_bins), np.nan)
+  for k, (b, v, w) in enumerate(zip(bins, values, weights, strict=True)):
+    fin = np.isfinite(v)
+    num = np.bincount(b[fin], weights=v[fin] * w[fin], minlength=n_bins)
+    den = np.bincount(b[fin], weights=w[fin], minlength=n_bins)
+    np.divide(num, den, out=means[k], where=den > 0)
+  peak = np.fmax(np.fmax.reduce(means, axis=0), 0.0)
+  worst = 0.0
+  for row in means:
+    valid = np.isfinite(row) & (peak > 0)
+    if valid.any():
+      worst = max(worst, float(mean((peak[valid] - row[valid]) / peak[valid])))
+  return 100 * worst
+
+
+class _ClusterGrids(NamedTuple):
+  """
+  Cross-host means of one type per time bin (the cluster series).
+
+  Attributes:
+    t_s: Floored-second time of each bin's earliest sample.
+    value: ``(n_bins, n_events)`` mean ``value`` over every
+      ``(host, device)`` row in the bin.
+    arc: ``(n_bins, n_events)`` mean ingest ``arc`` likewise.
+    same_hosts: ``(n_bins - 1,)`` True where bins ``k`` and ``k + 1`` hold
+      the same hosts, so a difference of their value means never mixes
+      counters of different hosts.
+  """
+
+  t_s: np.ndarray
+  value: np.ndarray
+  arc: np.ndarray
+  same_hosts: np.ndarray
+
+
+def _cluster_grids(u: Any, typename: Any) -> _ClusterGrids | None:
+  """
+  Cluster grids of ``typename`` binned from the job's ragged pivot.
+
+  The name resolves like ``get_type`` (``"lnet"`` reads ``host_lnet``). A
+  type with rows on one host keeps that host's own samples as bins; several
+  hosts share :func:`_bin_grid`. On hosts that sample on the same ticks the
+  bins are the ticks and the grids equal the old union-axis cluster grids.
+
+  Args:
+    u (Any): ``utils`` over a columnar metrics view (``u.job.pivots``).
+    typename (Any): Type name or alias.
+
+  Returns:
+    _ClusterGrids | None: Grids, or None without pivots, without rows of
+    the type, or when no host has two distinct samples.
+
+  Examples:
+    >>> _cluster_grids(None, "host_ib") is None
+    True
+  """
+  pivots = getattr(getattr(u, "job", None), "pivots", None)
+  typ = None if pivots is None else u.resolve_type(typename)
+  hit = None if typ is None else pivots.get(typ)
+  if hit is None:
+    return None
+  piv = hit[0]
+  off, t_us = piv["host_offsets"], piv["times_us"]
+  n_h = off.size - 1
+  if n_h == 1:
+    bins, n_bins = np.arange(t_us.size, dtype=np.int64), t_us.size
+  else:
+    grid = _bin_grid([t_us[a:b] for a, b in itertools.pairwise(off)])
+    if grid is None:
+      return None
+    bins, n_bins = grid.bin_of(t_us), grid.raw_bins.size
+  value, arc = pivots.binned(typ, bins, n_bins)
+  first = np.full(n_bins, np.iinfo(np.int64).max)
+  np.minimum.at(first, bins, t_us)
+  # The sorted (bin, host) pairs list each bin's hosts in ascending order:
+  # neighbouring bins hold the same hosts when their counts match and every
+  # host equals the one ``count`` positions later (an exact set check).
+  pair = np.unique(bins * n_h + np.repeat(np.arange(n_h), np.diff(off)))
+  pbin, phost = pair // n_h, pair % n_h
+  count = np.bincount(pbin, minlength=n_bins)
+  same = count[:-1] == count[1:]
+  i = np.flatnonzero(pbin < n_bins - 1)
+  i = i[same[pbin[i]]]
+  same[pbin[i[phost[i] != phost[i + count[pbin[i]]]]]] = False
+  return _ClusterGrids(
+    np.floor_divide(first, _US_PER_S).astype(np.float64), value, arc, same
+  )
 
 
 def _peak_interval_rate_from_cluster_mean(
@@ -987,42 +1223,189 @@ def _peak_interval_rate_from_cluster_mean(
   """
   Peak rate from cluster means: prefer ``arc``, else dy/dt on ``value``.
 
-  Uses ``job.cluster_mean_arc_by_type`` / ``cluster_mean_by_type`` (see
-  ``_JobForMetrics``). ``max_sane`` is in the same units as the returned peak
-  (after ``divisor``). Returns None when only wrap-class poison remains.
+  Reads :func:`_cluster_grids`. ``max_sane`` is in the same units as the
+  returned peak (after ``divisor``). The ``value`` fallback differences
+  only neighbouring bins that hold the same hosts (NaN otherwise), so it is
+  never a difference of counters from different hosts. Returns None when
+  only wrap-class poison remains.
 
   Args:
-    u (Any): U passed to this helper.
-    typename (Any): Typename passed to this helper.
-    column_indices (Any): Column indices passed to this helper.
-    divisor (Any): Divisor passed to this helper.
-    max_sane (Any | None): One of ``Any``, ``None``.
+    u (Any): ``utils`` over the job's metrics view.
+    typename (Any): Type name or alias (resolved like ``get_type``).
+    column_indices (Any): Event columns summed (sequence of int).
+    divisor (Any): Unit divisor applied to the summed rate.
+    max_sane (Any | None): Physical ceiling after ``divisor``, or None.
     value_scale (float): Factor applied to the ``value`` fallback only, for
       counters whose raw ``value`` unit differs from ``arc`` (host_ib
       ``port_*_data`` words, ``_IB_DATA_BYTES_PER_WORD``).
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: float peak or None.
 
   Examples:
-    >>> _peak_interval_rate_from_cluster_mean(None, None, None, None, None)
+    >>> _peak_interval_rate_from_cluster_mean(None, "host_ib", [0], 1.0)
   """
-  arc_peak = _peak_from_cluster_arc(
-    u, typename, column_indices, divisor, max_sane=max_sane
-  )
+  grids = _cluster_grids(u, typename)
+  if grids is None or any(
+    j < 0 or j >= grids.value.shape[1] for j in column_indices
+  ):
+    return None
+  arc = np.zeros(grids.arc.shape[0], dtype=np.float64)
+  value = np.zeros(grids.value.shape[0], dtype=np.float64)
+  for j in column_indices:
+    arc = arc + grids.arc[:, j]
+    value = value + grids.value[:, j]
+  arc_peak = _sane_peak_from_rates(arc, divisor=divisor, max_sane=max_sane)
   if arc_peak is not None:
     return arc_peak
-  cmap = getattr(u.job, "cluster_mean_by_type", None) or {}
-  cm = cmap.get(typename)
-  if cm is None or cm.size == 0 or cm.shape[0] < 2:
-    return None
-  s = np.zeros(cm.shape[0], dtype=np.float64)
-  for j in column_indices:
-    if j < 0 or j >= cm.shape[1]:
-      return None
-    s = s + cm[:, j]
-  ratio = _per_interval_rate(s * value_scale, u.t)
+  ratio = _per_interval_rate(value * value_scale, grids.t_s)
+  ratio[~grids.same_hosts] = np.nan
   return _sane_peak_from_rates(ratio, divisor=divisor, max_sane=max_sane)
+
+
+def _max_host_rate(
+  stats: Any,
+  column_indices: Sequence[int],
+  *,
+  divisor: float = 1.0,
+  max_sane: float | None = None,
+) -> float | None:
+  """
+  Largest positive per-interval rate of summed counter columns over hosts.
+
+  Each host's rate is ``diff(sum of columns) / diff(t_s)`` on that host's
+  own sample times (the per-host fallback of the peak metrics when the
+  cluster grids give no peak).
+
+  Args:
+    stats (Any): ``{host: HostSeries}`` from ``get_type``.
+    column_indices (Sequence[int]): Event columns summed.
+    divisor (float): Unit divisor applied to each rate.
+    max_sane (float | None): Per-host ceiling after ``divisor``
+      (``_sane_peak_from_rates``); None keeps every positive rate.
+
+  Returns:
+    float | None: Peak rate (counter units per second / ``divisor``), or
+    None when no host has a positive finite rate.
+
+  Examples:
+    >>> from hpcperfstats.analysis.metrics.lib.columnar.kernels import (
+    ...   HostSeries,
+    ... )
+    >>> v = np.array([[0.0, 0.0], [10.0, 20.0]])
+    >>> s = HostSeries(np.array([0.0, 10.0]), np.array([0, 10]), v, v)
+    >>> _max_host_rate({"h": s}, [0, 1])
+    3.0
+  """
+  peaks = []
+  for series in stats.values():
+    total = np.zeros(series.shape[0], dtype=np.float64)
+    for j in column_indices:
+      total = total + series[:, j]
+    peak = _sane_peak_from_rates(
+      _per_interval_rate(total, series.t_s), divisor=divisor, max_sane=max_sane
+    )
+    if peak is not None:
+      peaks.append(peak)
+  return max(peaks, default=None)
+
+
+def _endpoint_deltas(
+  series: Any, column_indices: Sequence[int]
+) -> tuple[np.ndarray, float]:
+  """
+  Last minus first sample of each column over one host's common window.
+
+  Counter totals over a job read the host's endpoints. The window runs from
+  the first to the last sample at which every column that has a finite
+  sample is finite, so every column and the span cover the same interval:
+  a NaN first or last cell of one column must not put a ratio's numerator
+  and denominator (or a byte delta and its span) over different windows.
+
+  Args:
+    series (Any): One host's ``(n_times, n_events)`` grid (``HostSeries``
+      or ndarray).
+    column_indices (Sequence[int]): Columns to difference.
+
+  Returns:
+    tuple[np.ndarray, float]: float64 delta per column (NaN for a column
+    with no finite sample; all NaN without a common finite sample) and the
+    window span in seconds (NaN without a common sample or ``t_s``).
+
+  Examples:
+    >>> g = np.array([[np.nan, 1.0], [2.0, 3.0], [5.0, 4.0], [6.0, np.nan]])
+    >>> _endpoint_deltas(g, [0, 1])[0].tolist()
+    [3.0, 1.0]
+  """
+  v = np.asarray(series[:, list(column_indices)], dtype=np.float64)
+  fin = np.isfinite(v)
+  present = fin.any(axis=0)
+  common = np.flatnonzero(fin[:, present].all(axis=1) & present.any())
+  if common.size == 0:
+    return np.full(v.shape[1], np.nan), math.nan
+  first, last = int(common[0]), int(common[-1])
+  t = getattr(series, "t_s", None)
+  span = math.nan if t is None else float(t[last] - t[first])
+  return np.where(present, v[last] - v[first], np.nan), span
+
+
+# PMC FP event -> FLOP lanes per instruction (1 = scalar), double and single.
+_VECTOR_WIDTHS_64B = {
+  "SSE_D_ALL": 1,
+  "SIMD_D_256": 2,
+  "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE": 1,
+  "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE": 2,
+  "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE": 4,
+  "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE": 8,
+  "SSE_DOUBLE_SCALAR": 1,
+  "SSE_DOUBLE_PACKED": 2,
+  "SIMD_DOUBLE_256": 4,
+}
+_VECTOR_WIDTHS_32B = {
+  "FP_ARITH_INST_RETIRED_SCALAR_SINGLE": 1,
+  "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE": 4,
+  "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE": 8,
+  "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE": 16,
+}
+
+
+def _host_vector_flops(
+  stats: Any, schema: Any, widths: Mapping[str, int]
+) -> tuple[float, float, float]:
+  """
+  One host's vector FLOPs, scalar FLOPs and FP instructions over the job.
+
+  Each event of ``widths`` the schema carries contributes its endpoint
+  delta (:func:`_endpoint_deltas`; events without a finite sample are
+  skipped) times its lanes, to the vector total when it has more than one
+  lane, else to the scalar total.
+
+  Args:
+    stats (Any): One host's series of the PMC type.
+    schema (Any): ``_Schema`` of the PMC type.
+    widths (Mapping[str, int]): Event -> lanes per instruction.
+
+  Returns:
+    tuple[float, float, float]: ``(vector FLOPs, scalar FLOPs,
+    instructions)``.
+
+  Examples:
+    >>> g = np.array([[0.0, 0.0], [10.0, 5.0]])
+    >>> _host_vector_flops(g, _Schema(["A", "B"]), {"A": 1, "B": 4})
+    (20.0, 10.0, 15.0)
+  """
+  events = [e for e in schema if e in widths]
+  deltas, _span = _endpoint_deltas(stats, [schema[e].index for e in events])
+  vector = scalar = instr = 0.0
+  for e, d in zip(events, deltas.tolist(), strict=True):
+    if not math.isfinite(d):
+      continue
+    instr += d
+    if widths[e] > 1:
+      vector += d * widths[e]
+    else:
+      scalar += d * widths[e]
+  return vector, scalar, instr
 
 
 class _EventIndex:
@@ -2043,6 +2426,51 @@ def _drain_metrics_imap(
 METRICS_HOST_QUERY_BATCH = 16
 
 
+class CpuFlopFamily(NamedTuple):
+  """
+  One CPU FLOP counter family of ``Metrics.CPU_FLOP_FAMILIES``.
+
+  Attributes:
+    types: Type names probed in order (aliases resolve as in ``job_arc``).
+    lanes: ``(event, weight)`` pairs; the weight turns a count into FLOPs.
+    on_zero: What a measured 0 does: ``"stop"`` ends the probe with it
+      (historical PMC types), ``"skip"`` probes on (SSE proxies),
+      ``"fallback"`` keeps it in case no later family is positive
+      (``host_cpu_hw``, the ``Metrics._pick_cpu_fp_source`` rule).
+    pmu_gated: Read only rows of a direct-perf reader (``pmu_enabled_time``
+      rate > 0), which alone programs the lowercase Intel FP_ARITH events.
+
+  Examples:
+    >>> CpuFlopFamily(("host_cpu_hw",), (("fp_ops_retired", 1.0),), "skip")[2]
+    'skip'
+  """
+
+  types: tuple[str, ...]
+  lanes: tuple[tuple[str, float], ...]
+  on_zero: str
+  pmu_gated: bool = False
+
+
+class MemBwFamily(NamedTuple):
+  """
+  One memory bandwidth family of ``Metrics.mem_bw_families``.
+
+  Attributes:
+    types: Type names probed in order (aliases resolve as in ``job_arc``).
+    tries: ``(events, GiB per count)`` tries; the first with samples wins.
+    hbm_tries: HBM CAS tries whose bytes add to the first family try (Intel
+      IMC on SPR); a family with them needs a finite sum, not just samples.
+
+  Examples:
+    >>> MemBwFamily(("arm_imc",), ((("dram_cas_reads",), 1.0),)).hbm_tries
+    ()
+  """
+
+  types: tuple[str, ...]
+  tries: tuple[tuple[tuple[str, ...], float], ...]
+  hbm_tries: tuple[tuple[tuple[str, ...], float], ...] = ()
+
+
 class Metrics:
   """
   Computes simple and complex metrics for a list of jobs in parallel and writes.
@@ -2868,6 +3296,67 @@ class Metrics:
       return 100.0 * share
     return 100.0 * min(1.0, max(0.0, 1.0 - share))
 
+  # Probe order shared by avg_flops and flops_node_imbalance.
+  CPU_FLOP_FAMILIES = (
+    CpuFlopFamily(amd_pmc_type_names(), ((FP_OPS_RETIRED, 1.0),), "stop"),
+    CpuFlopFamily(
+      core_pmc_types_probe_order(),
+      tuple((ev, 1.0) for ev in INTEL_FP_ARITH_ALL_EVENTS),
+      "stop",
+    ),
+    CpuFlopFamily(
+      core_pmc_types_probe_order(),
+      tuple((ev, float(w)) for ev, w in INTEL_LEGACY_SSE_FLOP_EVENTS),
+      "skip",
+    ),
+    CpuFlopFamily((HOST_CPU_HW_TYPE,), ((FP_OPS_RETIRED, 1.0),), "fallback"),
+    CpuFlopFamily(
+      (HOST_CPU_HW_TYPE,), INTEL_FP_ARITH_ALL_LANES, "fallback", pmu_gated=True
+    ),
+    *(
+      CpuFlopFamily((HOST_CPU_HW_TYPE,), ((ev, 1.0),), "fallback")
+      for ev in arm_est_flops_event_names()
+    ),
+  )
+
+  @staticmethod
+  def mem_bw_families() -> tuple[MemBwFamily, ...]:
+    """
+    Memory bandwidth families in the order avg_mbw and dram_bw_node_imbalance
+    probe them.
+
+    AMD DF types (the per-family DF types try beats only; the historical
+    ones try ``MBW_CHANNEL_*`` first), Intel IMC DDR CAS plus HBM CAS, ARM
+    IMC CAS, then ``host_cpu_hw`` ``arm_dram_bw_bytes``. Built per call
+    because the DF beat conversion reads ``canonical.AMD_DF_BYTES_PER_BEAT``.
+
+    Returns:
+      tuple[MemBwFamily, ...]: Families in probe order.
+
+    Examples:
+      >>> Metrics.mem_bw_families()[-1].types
+      ('host_cpu_hw', 'cpu_counter_metrics')
+    """
+    df_tries = amd_df_bw_event_conv_tries()
+    ddr = tuple((pair, DDR_CAS_GIB) for pair in dram_cas_read_write_pairs())
+    return (
+      *(
+        MemBwFamily(
+          (typ,), df_tries[:1] if typ in AMD_DF_STATS_TYPES else df_tries[::-1]
+        )
+        for typ in amd_df_type_names()
+      ),
+      MemBwFamily(
+        imc_types_probe_order(),
+        ddr,
+        tuple((pair, HBM_CAS_GIB) for pair in hbm_cas_read_write_pairs()),
+      ),
+      MemBwFamily(arm_imc_types_probe_order(), ddr),
+      MemBwFamily(
+        host_cpu_hw_type_names(), ((arm_dram_bw_event_names(), 1 / (1024**3)),)
+      ),
+    )
+
   def _pick_cpu_fp_source(
     self, jt: Any, probes: Any
   ) -> tuple[float | None, str | None]:
@@ -3196,82 +3685,59 @@ class Metrics:
       >>> Metrics()._job_arc_avg_flops(None)
       (None, None)
     """
-    for pmc_typ in amd_pmc_type_names():
-      for flop_ev in fp_ops_retired_event_names():
-        v = self.job_arc(
-          jt,
-          typename=pmc_typ,
-          events=[flop_ev],
-          conv=1e-9,
-          units="GF",
-          cache=cache,
-          rows_cache=rows_cache,
-        )
-        if v is not None:
-          return v, pmc_typ
-    for core_typ in core_pmc_types_probe_order():
-      v = self.job_arc(
-        jt,
-        typename=core_typ,
-        events=list(INTEL_FP_ARITH_ALL_EVENTS),
-        conv=1e-9,
-        units="GF",
-        cache=cache,
-        rows_cache=rows_cache,
-      )
-      if v is not None:
-        return v, core_typ
-    for core_typ in core_pmc_types_probe_order():
-      total = None
-      for ev, weight in INTEL_LEGACY_SSE_FLOP_EVENTS:
-        part = self.job_arc(
-          jt,
-          typename=core_typ,
-          events=[ev],
-          conv=1e-9 * weight,
-          units="GF",
-          cache=cache,
-          rows_cache=rows_cache,
-        )
-        if part is not None:
-          total = part if total is None else total + part
-      if total is not None and total > 0:
-        return total, core_typ
 
-    def hw_rate(ev: str) -> float | None:
+    def family_rate(fam: CpuFlopFamily, typ: str) -> float | None:
       """
-      ``host_cpu_hw`` GFLOP/s of one FLOP lifetime key.
+      GFLOP/s of one ``CPU_FLOP_FAMILIES`` family on one type.
+
+      Unweighted families are one ``job_arc`` call over all their events;
+      the weighted SSE proxies sum one call per event; the PMU-gated Intel
+      lanes go through ``_intel_fp_arith_rate``.
 
       Args:
-        ev (str): Event name.
+        fam (CpuFlopFamily): Family to read.
+        typ (str): Type name of the family to probe.
 
       Returns:
         float | None: GFLOP/s, or None without samples.
 
       Examples:
-        >>> hw_rate("fp_ops_retired")  # doctest: +SKIP
+        >>> family_rate(fam, "amd_x86_pmc")  # doctest: +SKIP
       """
-      return self.job_arc(
-        jt,
-        typename=HOST_CPU_HW_TYPE,
-        events=[ev],
-        conv=1e-9,
-        units="GF",
-        cache=cache,
-        rows_cache=rows_cache,
+      if fam.pmu_gated:
+        return self._intel_fp_arith_rate(jt, fam.lanes, cache)
+      parts = (
+        [([ev for ev, _w in fam.lanes], 1.0)]
+        if all(w == 1 for _ev, w in fam.lanes)
+        else [([ev], w) for ev, w in fam.lanes]
       )
+      total = None
+      for events, weight in parts:
+        part = self.job_arc(
+          jt,
+          typename=typ,
+          events=events,
+          conv=1e-9 * weight,
+          cache=cache,
+          rows_cache=rows_cache,
+        )
+        if part is not None:
+          total = part if total is None else total + part
+      return total
 
-    intel = (
-      lambda: self._intel_fp_arith_rate(jt, INTEL_FP_ARITH_ALL_LANES, cache),
-      HOST_CPU_HW_TYPE,
-      True,
-    )
-    arm = [
-      (lambda ev=ev: hw_rate(ev), HOST_CPU_HW_TYPE, True)
-      for ev in arm_est_flops_event_names()
-    ]
-    amd = (lambda: hw_rate(FP_OPS_RETIRED), HOST_CPU_HW_TYPE, True)
-    return self._pick_cpu_fp_source(jt, [amd, intel, *arm])
+    hw_probes = []
+    for fam in self.CPU_FLOP_FAMILIES:
+      if fam.on_zero == "fallback":
+        hw_probes += [
+          (lambda fam=fam, typ=typ: family_rate(fam, typ), typ, True)
+          for typ in fam.types
+        ]
+        continue
+      for typ in fam.types:
+        v = family_rate(fam, typ)
+        if v is not None and (fam.on_zero == "stop" or v > 0):
+          return v, typ
+    return self._pick_cpu_fp_source(jt, hw_probes)
 
   def _job_arc_avg_mbw(
     self,
@@ -3280,97 +3746,57 @@ class Metrics:
     rows_cache: Any | None = None,
   ) -> Any:
     """
-    Memory bandwidth (GB/s): AMD DF channels, else Intel/ARM IMC CAS sum.
+    Memory bandwidth (GB/s) of the first ``mem_bw_families`` family with
+    samples: AMD DF beats, Intel IMC DDR plus HBM CAS, ARM IMC CAS, then
+    ``host_cpu_hw`` ``arm_dram_bw_bytes``.
 
     Args:
-      jt (Any): Jt passed to this helper.
-      cache (Any | None): One of ``Any``, ``None``.
-      rows_cache (Any | None): One of ``Any``, ``None``.
+      jt (Any): ``ColumnarJobTable`` of the job.
+      cache (Any | None): Per-job memo dict shared with ``job_arc``.
+      rows_cache (Any | None): Unused row cache, forwarded to ``job_arc``.
 
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: ``(GB/s, typename)`` or ``(None, None)``.
 
     Examples:
-      >>> Metrics()._job_arc_avg_mbw(None, None, None)  # doctest: +SKIP
+      >>> Metrics()._job_arc_avg_mbw(None)
+      (None, None)
     """
-    from hpcperfstats.dbload.lib.monitor_naming.canonical import (
-      AMD_DF_STATS_TYPES,
-    )
 
-    for df_typ in amd_df_type_names():
-      if df_typ in AMD_DF_STATS_TYPES:
-        tries = amd_df_bw_event_conv_tries()[:1]
-      else:
-        tries = amd_df_bw_event_conv_tries()[::-1]
+    def first_rate(typ: str, tries: Any) -> float | None:
+      """
+      GB/s of the first try with samples on one type.
+
+      Args:
+        typ (str): Type name to probe.
+        tries (Any): ``(events, GiB per count)`` pairs in order.
+
+      Returns:
+        float | None: GB/s, or None when no try has samples.
+
+      Examples:
+        >>> first_rate("arm_aarch64_imc", ())  # doctest: +SKIP
+      """
       for events, conv in tries:
         v = self.job_arc(
           jt,
-          typename=df_typ,
+          typename=typ,
           events=list(events),
           conv=conv,
-          units="GB/s",
           cache=cache,
           rows_cache=rows_cache,
         )
         if v is not None:
-          return v, df_typ
-    for imc_typ in imc_types_probe_order():
-      dram_v = None
-      for read_ev, write_ev in dram_cas_read_write_pairs():
-        v = self.job_arc(
-          jt,
-          typename=imc_typ,
-          events=[read_ev, write_ev],
-          conv=DDR_CAS_GIB,
-          units="GB/s",
-          cache=cache,
-          rows_cache=rows_cache,
-        )
+          return v
+      return None
+
+    for fam in self.mem_bw_families():
+      for typ in fam.types:
+        v = first_rate(typ, fam.tries)
+        if fam.hbm_tries:
+          v = combine_cas_bw_scalars(v, first_rate(typ, fam.hbm_tries))
         if v is not None:
-          dram_v = v
-          break
-      hbm_v = None
-      for read_ev, write_ev in hbm_cas_read_write_pairs():
-        v = self.job_arc(
-          jt,
-          typename=imc_typ,
-          events=[read_ev, write_ev],
-          conv=HBM_CAS_GIB,
-          units="GB/s",
-          cache=cache,
-          rows_cache=rows_cache,
-        )
-        if v is not None:
-          hbm_v = v
-          break
-      combined = combine_cas_bw_scalars(dram_v, hbm_v)
-      if combined is not None:
-        return combined, imc_typ
-    for imc_typ in arm_imc_types_probe_order():
-      for read_ev, write_ev in dram_cas_read_write_pairs():
-        v = self.job_arc(
-          jt,
-          typename=imc_typ,
-          events=[read_ev, write_ev],
-          conv=DDR_CAS_GIB,
-          units="GB/s",
-          cache=cache,
-          rows_cache=rows_cache,
-        )
-        if v is not None:
-          return v, imc_typ
-    for hw_typ in host_cpu_hw_type_names():
-      v = self.job_arc(
-        jt,
-        typename=hw_typ,
-        events=list(arm_dram_bw_event_names()),
-        conv=1 / (1024**3),
-        units="GB/s",
-        cache=cache,
-        rows_cache=rows_cache,
-      )
-      if v is not None:
-        return v, hw_typ
+          return v, typ
     return None, None
 
   def _job_arc_avg_sharedfs_iops(
@@ -4429,31 +4855,21 @@ class avg_freq:
     if schema is None:
       return None, typename, "GHz"
     events = frozenset(_coerce_metrics_identity_str(e) for e in schema.events)
-    per_host = []
-
     if "CLOCKS_UNHALTED_CORE" in events and "CLOCKS_UNHALTED_REF" in events:
-      ci = schema["CLOCKS_UNHALTED_CORE"].index
-      ri = schema["CLOCKS_UNHALTED_REF"].index
-      for _hostname, stats in _stats.items():
-        dc = stats[-1, ci] - stats[0, ci]
-        dr = stats[-1, ri] - stats[0, ri]
-        if dr == 0:
-          continue
-        per_host.append(u.freq * dc / dr)
+      num, den = "CLOCKS_UNHALTED_CORE", "CLOCKS_UNHALTED_REF"
     elif "APERF" in events and "MPERF" in events:
-      if u.freq is None:
-        return None, typename, "GHz"
-      ai = schema["APERF"].index
-      mi = schema["MPERF"].index
-      for _hostname, stats in _stats.items():
-        da = stats[-1, ai] - stats[0, ai]
-        dm = stats[-1, mi] - stats[0, mi]
-        if dm == 0:
-          continue
-        per_host.append(u.freq * da / dm)
+      num, den = "APERF", "MPERF"
     else:
       return None, typename, "GHz"
-
+    if u.freq is None:
+      return None, typename, "GHz"
+    cols = [schema[num].index, schema[den].index]
+    per_host = []
+    for _hostname, stats in _stats.items():
+      (d_num, d_den), _span = _endpoint_deltas(stats, cols)
+      if d_den == 0 or not np.isfinite(d_num / d_den):
+        continue
+      per_host.append(u.freq * d_num / d_den)
     if not per_host:
       return None, typename, "GHz"
     value = float(mean(per_host))
@@ -4462,7 +4878,8 @@ class avg_freq:
 
 class avg_ethbw:
   """
-  Average Ethernet bandwidth (MB/s) from net rx_bytes/tx_bytes.
+  Average Ethernet bandwidth (MB/s) from net rx_bytes/tx_bytes: per host the
+  byte delta over that host's own sample span, then the mean over hosts.
   """
 
   def compute_metric(self, u: Any) -> Any:
@@ -4470,10 +4887,10 @@ class avg_ethbw:
     Compute the metric.
 
     Args:
-      u (Any): U passed to this helper.
+      u (Any): ``gen.utils.utils`` of the job's metrics view.
 
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: ``(MB/s or None, "net", "MB/s")``.
 
     Examples:
       >>> avg_ethbw().compute_metric(None)  # doctest: +SKIP
@@ -4482,18 +4899,15 @@ class avg_ethbw:
     schema, _stats = u.get_type(typename)
     if schema is None or not _schema_has_events(schema, "rx_bytes", "tx_bytes"):
       return None, typename, "MB/s"
-    rxi = schema["rx_bytes"].index
-    txi = schema["tx_bytes"].index
-    denom = u.dt * 1024 * 1024
-    if denom == 0:
-      return None, typename, "MB/s"
+    cols = [schema["rx_bytes"].index, schema["tx_bytes"].index]
     per_host = []
     for _hostname, stats in _stats.items():
-      b = stats[-1, rxi] - stats[0, rxi] + stats[-1, txi] - stats[0, txi]
+      deltas, span = _endpoint_deltas(stats, cols)
+      b = deltas.sum()
       # Cumulative byte counters should not decrease; negative means reset or bad data.
-      if b < 0 or not np.isfinite(b):
+      if not span > 0 or b < 0 or not np.isfinite(b):
         continue
-      per_host.append(b / denom)
+      per_host.append(b / (span * 1024 * 1024))
     if not per_host:
       return None, typename, "MB/s"
     value = float(mean(per_host))
@@ -4648,11 +5062,13 @@ class avg_packetsize:
 
     per_host = []
     for _hostname, stats in _stats.items():
-      npk = stats[-1, tx] + stats[-1, rx] - stats[0, tx] - stats[0, rx]
-      if npk == 0:
-        continue
-      nb = stats[-1, tb] + stats[-1, rb] - stats[0, tb] - stats[0, rb]
-      per_host.append(nb / (npk * conv2mb))
+      (d_tx, d_rx, d_tb, d_rb), _span = _endpoint_deltas(
+        stats, [tx, rx, tb, rb]
+      )
+      npk = d_tx + d_rx
+      size = (d_tb + d_rb) / (npk * conv2mb) if npk else np.nan
+      if np.isfinite(size):
+        per_host.append(size)
     if not per_host:
       return None, typename, "MB"
     value = float(mean(per_host))
@@ -4684,7 +5100,6 @@ class max_fabricbw:
     Examples:
       >>> max_fabricbw().compute_metric(None)  # doctest: +SKIP
     """
-    max_bw = 0
     value_scale = 1.0
     schema, _stats, typename = resolve_get_type(u, (HOST_IB_TYPE,))
     if schema is not None and _schema_has_events(
@@ -4721,12 +5136,8 @@ class max_fabricbw:
       if cluster_peak > _MAX_FABRIC_BW_SANITY_MB_S:
         return None, typename, "MB/s"
       return cluster_peak, typename, "MB/s"
-    for _hostname, stats in _stats.items():
-      ratio = _per_interval_rate(_add_arrays(stats[:, tx], stats[:, rx]), u.t)
-      fin = ratio[np.isfinite(ratio)]
-      if fin.size > 0:
-        max_bw = max(max_bw, fin.max())
-    if max_bw == 0:
+    max_bw = _max_host_rate(_stats, [tx, rx])
+    if max_bw is None:
       return None, typename, "MB/s"
     value = max_bw * value_scale / conv2mb
     if value > _MAX_FABRIC_BW_SANITY_MB_S:
@@ -4756,7 +5167,6 @@ class max_lnetbw:
     schema, _stats = u.get_type(typename)
     if schema is None or not _schema_has_events(schema, "tx_bytes", "rx_bytes"):
       return None, typename, "MB/s"
-    max_bw = 0.0
     tx, rx = schema["tx_bytes"].index, schema["rx_bytes"].index
     div = 1024 * 1024
     cluster_peak = _peak_interval_rate_from_cluster_mean(
@@ -4764,12 +5174,8 @@ class max_lnetbw:
     )
     if cluster_peak is not None:
       return cluster_peak, typename, "MB/s"
-    for _hostname, stats in _stats.items():
-      ratio = _per_interval_rate(_add_arrays(stats[:, tx], stats[:, rx]), u.t)
-      fin = ratio[np.isfinite(ratio)]
-      if fin.size > 0:
-        max_bw = max(max_bw, fin.max())
-    if max_bw == 0:
+    max_bw = _max_host_rate(_stats, [tx, rx])
+    if max_bw is None:
       return None, typename, "MB/s"
     value = max_bw / div
     return value, typename, "MB/s"
@@ -4811,15 +5217,7 @@ class max_mds:
       )
       if cluster_peak is not None:
         return cluster_peak, typename, "iops"
-      for _hostname, stats in _stats.items():
-        mds_sum = None
-        for idx in col_idx:
-          col = stats[:, idx]
-          mds_sum = col if mds_sum is None else mds_sum + col
-        mds_diff = _per_interval_rate(mds_sum, u.t)
-        fin = mds_diff[np.isfinite(mds_diff)]
-        if fin.size > 0:
-          max_mds = max(max_mds, fin.max())
+      max_mds = max(max_mds, _max_host_rate(_stats, col_idx) or 0)
     nfs_typename = "nfs"
     nfs_schema, nfs_stats = u.get_type(nfs_typename)
     if nfs_schema is not None and all(
@@ -4831,11 +5229,7 @@ class max_mds:
       )
       if cluster_peak is not None:
         max_mds = max(max_mds, cluster_peak)
-      for _hostname, stats in nfs_stats.items():
-        ratio = _per_interval_rate(_add_arrays(stats[:, tx], stats[:, rx]), u.t)
-        fin = ratio[np.isfinite(ratio)]
-        if fin.size > 0:
-          max_mds = max(max_mds, fin.max())
+      max_mds = max(max_mds, _max_host_rate(nfs_stats, [tx, rx]) or 0)
     beegfs_typename = "beegfs_client"
     beegfs_schema, beegfs_stats, beegfs_resolved = resolve_get_type(
       u, type_probe_names(beegfs_typename)
@@ -4853,19 +5247,10 @@ class max_mds:
       cluster_peak = _peak_interval_rate_from_cluster_mean(
         u, beegfs_resolved or beegfs_typename, col_idx, 1
       )
-      if cluster_peak is not None:
-        max_mds = max(max_mds, cluster_peak)
+      host_peak = _max_host_rate(beegfs_stats, col_idx)
+      if cluster_peak is not None or host_peak is not None:
+        max_mds = max(max_mds, cluster_peak or 0, host_peak or 0)
         typename = beegfs_typename
-      for _hostname, stats in beegfs_stats.items():
-        mds_sum = None
-        for idx in col_idx:
-          col = stats[:, idx]
-          mds_sum = col if mds_sum is None else mds_sum + col
-        mds_diff = _per_interval_rate(mds_sum, u.t)
-        fin = mds_diff[np.isfinite(mds_diff)]
-        if fin.size > 0:
-          max_mds = max(max_mds, fin.max())
-          typename = beegfs_typename
     if max_mds == 0:
       return None, typename, "iops"
     value = max_mds
@@ -4892,7 +5277,6 @@ class max_packetrate:
     Examples:
       >>> max_packetrate().compute_metric(None)  # doctest: +SKIP
     """
-    max_pr = 0
     ib_schema, ib_stats = u.get_type(HOST_IB_TYPE)
     ib_pkts = _host_ib_packet_indices(ib_schema)
     if ib_pkts is not None:
@@ -4925,18 +5309,10 @@ class max_packetrate:
     )
     if cluster_peak is not None:
       return cluster_peak, typename, "#/s"
-
-    for _hostname, stats in _stats.items():
-      ratio = _per_interval_rate(_add_arrays(stats[:, tx], stats[:, rx]), u.t)
-      peak = _sane_peak_from_rates(
-        ratio, divisor=1.0, max_sane=_MAX_SANE_PACKETRATE
-      )
-      if peak is not None:
-        max_pr = max(max_pr, peak)
-    if max_pr == 0:
+    max_pr = _max_host_rate(_stats, [tx, rx], max_sane=_MAX_SANE_PACKETRATE)
+    if max_pr is None:
       return None, typename, "#/s"
-    value = max_pr
-    return value, typename, "#/s"
+    return max_pr, typename, "#/s"
 
 
 # This will compute the maximum memory usage recorded
@@ -5035,49 +5411,136 @@ class mem_hwm:
     return value, typ, "GiB"
 
 
-def _flops_weighted_events_for_schema(schema: Any) -> Any:
+def _imbalance_family_probe(
+  u: Any, typename: str, lanes: Any, hosts: Any | None = None
+) -> tuple[str, list[tuple[str, float]], float] | None:
   """
-  Return [(event, weight), ...] for total FLOP-equivalent arc columns, or None.
+  Resolve one counter family on the job's per-host arc series.
+
+  Each alias of ``typename`` the job has (``type_probe_names`` order, as
+  ``job_arc``) is tried: an event of ``lanes`` matches through
+  ``events_probe_names`` and counts only when a compared host sampled it
+  (a finite ``value``), so a key held at a static sentinel is an absent
+  counter. The first alias with a matched event wins.
 
   Args:
-    schema (Any): Schema passed to this helper.
+    u (Any): ``gen.utils.utils`` of the job's metrics view.
+    typename (str): Type name to probe.
+    lanes (Any): ``(event, weight)`` pairs of the family.
+    hosts (Any | None): Hostnames to compare, or None for every host.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    tuple[str, list[tuple[str, float]], float] | None: Concrete type name,
+    the matched ``(event, weight)`` pairs and the mean finite weighted
+    ``arc`` rate over the compared hosts' samples (0.0 when no sample has
+    an interval, as ``job_arc`` folds sampled rows without a rate to 0), or
+    None when no event was sampled.
 
   Examples:
-    >>> _flops_weighted_events_for_schema(None)  # doctest: +SKIP
+    >>> _imbalance_family_probe(None, "host_cpu_hw", ())  # doctest: +SKIP
   """
-  if schema is None:
-    return None
-  if "FLOPS" in schema:
-    return [("FLOPS", 1.0)]
-  fp = [(e, 1.0) for e in INTEL_FP_ARITH_ALL_EVENTS if e in schema]
-  if fp:
-    return fp
-  leg = [(e, float(w)) for e, w in INTEL_LEGACY_SSE_FLOP_EVENTS if e in schema]
-  if leg:
-    return leg
-  if "ARM_EST_FLOPS" in schema:
-    return [("ARM_EST_FLOPS", 1.0)]
+  for typ in type_probe_names(typename):
+    if typ not in u.job.schemas:
+      continue
+    schema, stats = u.get_type(typ)
+    series = [s for h, s in stats.items() if hosts is None or h in hosts]
+    found: dict[str, float] = {}
+    for name, w in lanes:
+      for ev in events_probe_names([name], typ=typ):
+        if ev in schema and ev not in found:
+          j = schema[ev].index
+          if any(np.isfinite(s.values[:, j]).any() for s in series):
+            found[ev] = float(w)
+    weighted = list(found.items())
+    if not weighted:
+      continue
+    total = np.concatenate(
+      [
+        sum(w * s.arc[:, schema[ev].index] for ev, w in weighted)
+        for s in series
+      ]
+    )
+    finite = total[np.isfinite(total)]
+    return typ, weighted, float(finite.mean()) if finite.size else 0.0
   return None
+
+
+def _flops_weighted_events_for_imbalance(
+  u: Any,
+) -> tuple[Any, Any, Any]:
+  """
+  FLOP family of ``flops_node_imbalance``, resolved like ``avg_flops``.
+
+  ``Metrics.CPU_FLOP_FAMILIES`` in order on the per-host arc series: a
+  ``"stop"`` family wins with any samples, a positive family wins, and
+  otherwise the first ``"fallback"`` family that read 0. The PMU gate of
+  the lowercase Intel lanes applies per host: a host whose
+  ``pmu_enabled_time`` rate is not positive is left out of the comparison
+  instead of counting as a rate of 0.
+
+  Args:
+    u (Any): ``gen.utils.utils`` of the job's metrics view.
+
+  Returns:
+    tuple[Any, Any, Any]: ``(typename, [(event, weight)], hosts)`` with
+    ``hosts`` the hostnames to compare (None for every host), or
+    ``(None, None, None)`` when no family has samples.
+
+  Examples:
+    >>> _flops_weighted_events_for_imbalance(None)  # doctest: +SKIP
+  """
+  enabled = ((pmu_sharing_event_names()[0], 1.0),)
+  fallback = (None, None, None)
+  for fam in Metrics.CPU_FLOP_FAMILIES:
+    hosts = None
+    if fam.pmu_gated:
+      # One resolve, then each host's own enabled-time rate, so the gate is
+      # linear in hosts.
+      on = _imbalance_family_probe(u, HOST_CPU_HW_TYPE, enabled)
+      schema, stats = u.get_type(on[0]) if on else (None, {})
+      hosts = {
+        h
+        for h, s in stats.items()
+        if np.nansum(s.arc[:, schema[on[1][0][0]].index]) > 0
+      }
+    for typ in fam.types:
+      hit = _imbalance_family_probe(u, typ, fam.lanes, hosts)
+      if hit is None:
+        continue
+      resolved, weighted, rate = hit
+      if rate > 0 or fam.on_zero == "stop":
+        return resolved, weighted, hosts
+      if fam.on_zero == "fallback" and fallback[0] is None:
+        fallback = (resolved, weighted, hosts)
+  return fallback
 
 
 def _node_imbalance_percent_weighted(
   u: Any,
   typename: Any,
   weighted_events: Any,
+  hosts: Collection[str] | None = None,
 ) -> Any:
   """
-  Like ``node_imbalance`` but on a weighted sum of counter columns.
+  Node imbalance (%) of a weighted sum of counter rates across hosts.
+
+  Each host's rate over its interval ``k`` is the weighted sum of its
+  device-mean ingest ``arc`` at sample ``k + 1`` (wrap undo and sentinel
+  masking already applied at ingest), on the host's own sample times. The
+  rates go to the bin of the interval's end sample and are compared per bin
+  (:func:`_binned_imbalance_percent`, intervals weighted by their length);
+  one host is compared with itself, so the result is 0.0 there.
 
   Args:
-    u (Any): U passed to this helper.
-    typename (Any): Typename passed to this helper.
-    weighted_events (Any): Weighted events passed to this helper.
+    u (Any): ``gen.utils.utils`` of the job's metrics view.
+    typename (Any): Type name or alias (``get_type``).
+    weighted_events (Any): ``[(event, weight)]`` summed into the rate.
+    hosts (Collection[str] | None): Hostnames compared (others are left
+      out, e.g. a host with the PMU off); None compares every host.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: float percent, or None when the type or an event is missing, no
+    host is compared, or several hosts give no bin period.
 
   Examples:
     >>> _node_imbalance_percent_weighted(None, None, None)  # doctest: +SKIP
@@ -5090,29 +5553,19 @@ def _node_imbalance_percent_weighted(
     if ev not in schema:
       return None
     idx_w.append((schema[ev].index, float(w)))
-  max_usage = zeros(u.nt - 1)
-  for _hostname, stats in _stats.items():
-    s = np.zeros(stats.shape[0], dtype=np.float64)
+  series = [s for h, s in _stats.items() if hosts is None or h in hosts]
+  rates = []
+  for s in series:
+    total = np.zeros(s.shape[0], dtype=np.float64)
     for j, w in idx_w:
-      s = s + w * stats[:, j].astype(np.float64)
-    rate = _per_interval_rate(s, u.t)
-    max_usage = maximum(max_usage, np.nan_to_num(rate, nan=-np.inf))
-  max_imbalance = []
-  for _hostname, stats in _stats.items():
-    s = np.zeros(stats.shape[0], dtype=np.float64)
-    for j, w in idx_w:
-      s = s + w * stats[:, j].astype(np.float64)
-    rate = _per_interval_rate(s, u.t)
-    valid = (max_usage > 0) & np.isfinite(rate)
-    if np.any(valid):
-      rel = (max_usage[valid] - rate[valid]) / max_usage[valid]
-      max_imbalance += [mean(rel)]
-    else:
-      max_imbalance += [float("nan")]
-  if not max_imbalance:
-    return None
-  value = 100 * amax([0.0 if isnan(x) else x for x in max_imbalance])
-  return value
+      total = total + w * s.arc[:, j]
+    rates.append(total[1:])
+  return _binned_imbalance_percent(
+    [s.t_us for s in series],
+    [s.t_us[1:] for s in series],
+    rates,
+    [np.diff(s.t_us) / _US_PER_S for s in series],
+  )
 
 
 class max_opa_congestion_rate:
@@ -5151,16 +5604,8 @@ class max_opa_congestion_rate:
     )
     if cluster_peak is not None:
       return cluster_peak, typename, "#/s"
-    max_r = 0.0
-    for _hostname, stats in _stats.items():
-      s = np.zeros(stats.shape[0], dtype=np.float64)
-      for j in indices:
-        s = s + stats[:, j].astype(np.float64)
-      ratio = _per_interval_rate(s, u.t)
-      fin = ratio[np.isfinite(ratio)]
-      if fin.size > 0:
-        max_r = max(max_r, float(fin.max()))
-    if max_r <= 0:
+    max_r = _max_host_rate(_stats, indices)
+    if max_r is None:
       return None, typename, "#/s"
     return max_r, typename, "#/s"
 
@@ -5196,23 +5641,15 @@ class max_numa_remote_rate:
     )
     if cluster_peak is not None:
       return cluster_peak, typename, "#/s"
-    max_r = 0.0
-    for _hostname, stats in _stats.items():
-      s = np.zeros(stats.shape[0], dtype=np.float64)
-      for j in indices:
-        s = s + stats[:, j].astype(np.float64)
-      ratio = _per_interval_rate(s, u.t)
-      fin = ratio[np.isfinite(ratio)]
-      if fin.size > 0:
-        max_r = max(max_r, float(fin.max()))
-    if max_r <= 0:
+    max_r = _max_host_rate(_stats, indices)
+    if max_r is None:
       return None, typename, "#/s"
     return max_r, typename, "#/s"
 
 
 class flops_node_imbalance:
   """
-  FLOPs rate imbalance across nodes (%), same construction as.
+  FLOPs rate imbalance across nodes (%) on the ``avg_flops`` family.
   """
 
   def compute_metric(self, u: Any) -> Any:
@@ -5228,70 +5665,44 @@ class flops_node_imbalance:
     Examples:
       >>> flops_node_imbalance().compute_metric(None)  # doctest: +SKIP
     """
-    typename = u.pmc
-    if not typename:
-      return None, "pmc", "%"
-    schema, _stats = u.get_type(typename)
-    we = _flops_weighted_events_for_schema(schema)
-    if not we or not _stats:
-      return None, typename, "%"
-    v = _node_imbalance_percent_weighted(u, typename, we)
-    if v is None:
-      return None, typename, "%"
+    typename, we, hosts = _flops_weighted_events_for_imbalance(u)
+    if typename is None:
+      return None, u.pmc or "pmc", "%"
+    v = _node_imbalance_percent_weighted(u, typename, we, hosts=hosts)
     return v, typename, "%"
 
 
-def _dram_bw_weighted_events_for_imbalance(u: Any) -> Any:
+def _dram_bw_weighted_events_for_imbalance(u: Any) -> tuple[Any, Any]:
   """
-  Return (typename, [(event, weight), ...]) for DRAM CAS/MBW imbalance, or.
+  DRAM family of ``dram_bw_node_imbalance``, resolved like ``avg_mbw``.
 
-    (None, None).
+  ``Metrics.mem_bw_families`` in order on the per-host arc series: within a
+  family the first try with a finite sample wins (plus the first HBM try on
+  Intel IMC), and a family without samples falls through to the next. The
+  weights are the tries' GiB per count, so DDR and HBM CAS compare bytes.
 
   Args:
-    u (Any): U passed to this helper.
+    u (Any): ``gen.utils.utils`` of the job's metrics view.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    tuple[Any, Any]: ``(typename, [(event, weight)])``, or ``(None, None)``
+    when no family has samples.
 
   Examples:
     >>> _dram_bw_weighted_events_for_imbalance(None)  # doctest: +SKIP
   """
-  for df_typ in amd_df_type_names():
-    schema_df, _, _ = resolve_get_type(u, (df_typ,))
-    if schema_df is not None:
-      for chans, _ in amd_df_bw_event_conv_tries():
-        found = [c for c in chans if c in schema_df]
-        if found:
-          return df_typ, [(c, 1.0) for c in found]
-  imc = u.imc
-  if not imc:
-    return None, None
-  schema_imc, _, imc_typ = resolve_get_type(u, (imc,))
-  if schema_imc is None:
-    return None, None
-  weighted = []
-  for read_ev, write_ev in dram_cas_read_write_pairs():
-    pair = []
-    if read_ev in schema_imc:
-      pair.append((read_ev, 1.0))
-    if write_ev in schema_imc:
-      pair.append((write_ev, 1.0))
-    if pair:
-      weighted.extend(pair)
-      break
-  # Weights are relative to a DDR CAS, so mixed DDR + HBM hosts compare bytes.
-  hbm_weight = HBM_CAS_BYTES / DDR_CAS_BYTES
-  for read_ev, write_ev in hbm_cas_read_write_pairs():
-    pair = []
-    if read_ev in schema_imc:
-      pair.append((read_ev, hbm_weight))
-    if write_ev in schema_imc:
-      pair.append((write_ev, hbm_weight))
-    if pair:
-      weighted.extend(pair)
-      break
-  if weighted:
-    return imc_typ, weighted
+  for fam in Metrics.mem_bw_families():
+    for typ in fam.types:
+      found = []
+      for tries in (fam.tries, fam.hbm_tries):
+        for events, conv in tries:
+          hit = _imbalance_family_probe(u, typ, [(ev, conv) for ev in events])
+          if hit is not None:
+            found.append(hit)
+            break
+      if found:
+        resolved = found[0][0]
+        return resolved, [p for t, w, _r in found if t == resolved for p in w]
   return None, None
 
 
@@ -5301,44 +5712,41 @@ def _node_imbalance_instantaneous_percent(
   event_name: Any,
 ) -> Any:
   """
-  Imbalance for snapshot ``value`` columns (e.g. GPU util): per-time max vs.
+  Node imbalance (%) of a snapshot ``value`` column (e.g. GPU util).
 
-    each.
-
-    host.
+  Each host's samples (DCGM blanks dropped) go to the bin of their sample
+  time, a host's samples in one bin are averaged, and hosts are compared
+  per bin (:func:`_binned_imbalance_percent`); one host is compared with
+  itself on its own samples.
 
   Args:
-    u (Any): U passed to this helper.
-    typename (Any): Typename passed to this helper.
-    event_name (Any): Event name passed to this helper.
+    u (Any): ``gen.utils.utils`` of the job's metrics view.
+    typename (Any): Type name or alias (``get_type``).
+    event_name (Any): Snapshot event.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: float percent, or None when the type or event is missing or
+    several hosts give no bin period.
 
   Examples:
-    >>> _node_imbalance_instantaneous_percent(None, None, None)
+    >>> _node_imbalance_instantaneous_percent(
+    ...   None, None, None
+    ... )  # doctest: +SKIP
   """
   schema, _stats = u.get_type(typename)
   if schema is None or event_name not in schema or not _stats:
     return None
   j = schema[event_name].index
-  nt = u.nt
-  max_per_t = np.full(nt, -np.inf, dtype=np.float64)
-  for _hostname, stats in _stats.items():
-    col = nan_out_dcgm_numeric_blanks(stats[:, j].astype(np.float64))
-    max_per_t = np.maximum(max_per_t, np.nan_to_num(col, nan=-np.inf))
-  max_imbalance = []
-  for _hostname, stats in _stats.items():
-    v = nan_out_dcgm_numeric_blanks(stats[:, j].astype(np.float64))
-    valid = (max_per_t > 0) & np.isfinite(v)
-    if not np.any(valid):
-      max_imbalance.append(float("nan"))
-      continue
-    rel = (max_per_t[valid] - v[valid]) / max_per_t[valid]
-    max_imbalance.append(float(mean(rel)))
-  if not max_imbalance:
-    return None
-  return 100 * amax([0.0 if isnan(x) else x for x in max_imbalance])
+  series = list(_stats.values())
+  values = [
+    nan_out_dcgm_numeric_blanks(s[:, j].astype(np.float64)) for s in series
+  ]
+  return _binned_imbalance_percent(
+    [s.t_us for s in series],
+    [s.t_us for s in series],
+    values,
+    [np.ones(v.size) for v in values],
+  )
 
 
 class max_gpu_power:
@@ -5405,15 +5813,10 @@ class max_gpu_link_gbps:
     )
     if cluster_peak is not None:
       return cluster_peak, typename, "GB/s"
-    max_bw = 0.0
-    for _hostname, stats in _stats.items():
-      ratio = _per_interval_rate(stats[:, j], u.t)
-      peak = _sane_peak_from_rates(
-        ratio, divisor=1e9, max_sane=_MAX_SANE_GPU_LINK_GBPS
-      )
-      if peak is not None:
-        max_bw = max(max_bw, peak)
-    if max_bw <= 0:
+    max_bw = _max_host_rate(
+      _stats, [j], divisor=1e9, max_sane=_MAX_SANE_GPU_LINK_GBPS
+    )
+    if max_bw is None:
       return None, typename, "GB/s"
     return max_bw, typename, "GB/s"
 
@@ -5463,7 +5866,7 @@ class max_gpu_clock_event_reasons:
 
 class dram_bw_node_imbalance:
   """
-  DRAM bandwidth rate imbalance across nodes (%); AMD DF MBW or Intel IMC CAS.
+  DRAM bandwidth rate imbalance across nodes (%) on the ``avg_mbw`` family.
   """
 
   def compute_metric(self, u: Any) -> Any:
@@ -5480,12 +5883,9 @@ class dram_bw_node_imbalance:
       >>> dram_bw_node_imbalance().compute_metric(None)  # doctest: +SKIP
     """
     typename, we = _dram_bw_weighted_events_for_imbalance(u)
-    if not typename or not we:
+    if typename is None:
       return None, "imc", "%"
-    v = _node_imbalance_percent_weighted(u, typename, we)
-    if v is None:
-      return None, typename, "%"
-    return v, typename, "%"
+    return _node_imbalance_percent_weighted(u, typename, we), typename, "%"
 
 
 class lnet_node_imbalance:
@@ -5609,7 +6009,8 @@ class fabric_node_imbalance:
 
 class node_imbalance:
   """
-  CPU node imbalance (%): max deviation of per-node CPU rate from max rate.
+  CPU node imbalance (%): max deviation of per-node CPU ``user`` rate from
+  the max rate, per time bin (``_node_imbalance_percent_weighted``).
   """
 
   def compute_metric(self, u: Any) -> Any:
@@ -5617,42 +6018,23 @@ class node_imbalance:
     Compute the metric.
 
     Args:
-      u (Any): U passed to this helper.
+      u (Any): ``gen.utils.utils`` of the job's metrics view.
 
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: ``(percent or None, "cpu", "%")``.
 
     Examples:
       >>> node_imbalance().compute_metric(None)  # doctest: +SKIP
     """
     typename = "cpu"
-    schema, _stats = u.get_type(typename)
-    if schema is None or "user" not in schema:
-      return None, typename, "%"
-    user_i = schema["user"].index
-    max_usage = zeros(u.nt - 1)
-    for _hostname, stats in _stats.items():
-      rate = _per_interval_rate(stats[:, user_i], u.t)
-      max_usage = maximum(max_usage, np.nan_to_num(rate, nan=-np.inf))
-
-    max_imbalance = []
-    for _hostname, stats in _stats.items():
-      rate = _per_interval_rate(stats[:, user_i], u.t)
-      valid = (max_usage > 0) & np.isfinite(rate)
-      if np.any(valid):
-        rel = (max_usage[valid] - rate[valid]) / max_usage[valid]
-        max_imbalance += [mean(rel)]
-      else:
-        max_imbalance += [float("nan")]
-    if max_imbalance == []:
-      return None, typename, "%"
-    value = 100 * amax([0.0 if isnan(x) else x for x in max_imbalance])
-    return value, typename, "%"
+    v = _node_imbalance_percent_weighted(u, typename, [("user", 1.0)])
+    return v, typename, "%"
 
 
 class time_imbalance:
   """
-  CPU time imbalance (%): minimum ratio of integral after/before a time slice.
+  CPU time imbalance (%): minimum ratio of integral after/before a time slice,
+  each host on its own sample times.
   """
 
   def compute_metric(self, u: Any) -> Any:
@@ -5660,10 +6042,10 @@ class time_imbalance:
     Compute the metric.
 
     Args:
-      u (Any): U passed to this helper.
+      u (Any): ``gen.utils.utils`` of the job's metrics view.
 
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: ``(percent or None, "cpu", "%")``.
 
     Examples:
       >>> time_imbalance().compute_metric(None)  # doctest: +SKIP
@@ -5672,11 +6054,12 @@ class time_imbalance:
     schema, _stats = u.get_type(typename)
     if schema is None or "user" not in schema:
       return None, typename, "%"
-    tmid = (u.t[:-1] + u.t[1:]) / 2.0
     user_i = schema["user"].index
     vals = []
     for _hostname, stats in _stats.items():
-      rate = _per_interval_rate(stats[:, user_i], u.t)
+      t = stats.t_s
+      tmid = (t[:-1] + t[1:]) / 2.0
+      rate = _per_interval_rate(stats[:, user_i], t)
       rate = np.nan_to_num(rate, nan=0.0, posinf=0.0, neginf=0.0)
       # Cumulative CPU jiffies are monotonic; negative dy/dt is reset/wrap/noise.
       rate = np.maximum(rate, 0.0)
@@ -5716,30 +6099,11 @@ class vecpercent_64b:
     schema, _stats = u.get_type(typename)
     if schema is None:
       return None, typename, "#"
-    vector_widths = {
-      "SSE_D_ALL": 1,
-      "SIMD_D_256": 2,
-      "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE": 1,
-      "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE": 2,
-      "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE": 4,
-      "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE": 8,
-      "SSE_DOUBLE_SCALAR": 1,
-      "SSE_DOUBLE_PACKED": 2,
-      "SIMD_DOUBLE_256": 4,
-    }
-    vector_flops = 0.0
-    scalar_flops = 0.0
+    vector_flops = scalar_flops = 0.0
     for _hostname, stats in _stats.items():
-      for eventname in schema:
-        if eventname in vector_widths:
-          index = schema[eventname].index
-          flops = (stats[-1, index] - stats[0, index]) * vector_widths[
-            eventname
-          ]
-          if vector_widths[eventname] > 1:
-            vector_flops += flops
-          else:
-            scalar_flops += flops
+      vec, scal, _instr = _host_vector_flops(stats, schema, _VECTOR_WIDTHS_64B)
+      vector_flops += vec
+      scalar_flops += scal
     denom = scalar_flops + vector_flops
     if denom == 0:
       return None, typename, "#"
@@ -5772,31 +6136,12 @@ class avg_vector_width_64b:
     schema, _stats = u.get_type(typename)
     if schema is None:
       return None, typename, "#"
-    vector_widths = {
-      "SSE_D_ALL": 1,
-      "SIMD_D_256": 2,
-      "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE": 1,
-      "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE": 2,
-      "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE": 4,
-      "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE": 8,
-      "SSE_DOUBLE_SCALAR": 1,
-      "SSE_DOUBLE_PACKED": 2,
-      "SIMD_DOUBLE_256": 4,
-    }
     per_host = []
     for _hostname, stats in _stats.items():
-      flops = 0.0
-      instr = 0.0
-      for eventname in schema:
-        if eventname in vector_widths:
-          index = schema[eventname].index
-          instr += stats[-1, index] - stats[0, index]
-          flops += (stats[-1, index] - stats[0, index]) * vector_widths[
-            eventname
-          ]
+      vec, scal, instr = _host_vector_flops(stats, schema, _VECTOR_WIDTHS_64B)
       if instr == 0:
         continue
-      per_host.append(flops / instr)
+      per_host.append((vec + scal) / instr)
     if not per_host:
       return None, typename, "#"
     value = float(mean(per_host))
@@ -5827,25 +6172,11 @@ class vecpercent_32b:
     schema, _stats = u.get_type(typename)
     if schema is None:
       return None, typename, "#"
-    vector_widths = {
-      "FP_ARITH_INST_RETIRED_SCALAR_SINGLE": 1,
-      "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE": 4,
-      "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE": 8,
-      "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE": 16,
-    }
-    vector_flops = 0.0
-    scalar_flops = 0.0
+    vector_flops = scalar_flops = 0.0
     for _hostname, stats in _stats.items():
-      for eventname in schema:
-        if eventname in vector_widths:
-          index = schema[eventname].index
-          flops = (stats[-1, index] - stats[0, index]) * vector_widths[
-            eventname
-          ]
-          if vector_widths[eventname] > 1:
-            vector_flops += flops
-          else:
-            scalar_flops += flops
+      vec, scal, _instr = _host_vector_flops(stats, schema, _VECTOR_WIDTHS_32B)
+      vector_flops += vec
+      scalar_flops += scal
     denom = scalar_flops + vector_flops
     if denom == 0:
       return None, typename, "%"
@@ -5877,26 +6208,12 @@ class avg_vector_width_32b:
     schema, _stats = u.get_type(typename)
     if schema is None:
       return None, typename, "#"
-    vector_widths = {
-      "FP_ARITH_INST_RETIRED_SCALAR_SINGLE": 1,
-      "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE": 4,
-      "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE": 8,
-      "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE": 16,
-    }
     per_host = []
     for _hostname, stats in _stats.items():
-      flops = 0.0
-      instr = 0.0
-      for eventname in schema:
-        if eventname in vector_widths:
-          index = schema[eventname].index
-          instr += stats[-1, index] - stats[0, index]
-          flops += (stats[-1, index] - stats[0, index]) * vector_widths[
-            eventname
-          ]
+      vec, scal, instr = _host_vector_flops(stats, schema, _VECTOR_WIDTHS_32B)
       if instr == 0:
         continue
-      per_host.append(flops / instr)
+      per_host.append((vec + scal) / instr)
     if not per_host:
       return None, typename, "#"
     value = float(mean(per_host))

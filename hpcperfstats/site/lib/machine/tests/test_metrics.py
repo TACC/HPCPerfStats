@@ -8,7 +8,12 @@ import pandas as pd
 import pytest
 from pandas import Timestamp
 
+from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+  host_series,
+  table_from_records,
+)
 from hpcperfstats.analysis.metrics.lib.gen import jid_table
+from hpcperfstats.analysis.metrics.lib.gen.utils import utils
 from hpcperfstats.analysis.metrics.lib.job_metric_display_labels import (
   JOB_METRIC_SHORT_LABELS,
 )
@@ -337,31 +342,15 @@ def test_dram_bw_weighted_events_include_hbm_when_present():
     _dram_bw_weighted_events_for_imbalance,
   )
 
-  class _Schema(list):
-    pass
-
-  class MockU:
-    imc = "intel_x86_uncore_imc_spr"
-
-    def get_type(self, typename):
-      del typename
-      return None, {}
-
-  with patch(
-    "hpcperfstats.analysis.metrics.lib.metrics.resolve_get_type",
-    return_value=(
-      _Schema(
-        [
-          "hbm_cas_reads",
-          "hbm_cas_writes",
-        ]
-      ),
-      {"h1": object()},
-      "intel_x86_uncore_imc_spr",
-    ),
-  ):
-    typ, weighted = _dram_bw_weighted_events_for_imbalance(MockU())
-  assert typ == "intel_x86_uncore_imc_spr"
+  typ = "intel_x86_uncore_imc_spr"
+  recs = [
+    (k * 60_000_000, "h1", typ, ev, None, 100.0 * k, 5.0, None)
+    for k in range(3)
+    for ev in ("hbm_cas_reads", "hbm_cas_writes")
+  ]
+  u = utils(table_from_records(recs).metrics_view())
+  got_typ, weighted = _dram_bw_weighted_events_for_imbalance(u)
+  assert got_typ == typ
   assert [e for e, _w in weighted] == ["hbm_cas_reads", "hbm_cas_writes"]
 
 
@@ -653,14 +642,15 @@ def test_max_mds_uses_nfs_ops_when_llite_missing():
   )
 
   class MockU:
-    t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
-    job = type("J", (), {"cluster_mean_by_type": {}})()
-
     def get_type(self, typename):
       if typename in ("llite", "lustre_llite"):
         return None, {}
       if typename == "nfs":
-        return schema_nfs, {"h1": stats}
+        return schema_nfs, {
+          "h1": host_series(
+            stats, np.array([0.0, 10.0, 20.0], dtype=np.float64)
+          )
+        }
       return None, {}
 
   value, typename, units = max_mds().compute_metric(MockU())
@@ -705,12 +695,13 @@ def test_max_mds_uses_legacy_llite_opcode_schema():
   stats = np.vstack([row0, row1, row2])
 
   class MockU:
-    t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
-    job = type("J", (), {"cluster_mean_by_type": {}})()
-
     def get_type(self, typename):
       if typename in ("llite", "lustre_llite"):
-        return schema, {"h1": stats}
+        return schema, {
+          "h1": host_series(
+            stats, np.array([0.0, 10.0, 20.0], dtype=np.float64)
+          )
+        }
       return None, {}
 
   value, typename, units = max_mds().compute_metric(MockU())
@@ -739,12 +730,13 @@ def test_max_mds_uses_canonical_vfs_ops_schema():
   stats = np.vstack([row0, row1, row2])
 
   class MockU:
-    t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
-    job = type("J", (), {"cluster_mean_by_type": {}})()
-
     def get_type(self, typename):
       if typename == "lustre_llite":
-        return schema, {"h1": stats}
+        return schema, {
+          "h1": host_series(
+            stats, np.array([0.0, 10.0, 20.0], dtype=np.float64)
+          )
+        }
       return None, {}
 
   value, typename, units = max_mds().compute_metric(MockU())
@@ -784,14 +776,15 @@ def test_max_fabricbw_falls_back_to_ethernet():
   )
 
   class MockU:
-    t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
-    job = type("J", (), {"cluster_mean_by_type": {}})()
-
     def get_type(self, typename):
       if typename in ("host_ib", "host_opa", "opa"):
         return None, {}
       if typename == "net":
-        return schema, {"h1": stats}
+        return schema, {
+          "h1": host_series(
+            stats, np.array([0.0, 10.0, 20.0], dtype=np.float64)
+          )
+        }
       return None, {}
 
   value, typename, units = max_fabricbw().compute_metric(MockU())
@@ -811,12 +804,13 @@ def test_max_fabricbw_rejects_packet_rate_scale_as_mb_s():
   )
 
   class MockU:
-    t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
-    job = type("J", (), {"cluster_mean_by_type": {}})()
-
     def get_type(self, typename):
       if typename == "host_ib":
-        return schema, {"h1": stats}
+        return schema, {
+          "h1": host_series(
+            stats, np.array([0.0, 10.0, 20.0], dtype=np.float64)
+          )
+        }
       return None, {}
 
   value, typename, units = max_fabricbw().compute_metric(MockU())
@@ -1110,18 +1104,15 @@ def test_max_packetrate_falls_back_to_ethernet():
   stats = np.array([[0.0, 0.0], [100.0, 20.0], [220.0, 40.0]], dtype=np.float64)
 
   class MockU:
-    t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
-    job = type(
-      "J",
-      (),
-      {"cluster_mean_by_type": {}, "cluster_mean_arc_by_type": {}},
-    )()
-
     def get_type(self, typename):
       if typename in ("host_ib", "opa"):
         return None, {}
       if typename == "net":
-        return schema, {"h1": stats}
+        return schema, {
+          "h1": host_series(
+            stats, np.array([0.0, 10.0, 20.0], dtype=np.float64)
+          )
+        }
       return None, {}
 
   value, typename, units = max_packetrate().compute_metric(MockU())
@@ -1138,16 +1129,11 @@ def test_max_packetrate_rejects_uint64_wrap_poison():
   stats = np.array([[0.0, 0.0], [float(2**63), 0.0]], dtype=np.float64)
 
   class MockU:
-    t = np.array([0.0, 1.0], dtype=np.float64)
-    job = type(
-      "J",
-      (),
-      {"cluster_mean_by_type": {}, "cluster_mean_arc_by_type": {}},
-    )()
-
     def get_type(self, typename):
       if typename == "host_ib":
-        return schema, {"h1": stats}
+        return schema, {
+          "h1": host_series(stats, np.array([0.0, 1.0], dtype=np.float64))
+        }
       return None, {}
 
   value, typename, units = max_packetrate().compute_metric(MockU())
@@ -1163,16 +1149,11 @@ def test_max_gpu_link_gbps_rejects_uint64_wrap_poison():
   stats = np.array([[0.0], [float(2**64)]], dtype=np.float64)
 
   class MockU:
-    t = np.array([0.0, 1.0], dtype=np.float64)
-    job = type(
-      "J",
-      (),
-      {"cluster_mean_by_type": {}, "cluster_mean_arc_by_type": {}},
-    )()
-
     def get_type(self, typename):
       if typename == "nvidia_gpu":
-        return schema, {"h1": stats}
+        return schema, {
+          "h1": host_series(stats, np.array([0.0, 1.0], dtype=np.float64))
+        }
       return None, {}
 
   value, typename, units = max_gpu_link_gbps().compute_metric(MockU())
@@ -1184,28 +1165,22 @@ def test_max_gpu_link_gbps_rejects_uint64_wrap_poison():
 @pytest.mark.machine_unit_mock
 def test_max_gpu_link_gbps_prefers_sane_arc_over_poison_value_diff():
   """When ingest arc is present and sane, prefer it over wrap poisoned value dy/dt."""
-  schema = _Schema(["gpu_io_link_total_bytes"])
-  # Poisoned counters, but cluster arc says 12e9 bytes/s -> 12 GB/s.
-  stats = np.array([[0.0], [float(2**63)]], dtype=np.float64)
-  arc_cm = np.array([[12e9], [12e9]], dtype=np.float64)
-
-  class MockU:
-    t = np.array([0.0, 1.0], dtype=np.float64)
-    job = type(
-      "J",
-      (),
-      {
-        "cluster_mean_by_type": {},
-        "cluster_mean_arc_by_type": {"nvidia_gpu": arc_cm},
-      },
-    )()
-
-    def get_type(self, typename):
-      if typename == "nvidia_gpu":
-        return schema, {"h1": stats}
-      return None, {}
-
-  value, typename, units = max_gpu_link_gbps().compute_metric(MockU())
+  # Poisoned counters, but the cluster arc says 12e9 bytes/s -> 12 GB/s.
+  recs = [
+    (
+      k * 1_000_000,
+      "h1",
+      "nvidia_gpu",
+      "gpu_io_link_total_bytes",
+      "0",
+      v,
+      12e9,
+      None,
+    )
+    for k, v in enumerate((0.0, float(2**63)))
+  ]
+  u = utils(table_from_records(recs).metrics_view())
+  value, typename, units = max_gpu_link_gbps().compute_metric(u)
   assert value == pytest.approx(12.0)
   assert typename == "nvidia_gpu"
   assert units == "GB/s"
@@ -1475,20 +1450,21 @@ def test_mem_hwm_mixed_nan_uses_finite_peak():
   assert units == "GiB"
 
 
+@pytest.mark.machine_unit_mock
 def test_avg_ethbw_mean_across_hosts():
-  """avg_ethbw is mean of per-host (rx+tx delta)/(dt * 1MiB), not pooled sum/nhosts."""
+  """avg_ethbw is mean of per-host (rx+tx delta)/(host span * 1MiB), not
+  pooled sum/nhosts."""
   schema = _Schema(["rx_bytes", "tx_bytes"])
   s_lo = np.array([[0.0, 0.0], [100.0, 0.0]], dtype=np.float64)
   s_hi = np.array([[0.0, 0.0], [300.0, 0.0]], dtype=np.float64)
   delta_t = 10.0
   denom = delta_t * 1024 * 1024
 
-  class MockU:
-    dt = delta_t
-    nhosts = 2
+  t = [0.0, delta_t]
 
+  class MockU:
     def get_type(self, typename):
-      return schema, {"h1": s_lo, "h2": s_hi}
+      return schema, {"h1": host_series(s_lo, t), "h2": host_series(s_hi, t)}
 
   u = MockU()
   value, typename, units = avg_ethbw().compute_metric(u)
@@ -1498,6 +1474,7 @@ def test_avg_ethbw_mean_across_hosts():
   assert units == "MB/s"
 
 
+@pytest.mark.machine_unit_mock
 def test_avg_ethbw_skips_hosts_with_negative_byte_delta():
   """Hosts whose rx+tx counters net decrease (reset/bad data) are omitted from the mean."""
   schema = _Schema(["rx_bytes", "tx_bytes"])
@@ -1506,12 +1483,11 @@ def test_avg_ethbw_skips_hosts_with_negative_byte_delta():
   delta_t = 10.0
   denom = delta_t * 1024 * 1024
 
-  class MockU:
-    dt = delta_t
-    nhosts = 2
+  t = [0.0, delta_t]
 
+  class MockU:
     def get_type(self, typename):
-      return schema, {"bad": bad, "good": good}
+      return schema, {"bad": host_series(bad, t), "good": host_series(good, t)}
 
   u = MockU()
   value, typename, units = avg_ethbw().compute_metric(u)
@@ -1519,6 +1495,124 @@ def test_avg_ethbw_skips_hosts_with_negative_byte_delta():
   assert abs(value - expected) < 1e-9
   assert typename == "net"
   assert units == "MB/s"
+
+
+@pytest.mark.machine_unit_mock
+def test_avg_ethbw_offset_hosts_uses_host_span():
+  """Regression (hs04: avg_ethbw NULL on 66-99% of multi-host jobs): on the
+  union axis a host's first or last cell was NaN unless it sampled first and
+  last, and the span was the union's. Each host now uses its own endpoints
+  and its own span."""
+  from hpcperfstats.analysis.metrics.tests import per_host_axis_fixtures as F
+
+  table = F.unaligned_17_41_table()
+  value, typename, units = avg_ethbw().compute_metric(
+    utils(table.metrics_view())
+  )
+  oracle = F.avg_ethbw_oracle(table)
+  assert (typename, units) == ("net", "MB/s")
+  assert oracle is not None and value == pytest.approx(oracle, rel=1e-12)
+  head = F.load_baseline()["head_unaligned_characterization"]["unaligned_17_41"]
+  assert head["metrics"]["avg_ethbw"] is None
+  # A missing first sample of one event starts the host's window (both
+  # events and the span) at the first sample where both are finite.
+  schema = _Schema(["rx_bytes", "tx_bytes"])
+  rows = np.array([[np.nan, 0.0], [10.0, 5.0], [30.0, 25.0]])
+
+  class MockU:
+    def get_type(self, typename):
+      return schema, {"h1": host_series(rows, [0.0, 10.0, 20.0])}
+
+  got, _, _ = avg_ethbw().compute_metric(MockU())
+  assert got == pytest.approx((20.0 + 20.0) / (10.0 * 1024 * 1024))
+
+
+@pytest.mark.machine_unit_mock
+def test_endpoint_metrics_share_one_window_per_host():
+  """Regression: each column took its own first / last finite sample, so a
+  NULL last MPERF put APERF over 10 intervals and MPERF over 9 (avg_freq
+  11% high) and a NULL last rx/tx byte sample divided 9 intervals of bytes
+  by the 10-interval span (avg_ethbw 10% low). Every column and the span
+  now share the host's common finite window."""
+  t = np.arange(11) * 60.0
+  ramp = np.column_stack([t * 2.4e9, t * 2.4e9])
+  clocks = ramp.copy()
+  clocks[-1, 1] = np.nan
+  net = np.column_stack([t * 2**20, t * 2**20])
+  net[-1, :] = np.nan
+
+  class MockU:
+    freq = 2.7
+
+    def __init__(self, events, grid):
+      self.schema, self.grid = _Schema(events), grid
+
+    def get_type(self, typename):
+      return self.schema, {"h": host_series(self.grid, t)}
+
+  freq, _, _ = avg_freq().compute_metric(MockU(["APERF", "MPERF"], clocks))
+  assert freq == pytest.approx(2.7)
+  bw, _, _ = avg_ethbw().compute_metric(MockU(["rx_bytes", "tx_bytes"], net))
+  assert bw == pytest.approx(2.0)
+
+
+@pytest.mark.machine_unit_mock
+def test_avg_freq_clocks_unhalted_without_nominal_freq_is_none():
+  """Regression: the CLOCKS_UNHALTED_CORE / REF branch multiplied
+  ``u.freq`` without checking it (the APERF branch did), so a PMC type
+  without a nominal frequency raised TypeError and failed the whole job's
+  metrics. It returns None like the APERF branch."""
+  t = np.arange(3) * 60.0
+  grid = np.column_stack([t * 2.0e9, t * 2.5e9])
+
+  class MockU:
+    freq = None
+
+    def get_type(self, typename):
+      events = ["CLOCKS_UNHALTED_CORE", "CLOCKS_UNHALTED_REF"]
+      return _Schema(events), {"h": host_series(grid, t)}
+
+  assert avg_freq().compute_metric(MockU()) == (None, "pmc", "GHz")
+
+
+@pytest.mark.machine_unit_mock
+@pytest.mark.parametrize(
+  "name", ["unaligned_17_41", "mostly_offset", "subsecond"]
+)
+def test_endpoint_metrics_never_persist_nan(name):
+  """Regression: avg_freq, avg_packetsize, vecpercent_* and
+  avg_vector_width_* persisted float NaN on offset hosts (union-axis
+  endpoints, no isfinite guard). They now read each host's own common
+  finite window and equal the per-host oracle."""
+  from hpcperfstats.analysis.metrics.tests import per_host_axis_fixtures as F
+
+  table = F.FIXTURES[name].build()
+  rows = {r["metric"]: r for r in F.compute_rows(table)}
+  oracle = F.per_host_oracles(table)
+  for metric in (
+    "avg_freq",
+    "avg_packetsize",
+    "vecpercent_64b",
+    "avg_vector_width_64b",
+    "vecpercent_32b",
+    "avg_vector_width_32b",
+  ):
+    value = rows[metric]["value"]
+    assert isinstance(value, float) and np.isfinite(value), (metric, value)
+    assert value == pytest.approx(oracle[metric], rel=1e-9), metric
+  # A column that is NaN at every sample of a host is skipped, not NaN.
+  schema = _Schema(["APERF", "MPERF"])
+  dead = np.array([[np.nan, 0.0], [np.nan, 10.0]])
+  live = np.array([[0.0, 0.0], [20.0, 10.0]])
+
+  class MockU:
+    freq = 2.0
+
+    def get_type(self, typename):
+      return schema, {"a": host_series(dead), "b": host_series(live)}
+
+  value, _, _ = avg_freq().compute_metric(MockU())
+  assert value == pytest.approx(4.0)
 
 
 def test_avg_gpuutil_returns_none_for_short_series_without_warning():

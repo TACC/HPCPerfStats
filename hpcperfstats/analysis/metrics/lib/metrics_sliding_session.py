@@ -11,13 +11,13 @@ Attributes:
     is in flight: the consuming fetch/build plus metrics compute peak
     measured on the golden jobs with float64 value columns (frames above a
     few thousand rows; tiny jobs are dominated by fixed overhead).
-  METRICS_GRID_BYTES_PER_HOST_SQ_MINUTE: Floor for a job's largest metrics
-    pivot grid per estimated host-minute per host. A grid is hosts x the
-    union of every host's sample times x events, so it grows with hosts
-    squared; measured on hpcperfstats04 (162 hosts x 551 min: 0.81 GiB per
-    grid, 24 pivoted types).
-  PIVOTED_TYPES_PER_JOB: Types a large job pivots (same measurement); with
-    ``PIVOT_CACHE_MAX_BYTES`` it bounds the grids held beside the largest.
+  METRICS_GRID_BYTES_PER_HOST_MINUTE: Floor for a job's largest metrics
+    pivot grid per estimated host-minute. A type's grids hold one row per
+    (host, sample time) pair of that type x its events x float64, once for
+    value and once for arc, so they grow linearly with host-minutes.
+  PIVOTED_TYPES_PER_JOB: Types a large job pivots (a 162-host
+    hpcperfstats04 job); with ``PIVOT_CACHE_MAX_BYTES`` it bounds the grids
+    held beside the largest.
   ADMISSION_TELEMETRY_INTERVAL_S: Seconds between ``telemetry_fn`` calls.
   LEARN_WINDOW: Finished jobs whose sizes the cost model keeps.
   LEARN_QUANTILE: Quantile of that window the cost model costs refs at.
@@ -40,7 +40,12 @@ from hpcperfstats.analysis.metrics.lib.metrics_idle_slot_supplement import (
 
 METRICS_ROWS_PER_HOST_MINUTE = 312
 METRICS_PEAK_BYTES_PER_ROW = 140
-METRICS_GRID_BYTES_PER_HOST_SQ_MINUTE = 60
+# The largest grid is widest x 16 B (float64 value and arc) x pairs per
+# host-minute. Measured on a 162-host x 551-min unaligned synthetic tiled
+# from golden job 23538 (widest type host_cpu_hw, 38 events, 1.005 pairs per
+# host-minute): the largest pivot's value + arc bytes / host-minutes = 611 B,
+# and HANDOFF.size() gives the same bound.
+METRICS_GRID_BYTES_PER_HOST_MINUTE = 611
 PIVOTED_TYPES_PER_JOB = 24
 ADMISSION_TELEMETRY_INTERVAL_S = 60.0
 LEARN_WINDOW = 200
@@ -120,27 +125,6 @@ def _estimated_samples(ref: Any) -> int:
     return 1
 
 
-def _estimated_hosts(ref: Any) -> int:
-  """
-  A ref's ``nhosts``, at least 1.
-
-  Args:
-    ref (Any): Candidate ref (``nhosts`` optional).
-
-  Returns:
-    int: Host count the scheduler resolved for the job.
-
-  Examples:
-    >>> from types import SimpleNamespace
-    >>> _estimated_hosts(SimpleNamespace(nhosts=None))
-    1
-  """
-  try:
-    return max(1, int(getattr(ref, "nhosts", 1) or 1))
-  except TypeError, ValueError:
-    return 1
-
-
 def _learned(window: deque[float], floor: float) -> float:
   """
   ``LEARN_QUANTILE`` of ``window``, never below ``floor``.
@@ -172,11 +156,12 @@ class MemoryCostModel:
 
   A ref is costed at its frame (``estimated_sample_count`` x rows per
   host-minute x ``METRICS_PEAK_BYTES_PER_ROW``) plus its metrics pivot
-  grids: the largest grid ``G`` (host-minutes x hosts x grid bytes per
-  host-minute per host) plus the grids the bounded pivot cache keeps beside
-  it, ``min(pivot_cache_bytes, G x PIVOTED_TYPES_PER_JOB)``. Both densities
-  are the ``LEARN_QUANTILE`` of the last ``LEARN_WINDOW`` finished jobs with
-  a known runtime, never below the production floors, so a denser job mix
+  grids: the largest grid ``G`` (host-minutes x grid bytes per host-minute;
+  host-minutes already carry ``nhosts``) plus the grids the bounded pivot
+  cache keeps beside it, ``min(pivot_cache_bytes, G x
+  PIVOTED_TYPES_PER_JOB)``. Both densities are the ``LEARN_QUANTILE`` of
+  the last ``LEARN_WINDOW`` finished jobs with a known runtime, never below
+  the production floors, so a denser job mix
   raises the cost and a sparse one cannot lower it. Once a job's metrics
   finished its pivots are gone and its cost is its measured rows x
   ``METRICS_PEAK_BYTES_PER_ROW``. ``artifact_only`` refs are costed like a
@@ -186,18 +171,18 @@ class MemoryCostModel:
   Attributes:
     rows_floor: Lowest rows per host-minute used.
     bytes_per_row: Peak bytes per frame row.
-    grid_floor: Lowest grid bytes per host-minute per host used.
+    grid_floor: Lowest grid bytes per host-minute used.
     pivot_cache_bytes: Grid bytes the pivot cache keeps beside the largest.
     _ratios: Rows per host-minute of recent finished jobs.
-    _grid_ratios: Largest-grid bytes per host-minute per host of recent
-      finished jobs.
+    _grid_ratios: Largest-grid bytes per host-minute of recent finished
+      jobs.
   """
 
   def __init__(
     self,
     rows_floor: float = METRICS_ROWS_PER_HOST_MINUTE,
     bytes_per_row: float = METRICS_PEAK_BYTES_PER_ROW,
-    grid_floor: float = METRICS_GRID_BYTES_PER_HOST_SQ_MINUTE,
+    grid_floor: float = METRICS_GRID_BYTES_PER_HOST_MINUTE,
     pivot_cache_bytes: int = PIVOT_CACHE_MAX_BYTES,
   ) -> None:
     """
@@ -206,7 +191,7 @@ class MemoryCostModel:
     Args:
       rows_floor (float): Lowest rows per host-minute used.
       bytes_per_row (float): Peak bytes per frame row.
-      grid_floor (float): Lowest grid bytes per host-minute per host used.
+      grid_floor (float): Lowest grid bytes per host-minute used.
       pivot_cache_bytes (int): Grid bytes the pivot cache keeps.
 
     Returns:
@@ -238,16 +223,18 @@ class MemoryCostModel:
     """
     return _learned(self._ratios, self.rows_floor)
 
-  def grid_bytes_per_host_sq_minute(self) -> float:
+  def grid_bytes_per_host_minute(self) -> float:
     """
-    Largest-grid bytes per host-minute per host refs are costed at.
+    Largest-grid bytes per host-minute refs are costed at.
 
     Returns:
       float: Learned quantile of the observed ratios, at least the floor.
 
     Examples:
-      >>> MemoryCostModel(grid_floor=60).grid_bytes_per_host_sq_minute()
-      60.0
+      >>> MemoryCostModel().grid_bytes_per_host_minute() == (
+      ...   METRICS_GRID_BYTES_PER_HOST_MINUTE
+      ... )
+      True
     """
     return _learned(self._grid_ratios, self.grid_floor)
 
@@ -256,8 +243,7 @@ class MemoryCostModel:
     Estimated peak bytes of ``ref`` before its frame exists.
 
     Args:
-      ref (Any): Candidate ref (``estimated_sample_count`` / ``nhosts``
-        optional).
+      ref (Any): Candidate ref (``estimated_sample_count`` optional).
 
     Returns:
       int: Frame bytes plus the pivot grids held at the peak.
@@ -271,9 +257,7 @@ class MemoryCostModel:
     """
     samples = _estimated_samples(ref)
     frame = samples * self.rows_per_host_minute() * self.bytes_per_row
-    grid = (
-      samples * _estimated_hosts(ref) * self.grid_bytes_per_host_sq_minute()
-    )
+    grid = samples * self.grid_bytes_per_host_minute()
     held = min(self.pivot_cache_bytes, grid * PIVOTED_TYPES_PER_JOB)
     return int(frame + grid + held)
 
@@ -321,7 +305,7 @@ class MemoryCostModel:
     samples = _estimated_samples(ref)
     self._ratios.append(rows / samples)
     if grid_bytes > 0:
-      self._grid_ratios.append(grid_bytes / (samples * _estimated_hosts(ref)))
+      self._grid_ratios.append(grid_bytes / samples)
 
 
 def pop_fresh_first(
@@ -701,9 +685,7 @@ def run_metrics_sliding_session(
           "measured_bytes": measured,
           "budget_bytes": budget,
           "rows_per_host_minute": model.rows_per_host_minute(),
-          "grid_bytes_per_host_sq_minute": (
-            model.grid_bytes_per_host_sq_minute()
-          ),
+          "grid_bytes_per_host_minute": model.grid_bytes_per_host_minute(),
         }
       )
 

@@ -11,10 +11,43 @@ from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
+import numpy as np
+
 from hpcperfstats.analysis.metrics.lib.columnar.job_table import (
   ColumnarJobTable,
 )
 from hpcperfstats.analysis.metrics.lib.columnar.jobframe import JobFrame
+from hpcperfstats.analysis.metrics.lib.columnar.kernels import HostSeries
+
+
+def host_series(values: Any, t_s: Any = None, arc: Any = None) -> HostSeries:
+  """
+  One host's series for fake jobs: a value grid on given or unit-step times.
+
+  Args:
+    values (Any): ``(n_times, n_events)`` value grid.
+    t_s (Any): Sample times in seconds (default ``0, 1, 2, ...``).
+    arc (Any): ``(n_times, n_events)`` arc grid (default: the counter rate
+      of ``values`` over the interval ending at each sample, NaN first).
+
+  Returns:
+    HostSeries: Series with ``t_us = t_s * 1e6``.
+
+  Examples:
+    >>> s = host_series([[0.0], [10.0]], [0.0, 5.0])
+    >>> s.arc.tolist(), s.t_us.tolist()
+    ([[nan], [2.0]], [0, 5000000])
+  """
+  v = np.asarray(values, dtype=np.float64)
+  t = np.arange(v.shape[0], dtype=np.float64) if t_s is None else t_s
+  t = np.asarray(t, dtype=np.float64)
+  if arc is None:
+    arc = np.full_like(v, np.nan)
+    with np.errstate(invalid="ignore", divide="ignore"):
+      arc[1:] = np.diff(v, axis=0) / np.diff(t)[:, None]
+  return HostSeries(
+    t, np.round(t * 1e6).astype(np.int64), v, np.asarray(arc, np.float64)
+  )
 
 
 def to_time_us(value: Any) -> int:

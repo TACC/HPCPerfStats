@@ -27,10 +27,12 @@ Attributes:
     per-device and type-detail aggregates.
   _COLUMNS: Float column names a kernel may reduce.
   PIVOT_CACHE_MAX_BYTES: Grid bytes ``TypePivots`` keeps across reads of a
-    job's types. A grid is hosts x the union of every host's sample times x
-    events, so it grows with hosts squared; keeping every pivoted type of a
-    162-host job held 19.5 GiB (hpcperfstats04, 2026-11-21). An evicted
-    type is pivoted again on its next read, with the same values.
+    job's types. A pivot holds one row per (host, sample time) pair of its
+    type, so it is linear in the frame's rows. An evicted type is pivoted
+    again on its next read, with the same values.
+  _PAIR_TIME_BITS: Low bits of the packed ``(host, time - t0)`` pivot key
+    that hold the time offset in us (about 203 days); the host id sits
+    above them.
 """
 
 from __future__ import annotations
@@ -62,6 +64,7 @@ MODE_ORM = "orm"
 
 _COLUMNS = ("value", "arc", "delta")
 PIVOT_CACHE_MAX_BYTES = 2 << 30
+_PAIR_TIME_BITS = 44
 
 
 @dataclass(frozen=True)
@@ -194,7 +197,6 @@ class FrameIndex:
     n_rows: Row count of the frame.
     _time_axis: Sorted distinct times of the frame (int64 us).
     _time_index: Position of each row's time on ``_time_axis``.
-    _owned_axis: Memoised :meth:`owned_time_axis` or None.
   """
 
   def __init__(
@@ -267,7 +269,6 @@ class FrameIndex:
     self.owned = frame.owned.astype(bool)
     self._time_axis = frame.time_axis()
     self._time_index = frame.time_index().astype(np.int64)
-    self._owned_axis: np.ndarray | None = None
 
   def series_ids(self, typ: str, events: Sequence[str] | None) -> list[int]:
     """
@@ -890,31 +891,6 @@ class FrameIndex:
       sums / counts,
     )
 
-  def owned_time_axis(self) -> np.ndarray:
-    """
-    Sorted distinct sample times of the job-owned rows (int64 us), memoised.
-
-    Every :meth:`metrics_pivot` shares this axis, so it is computed once per
-    frame instead of once per type.
-
-    Returns:
-      np.ndarray: int64 times (empty without owned rows).
-
-    Examples:
-      >>> f = JobFrame.from_records(
-      ...   "1",
-      ...   [
-      ...     (5, "h", "cpu", "user", None, 1, 1.0, None, None),
-      ...     (3, "h", "cpu", "user", None, 0, 1.0, None, None),
-      ...   ],
-      ... )
-      >>> FrameIndex(f).owned_time_axis().tolist()
-      [5]
-    """
-    if self._owned_axis is None:
-      self._owned_axis = np.unique(self.frame.time_us[self.owned])
-    return self._owned_axis
-
   def has_owned_rows(self, typ: str, events: Sequence[str]) -> bool:
     """
     True when ``typ`` has a job-owned row of one of ``events``.
@@ -943,28 +919,87 @@ class FrameIndex:
       self.owned[b[s] : b[s + 1]].any() for s in self._select(typ, events)
     )
 
-  def metrics_pivot(
-    self,
-    typ: str,
-    events: Sequence[str],
-  ) -> dict[str, object]:
+  def _pivot_rows(
+    self, typ: str, events: Sequence[str]
+  ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     """
-    ``_JobForMetrics`` arrays for one type over job-owned rows.
+    Job-owned rows of ``typ`` with their event column and ``(host, time)``
+    pair, shared by :meth:`metrics_pivot` and :meth:`metrics_binned`.
 
-    The time axis is the distinct owned sample times of the whole job (all
-    types), floored to seconds like ``datetime64[s]``. Per host, each
-    ``(time, event)`` cell is the mean of ``value`` over devices; the
-    cluster grids are the mean over every host's rows.
+    A pair is keyed by one int64, ``host << _PAIR_TIME_BITS | (t - t0)``
+    with ``t0`` the type's first scoped sample (an earlier origin could
+    make a time negative and corrupt the host bits), so ``np.unique`` sorts
+    the pairs by host, then time.
 
     Args:
       typ (str): Type name.
       events (Sequence[str]): Column order (``jt.schema[typ]``).
 
     Returns:
-      dict[str, object]: ``times_s`` (float64), ``host_ids`` (hosts with
-      rows of this type, ascending), ``per_host`` (3-D value grid
-      ``(n_hosts, n_times, n_events)``), ``cluster_value`` and
-      ``cluster_arc`` grids ``(n_times, n_events)``.
+      tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]: ``(rows,
+      event column per row, sorted distinct pair keys, pair index per row,
+      t0 in us)``; every array is empty without owned rows.
+
+    Raises:
+      ValueError: The type's samples span ``2**_PAIR_TIME_BITS`` us or
+        more, or a host id does not fit above the time bits.
+
+    Examples:
+      >>> f = JobFrame.from_records(
+      ...   "1", [(5, "h", "cpu", "user", None, 1, 1.0, None, None)]
+      ... )
+      >>> _r, _e, pairs, pair_of_row, t0 = FrameIndex(f)._pivot_rows(
+      ...   "cpu", ["user"]
+      ... )
+      >>> pairs.tolist(), pair_of_row.tolist(), t0
+      ([0], [0], 5)
+    """
+    f = self.frame
+    ev_pos = {e: i for i, e in enumerate(events)}
+    sids = self._select(typ, list(ev_pos))
+    rows = self.scoped_rows(typ, self.rows_for_series(sids), job_only=True)
+    empty = np.empty(0, dtype=np.int64)
+    if rows.size == 0:
+      return rows, empty, empty, empty, 0
+    event_of_series = np.zeros(len(f.series), dtype=np.int64)
+    for s in sids:
+      event_of_series[s] = ev_pos[f.series[s][1]]
+    t_us = f.time_us[rows].astype(np.int64)
+    t0 = int(t_us.min())
+    if int(t_us.max()) - t0 >= 1 << _PAIR_TIME_BITS:
+      raise ValueError(f"{typ}: sample span over 2**{_PAIR_TIME_BITS} us")
+    if len(f.hosts) >= 1 << (63 - _PAIR_TIME_BITS):
+      raise ValueError(f"{typ}: {len(f.hosts)} hosts overflow the pair key")
+    key = (f.host_id[rows].astype(np.int64) << _PAIR_TIME_BITS) | (t_us - t0)
+    pairs, pair_of_row = np.unique(key, return_inverse=True)
+    eix = event_of_series[f.series_id[rows]]
+    return rows, eix, pairs, pair_of_row.astype(np.int64), t0
+
+  def metrics_pivot(
+    self,
+    typ: str,
+    events: Sequence[str],
+  ) -> dict[str, np.ndarray]:
+    """
+    Per-host series of one type over job-owned rows (ragged, CSR).
+
+    Each host keeps its own sample times of this type: the pairs are the
+    distinct ``(host, time)`` of the type's rows, sorted by host then time,
+    and host ``k`` owns pairs ``host_offsets[k]:host_offsets[k + 1]``.
+    Each ``(pair, event)`` cell is the mean over devices of ``value`` (and
+    of the ingest ``arc``). Memory is linear in the type's rows, whatever
+    the hosts' sample offsets.
+
+    Args:
+      typ (str): Type name.
+      events (Sequence[str]): Column order (``jt.schema[typ]``).
+
+    Returns:
+      dict[str, np.ndarray]: ``host_ids`` (hosts with rows of this type,
+      ascending), ``host_offsets`` (``n_hosts + 1``), ``times_us`` (int64
+      pair times), ``times_s`` (float64 pair times floored to seconds like
+      ``datetime64[s]``), ``value`` and ``arc`` grids ``(n_pairs,
+      n_events)``.
 
     Examples:
       >>> f = JobFrame.from_records(
@@ -975,69 +1010,144 @@ class FrameIndex:
       ...   ],
       ... )
       >>> p = FrameIndex(f).metrics_pivot("cpu", ["user", "nice"])
-      >>> p["per_host"][0].tolist(), p["cluster_arc"].tolist()
-      ([[3.0, nan]], [[2.0, nan]])
+      >>> p["value"].tolist(), p["arc"].tolist(), p["host_offsets"].tolist()
+      ([[3.0, nan]], [[2.0, nan]], [0, 1])
     """
-    f = self.frame
-    axis_us = self.owned_time_axis()
-    times_s = np.floor_divide(axis_us, 1_000_000).astype(np.float64)
-    n_t = axis_us.shape[0]
+    rows, eix, pairs, pair_of_row, t0 = self._pivot_rows(typ, events)
     n_e = len(events)
-    ev_pos = {e: i for i, e in enumerate(events)}
-    sids = self._select(typ, list(ev_pos))
-    rows = self.scoped_rows(typ, self.rows_for_series(sids), job_only=True)
-    empty_grid = np.full((n_t, n_e), np.nan, dtype=np.float64)
-    if rows.size == 0 or n_t == 0:
-      return {
-        "times_s": times_s,
-        "host_ids": np.empty(0, dtype=np.int64),
-        "per_host": np.empty((0, n_t, n_e), dtype=np.float64),
-        "cluster_value": empty_grid,
-        "cluster_arc": empty_grid.copy(),
-      }
-    tix = np.searchsorted(axis_us, f.time_us[rows]).astype(np.int64)
-    event_of_series = np.zeros(len(f.series), dtype=np.int64)
-    for s in sids:
-      event_of_series[s] = ev_pos[f.series[s][1]]
-    eix = event_of_series[f.series_id[rows]]
-    host = f.host_id[rows].astype(np.int64)
-    host_ids, hinv = np.unique(host, return_inverse=True)
-    n_h = host_ids.shape[0]
-
-    def _grid(
-      keys_flat: np.ndarray, shape: tuple[int, ...], vals: np.ndarray
-    ) -> np.ndarray:
-      """
-      Mean of ``vals`` per flat cell, NaN where no finite sample.
-
-      Args:
-        keys_flat (np.ndarray): Flat cell index per row.
-        shape (tuple[int, ...]): Output grid shape.
-        vals (np.ndarray): Values per row (NaN skipped).
-
-      Returns:
-        np.ndarray: Grid of means.
-
-      Examples:
-        >>> True
-        True
-      """
-      size = int(np.prod(shape))
-      return sg.grid_mean(keys_flat, vals, size).reshape(shape)
-
-    value = self.values_at("value", rows)
-    per_host = _grid((hinv * n_t + tix) * n_e + eix, (n_h, n_t, n_e), value)
-    cluster_value = _grid(tix * n_e + eix, (n_t, n_e), value)
-    cluster_arc = _grid(
-      tix * n_e + eix, (n_t, n_e), self.values_at("arc", rows)
-    )
+    host_of_pair = pairs >> _PAIR_TIME_BITS
+    host_ids, starts = np.unique(host_of_pair, return_index=True)
+    times_us = (pairs & ((1 << _PAIR_TIME_BITS) - 1)) + t0
+    cells = pair_of_row * n_e + eix
+    size = pairs.size * n_e
     return {
-      "times_s": times_s,
       "host_ids": host_ids,
-      "per_host": per_host,
-      "cluster_value": cluster_value,
-      "cluster_arc": cluster_arc,
+      "host_offsets": np.append(starts, pairs.size).astype(np.int64),
+      "times_us": times_us,
+      "times_s": np.floor_divide(times_us, 1_000_000).astype(np.float64),
+      "value": sg.grid_mean(cells, self.values_at("value", rows), size).reshape(
+        pairs.size, n_e
+      ),
+      "arc": sg.grid_mean(cells, self.values_at("arc", rows), size).reshape(
+        pairs.size, n_e
+      ),
     }
+
+  def metrics_binned(
+    self,
+    typ: str,
+    events: Sequence[str],
+    bin_of_pair: np.ndarray,
+    n_bins: int,
+  ) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Cluster grids of one type: mean ``value`` and ``arc`` over every
+    ``(host, device)`` row whose pivot pair falls in a bin.
+
+    Rows enter each cell in frame order, as the union-axis cluster grids
+    summed them, so when the bins are the distinct sample times the value
+    grid is the same bit for bit. The ``arc`` of each host's first pair is
+    left out: the ingest rate there covers the interval before the job's
+    first sample, which can hold the previous job's traffic, so it must
+    never become a cluster peak.
+
+    Args:
+      typ (str): Type name.
+      events (Sequence[str]): Column order (``jt.schema[typ]``).
+      bin_of_pair (np.ndarray): Bin id in ``[0, n_bins)`` of each pair of
+        :meth:`metrics_pivot` (same order).
+      n_bins (int): Bin count.
+
+    Returns:
+      tuple[np.ndarray, np.ndarray]: ``(value, arc)`` grids ``(n_bins,
+      n_events)``, NaN where a bin has no finite sample of an event.
+
+    Examples:
+      >>> f = JobFrame.from_records(
+      ...   "1",
+      ...   [
+      ...     (1, "a", "cpu", "user", None, 1, 2.0, 9.0, None),
+      ...     (2, "a", "cpu", "user", None, 1, 4.0, 1.0, None),
+      ...     (1, "b", "cpu", "user", None, 1, 4.0, 9.0, None),
+      ...     (2, "b", "cpu", "user", None, 1, 6.0, 3.0, None),
+      ...   ],
+      ... )
+      >>> v, a = FrameIndex(f).metrics_binned(
+      ...   "cpu", ["user"], np.array([0, 1, 0, 1]), 2
+      ... )
+      >>> v.tolist(), a.tolist()
+      ([[3.0], [5.0]], [[nan], [2.0]])
+    """
+    rows, eix, pairs, pair_of_row, _t0 = self._pivot_rows(typ, events)
+    n_e = len(events)
+    cells = np.asarray(bin_of_pair, dtype=np.int64)[pair_of_row] * n_e + eix
+    size = int(n_bins) * n_e
+    arc = self.values_at("arc", rows)
+    host = pairs >> _PAIR_TIME_BITS
+    arc[np.diff(host, prepend=-1)[pair_of_row] != 0] = np.nan
+    return tuple(
+      sg.grid_mean(cells, col, size).reshape(int(n_bins), n_e)
+      for col in (self.values_at("value", rows), arc)
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class HostSeries:
+  """
+  One host's samples of one type: its own times and per-time event values.
+
+  Array-like over ``values``: ``series[:, j]`` and ``series.shape`` read the
+  value grid, so code written for a bare ``(n_times, n_events)`` grid keeps
+  working, and ``t_s`` / ``t_us`` / ``arc`` are the same host's time axis
+  and ingest rates.
+
+  Attributes:
+    t_s: Sample times floored to seconds (float64).
+    t_us: Sample times (int64 us).
+    values: ``(n_times, n_events)`` device-mean ``value`` grid.
+    arc: ``(n_times, n_events)`` device-mean ingest ``arc`` grid (the rate
+      over the interval that ends at the sample; NaN on the first sample).
+  """
+
+  t_s: np.ndarray
+  t_us: np.ndarray
+  values: np.ndarray
+  arc: np.ndarray
+
+  def __getitem__(self, key: object) -> np.ndarray:
+    """
+    Index the value grid.
+
+    Args:
+      key (object): Any NumPy index (``[:, j]``, ``[-1, j]``, ...).
+
+    Returns:
+      np.ndarray: ``values[key]``.
+
+    Examples:
+      >>> s = HostSeries(
+      ...   np.zeros(1), np.zeros(1, np.int64), np.ones((1, 2)), np.ones((1, 2))
+      ... )
+      >>> s[:, 1].tolist()
+      [1.0]
+    """
+    return self.values[key]
+
+  @property
+  def shape(self) -> tuple[int, ...]:
+    """
+    Shape of the value grid, ``(n_times, n_events)``.
+
+    Returns:
+      tuple[int, ...]: ``values.shape``.
+
+    Examples:
+      >>> HostSeries(
+      ...   np.zeros(3), np.zeros(3, np.int64), np.ones((3, 2)), np.ones((3, 2))
+      ... ).shape
+      (3, 2)
+    """
+    return self.values.shape
 
 
 class TypePivots:
@@ -1094,12 +1204,14 @@ class TypePivots:
     self._known = set(self.types)
     self.max_bytes = int(max_bytes)
     self.pivots_built = 0
-    self._cache: OrderedDict[str, tuple[dict[str, object], dict[int, int]]] = (
-      OrderedDict()
-    )
+    self._cache: OrderedDict[
+      str, tuple[dict[str, np.ndarray], dict[int, int]]
+    ] = OrderedDict()
     self._bytes: dict[str, int] = {}
 
-  def get(self, typ: str) -> tuple[dict[str, object], dict[int, int]] | None:
+  def get(
+    self, typ: str
+  ) -> tuple[dict[str, np.ndarray], dict[int, int]] | None:
     """
     Pivot of ``typ`` and its host positions, or None for a type without one.
 
@@ -1107,8 +1219,8 @@ class TypePivots:
       typ (str): Type name.
 
     Returns:
-      tuple[dict[str, object], dict[int, int]] | None: ``(pivot, {host_id:
-      row in per_host})``.
+      tuple[dict[str, np.ndarray], dict[int, int]] | None: ``(pivot,
+      {host_id: position in host_ids})``.
 
     Examples:
       >>> f = JobFrame.from_records(
@@ -1135,95 +1247,39 @@ class TypePivots:
       del self._bytes[oldest]
     return hit
 
-
-class PivotGrids(Mapping[str, np.ndarray]):
-  """
-  Read-only type -> cluster grid mapping over :class:`TypePivots`.
-
-  A ``collections.abc.Mapping``: keys are the pivotable types; a value is
-  pivoted on first lookup, so ``get`` / ``in`` touch one type only.
-
-  Attributes:
-    pivots: Shared per-type pivots.
-    field: ``cluster_value`` or ``cluster_arc``.
-  """
-
-  def __init__(self, pivots: TypePivots, field: str) -> None:
+  def binned(
+    self, typ: str, bin_of_pair: np.ndarray, n_bins: int
+  ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Bind the pivots and the grid name.
+    Cluster ``(value, arc)`` grids of ``typ`` on caller-chosen bins.
 
     Args:
-      pivots (TypePivots): Shared per-type pivots.
-      field (str): ``cluster_value`` or ``cluster_arc``.
+      typ (str): A type of :attr:`types`.
+      bin_of_pair (np.ndarray): Bin id of each pair of the type's pivot.
+      n_bins (int): Bin count.
 
     Returns:
-      None
+      tuple[np.ndarray, np.ndarray]: :meth:`FrameIndex.metrics_binned`.
 
     Examples:
       >>> f = JobFrame.from_records(
-      ...   "1", [(1, "h", "cpu", "user", None, 1, 1.0, 2.0, None)]
+      ...   "1",
+      ...   [
+      ...     (1, "h", "cpu", "user", None, 1, 1.0, 9.0, None),
+      ...     (2, "h", "cpu", "user", None, 1, 3.0, 2.0, None),
+      ...   ],
       ... )
       >>> p = TypePivots(FrameIndex(f), {"cpu": ["user"]})
-      >>> PivotGrids(p, "cluster_arc")["cpu"].tolist()
-      [[2.0]]
+      >>> p.binned("cpu", np.array([0, 1]), 2)[1].tolist()
+      [[nan], [2.0]]
     """
-    self.pivots = pivots
-    self.field = field
-
-  def __getitem__(self, typ: str) -> np.ndarray:
-    """
-    Cluster grid of ``typ`` (pivots the type on first use).
-
-    Args:
-      typ (str): Type name.
-
-    Returns:
-      np.ndarray: ``(n_times, n_events)`` grid.
-
-    Raises:
-      KeyError: ``typ`` has no owned rows.
-
-    Examples:
-      >>> f = JobFrame.from_records("1", [])
-      >>> PivotGrids(TypePivots(FrameIndex(f), {}), "cluster_value").get("x")
-    """
-    hit = self.pivots.get(typ)
-    if hit is None:
-      raise KeyError(typ)
-    return hit[0][self.field]
-
-  def __iter__(self) -> Iterator[str]:
-    """
-    Pivotable types in schema order (no pivoting).
-
-    Returns:
-      Iterator[str]: Type names.
-
-    Examples:
-      >>> f = JobFrame.from_records("1", [])
-      >>> list(PivotGrids(TypePivots(FrameIndex(f), {}), "cluster_value"))
-      []
-    """
-    return iter(self.pivots.types)
-
-  def __len__(self) -> int:
-    """
-    Number of pivotable types (no pivoting).
-
-    Returns:
-      int: Type count.
-
-    Examples:
-      >>> f = JobFrame.from_records("1", [])
-      >>> len(PivotGrids(TypePivots(FrameIndex(f), {}), "cluster_value"))
-      0
-    """
-    return len(self.pivots.types)
+    return self.index.metrics_binned(typ, self.events[typ], bin_of_pair, n_bins)
 
 
-class HostPivotStats(Mapping[str, dict[str, np.ndarray]]):
+class HostPivotStats(Mapping[str, dict[str, HostSeries]]):
   """
-  Read-only type -> ``{"agg": grid}`` mapping of one host (``_Host.stats``).
+  Read-only type -> ``{"agg": HostSeries}`` mapping of one host
+  (``_Host.stats``).
 
   A ``collections.abc.Mapping`` over :class:`TypePivots`: ``get`` / ``in``
   / ``[]`` pivot only the type asked for; iterating pivots every type.
@@ -1249,21 +1305,22 @@ class HostPivotStats(Mapping[str, dict[str, np.ndarray]]):
       ...   "1", [(1, "h", "cpu", "user", None, 1, 1.0, None, None)]
       ... )
       >>> s = HostPivotStats(TypePivots(FrameIndex(f), {"cpu": ["user"]}), 0)
-      >>> s["cpu"]["agg"].tolist()
+      >>> s["cpu"]["agg"].values.tolist()
       [[1.0]]
     """
     self.pivots = pivots
     self.host_id = int(host_id)
 
-  def __getitem__(self, typ: str) -> dict[str, np.ndarray]:
+  def __getitem__(self, typ: str) -> dict[str, HostSeries]:
     """
-    ``{"agg": (n_times, n_events) grid}`` of ``typ`` on this host.
+    ``{"agg": HostSeries}`` of ``typ`` on this host: views of the host's
+    slice of the type's pivot, on the host's own sample times.
 
     Args:
       typ (str): Type name.
 
     Returns:
-      dict[str, np.ndarray]: Device-mean grid under ``agg``.
+      dict[str, HostSeries]: Device-mean series under ``agg``.
 
     Raises:
       KeyError: The host has no owned rows of ``typ``.
@@ -1276,7 +1333,16 @@ class HostPivotStats(Mapping[str, dict[str, np.ndarray]]):
     k = None if hit is None else hit[1].get(self.host_id)
     if k is None:
       raise KeyError(typ)
-    return {"agg": hit[0]["per_host"][k]}
+    piv = hit[0]
+    sl = slice(int(piv["host_offsets"][k]), int(piv["host_offsets"][k + 1]))
+    return {
+      "agg": HostSeries(
+        piv["times_s"][sl],
+        piv["times_us"][sl],
+        piv["value"][sl],
+        piv["arc"][sl],
+      )
+    }
 
   def __iter__(self) -> Iterator[str]:
     """

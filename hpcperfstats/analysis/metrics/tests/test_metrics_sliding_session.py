@@ -784,42 +784,70 @@ def test_admission_telemetry_reports_estimated_and_measured(monkeypatch):
     "measured_bytes",
     "budget_bytes",
     "rows_per_host_minute",
-    "grid_bytes_per_host_sq_minute",
+    "grid_bytes_per_host_minute",
   }
   assert seen[0]["estimated_bytes"] == model.cost(_ref("a", 10))
   assert seen[-1]["measured_bytes"] == 70 and seen[-1]["budget_bytes"] == 123
 
 
-def test_cost_prices_pivot_grids_that_grow_with_hosts_squared():
+def test_cost_prices_pivot_grids_linear_in_host_minutes():
   """Regression (hs04 OOM, 2026-11-21): job 100430 (162 hosts x 551 min,
-  24.7M rows) peaked at 28.9 GiB, 1254 B/row, against a 140 B/row cost.
-  Hosts sample at unaligned offsets, so each metrics pivot grid is hosts x
-  the union of every host's sample times x events: it grows with hosts
-  squared, and a per-row cost cannot see it."""
+  24.7M rows) peaked at 28.9 GiB, 1254 B/row, against a 140 B/row cost,
+  almost all of it metrics pivot grids, which a per-row cost cannot see.
+  Pivots hold one row per (host, sample time) pair, so the grid term
+  is host-minutes x grid bytes per host-minute: ``estimated_sample_count``
+  already carries ``nhosts``, and no second ``nhosts`` factor applies."""
+  floor = mss.METRICS_GRID_BYTES_PER_HOST_MINUTE
   model = mss.MemoryCostModel(
-    rows_floor=1, bytes_per_row=0, grid_floor=60, pivot_cache_bytes=10**8
+    rows_floor=1, bytes_per_row=0, grid_floor=floor, pivot_cache_bytes=10**8
   )
   small = model.cost(_ref("s", 1000, nhosts=1))
-  assert small == 1000 * 60 * (1 + mss.PIVOTED_TYPES_PER_JOB)
-  # Same host-minutes on 100x the hosts: 100x the grid, cache capped.
-  wide = model.cost(_ref("w", 1000, nhosts=100))
-  assert wide == 1000 * 100 * 60 + 10**8
-  # The hs04 job: one grid about 0.8 GiB, plus a full pivot cache.
-  hs04 = mss.MemoryCostModel().cost(_ref("100430", 162 * 551, nhosts=162))
-  grid = 162 * 551 * 162 * mss.METRICS_GRID_BYTES_PER_HOST_SQ_MINUTE
-  assert grid > 0.8 * (1 << 30)
-  assert hs04 >= grid + mss.PIVOT_CACHE_MAX_BYTES
+  assert small == 1000 * floor * (1 + mss.PIVOTED_TYPES_PER_JOB)
+  # Same host-minutes spread over 100 hosts: same grid, not 100x.
+  assert model.cost(_ref("w", 1000, nhosts=100)) == small
+  # The hs04 job: one grid of host-minutes x the floor, plus the cache.
+  host_minutes = 162 * 551
+  hs04 = mss.MemoryCostModel().cost(_ref("100430", host_minutes, nhosts=162))
+  grid = host_minutes * mss.METRICS_GRID_BYTES_PER_HOST_MINUTE
+  frame = host_minutes * mss.METRICS_ROWS_PER_HOST_MINUTE
+  assert hs04 == int(
+    frame * mss.METRICS_PEAK_BYTES_PER_ROW
+    + grid
+    + min(mss.PIVOT_CACHE_MAX_BYTES, grid * mss.PIVOTED_TYPES_PER_JOB)
+  )
+
+
+def test_cost_doubling_hosts_at_fixed_per_host_samples_doubles_grid():
+  """Twice the hosts at the same samples per host is twice the
+  host-minutes, so the grid term doubles; a hosts-squared term would
+  quadruple it."""
+  floor = mss.METRICS_GRID_BYTES_PER_HOST_MINUTE
+  model = mss.MemoryCostModel(
+    rows_floor=1, bytes_per_row=0, grid_floor=floor, pivot_cache_bytes=0
+  )
+  minutes = 551
+  for nhosts in (1, 4, 81):
+    one = model.cost(_ref("a", nhosts * minutes, nhosts=nhosts))
+    two = model.cost(_ref("b", 2 * nhosts * minutes, nhosts=2 * nhosts))
+    assert one == nhosts * minutes * floor
+    assert two == 2 * one
 
 
 def test_cost_model_learns_denser_grids_but_never_drops_below_floor():
-  model = mss.MemoryCostModel(rows_floor=1, bytes_per_row=0, grid_floor=60)
+  """The grid density is learned per host-minute (grid bytes / estimated
+  host-minutes, no ``nhosts`` factor), so the learned p90 stays linear."""
+  floor = mss.METRICS_GRID_BYTES_PER_HOST_MINUTE
+  model = mss.MemoryCostModel(rows_floor=1, bytes_per_row=0, grid_floor=floor)
   timed = {"runtime_s": 600.0, "nhosts": 10}
   for _ in range(20):
-    model.observe(_ref("sparse", 100, **timed), 1, 100 * 10 * 6)
-  assert model.grid_bytes_per_host_sq_minute() == 60
+    model.observe(_ref("sparse", 100, **timed), 1, 100 * (floor // 10))
+  assert model.grid_bytes_per_host_minute() == floor
   for _ in range(200):
-    model.observe(_ref("dense", 100, **timed), 1, 100 * 10 * 600)
-  assert model.grid_bytes_per_host_sq_minute() == 600
+    model.observe(_ref("dense", 100, **timed), 1, 100 * (5 * floor))
+  assert model.grid_bytes_per_host_minute() == 5 * floor
+  wide = mss.MemoryCostModel(rows_floor=1, bytes_per_row=0, grid_floor=0)
+  wide.observe(_ref("w", 100, runtime_s=600.0, nhosts=50), 1, 100 * 300)
+  assert wide.grid_bytes_per_host_minute() == 300
   # Unknown grid size (0) teaches rows only.
   model.observe(_ref("rows", 100, **timed), 1, 0)
-  assert model.grid_bytes_per_host_sq_minute() == 600
+  assert model.grid_bytes_per_host_minute() == 5 * floor

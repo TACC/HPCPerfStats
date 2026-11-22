@@ -88,13 +88,15 @@ flowchart TD
 free **and** its estimated memory fits: `MemoryCostModel.cost` =
 `estimated_sample_count` (`max(1, nhosts) x ceil(runtime / 60)`) x rows per
 host-minute x `METRICS_PEAK_BYTES_PER_ROW` (`lib/metrics_sliding_session.py`),
-plus its metrics pivot grids: the largest grid `G` = host-minutes x `nhosts`
-x grid bytes per host-minute per host, and `min(PIVOT_CACHE_MAX_BYTES,
-G x PIVOTED_TYPES_PER_JOB)` held beside it. Hosts sample at unaligned
-offsets, so a grid spans the union of every host's sample times and grows
-with hosts squared. Both densities are the p90 of recent finished jobs,
-never below `METRICS_ROWS_PER_HOST_MINUTE` /
-`METRICS_GRID_BYTES_PER_HOST_SQ_MINUTE`, and a job whose metrics finished is
+plus its metrics pivot grids: the largest grid `G` = host-minutes x grid
+bytes per host-minute, and `min(PIVOT_CACHE_MAX_BYTES,
+G x PIVOTED_TYPES_PER_JOB)` held beside it. A type's pivot holds one row per
+(host, sample time) pair of that type x its events, for value and arc, so
+`G` is linear in host-minutes (which already carry `nhosts`). Both densities
+are the p90 of recent finished jobs (the grid one learned from
+`HANDOFF.size`, the bound `distinct_time_count() x widest x 8 x 2`, divided
+by host-minutes), never below `METRICS_ROWS_PER_HOST_MINUTE` /
+`METRICS_GRID_BYTES_PER_HOST_MINUTE`, and a job whose metrics finished is
 costed at its measured frame rows from then on (its grids are gone). The summed cost of every job in
 flight (metrics or prewarm phase; artifact-only jobs count in full) must stay
 within `metrics_memory_budget_pct` of the memory base
@@ -104,8 +106,8 @@ most once a second) must be at least `metrics_admit_headroom_mib`. With
 nothing in flight one job always starts, so a job larger than the budget runs
 alone. The same check gates the primary fill and the continuous refill. Once a
 minute while work is in flight the session logs `metrics admission:
-inflight= est_gib= measured_gib= budget_gib= rows_per_host_min= handoff_gib=
-rss_gib=`; RSS well above the estimated plus measured cost points at memory no
+inflight= est_gib= measured_gib= budget_gib= rows_per_host_min=
+grid_b_per_host_min= handoff_gib= rss_gib=`; RSS well above the estimated plus measured cost points at memory no
 in-flight job accounts for. A
 ready-queue job the check refuses stays queued and smaller jobs behind it may
 start; once it has waited `metrics_memory_budget_head_wait_s`, jobs of its lane

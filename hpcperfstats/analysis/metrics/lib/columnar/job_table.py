@@ -34,7 +34,6 @@ from hpcperfstats.analysis.metrics.lib.columnar.kernels import (
   AggTable,
   FrameIndex,
   HostPivotStats,
-  PivotGrids,
   TypePivots,
   bucketed_job_value,
 )
@@ -1249,16 +1248,17 @@ class ColumnarJobTable:
 
   def metrics_view(self) -> Any:
     """
-    ``_JobForMetrics`` replacement: per-host and cluster grids per type.
+    ``_JobForMetrics`` replacement: per-host series per type.
 
-    ``view.schemas`` lists every type; ``hosts[h].stats`` and the cluster
-    grids are lazy mappings over one :class:`kernels.TypePivots`, so a type
-    is pivoted once, for every host, when a metric first reads it, and types
-    no metric reads are never pivoted.
+    ``view.schemas`` lists every type; ``hosts[h].stats`` are lazy mappings
+    over one :class:`kernels.TypePivots` (also ``view.pivots``, which the
+    cluster metrics bin), so a type is pivoted once, for every host, when a
+    metric first reads it, and types no metric reads are never pivoted.
+    Each host's series of a type is on that host's own sample times of the
+    type; there is no job-wide time axis.
 
     Returns:
-      Any: Object with ``jid``, ``hosts``, ``schemas``, ``times``,
-      ``cluster_mean_by_type``, ``cluster_mean_arc_by_type``,
+      Any: Object with ``jid``, ``hosts``, ``schemas``, ``pivots``,
       ``per_host_distinct_time_sum`` and ``acct``.
 
     Examples:
@@ -1291,15 +1291,11 @@ class ColumnarJobTable:
         _coerce_metrics_identity_str(e) for e in (raw_events or [])
       ]
       view.schemas[typename] = _Schema(events[typename])
-    pivots = TypePivots(self.index, events)
-    view.cluster_mean_by_type = PivotGrids(pivots, "cluster_value")
-    view.cluster_mean_arc_by_type = PivotGrids(pivots, "cluster_arc")
+    view.pivots = TypePivots(self.index, events)
     for hid in np.unique(self.frame.host_id[self.index.owned]).tolist():
       host = _Host()
-      host.stats = HostPivotStats(pivots, hid)
+      host.stats = HostPivotStats(view.pivots, hid)
       view.hosts[_coerce_metrics_identity_str(self.frame.hosts[hid])] = host
-    axis = self.index.owned_time_axis()
-    view.times = np.floor_divide(axis, 1_000_000).astype(np.float64)
     return view
 
 
@@ -1393,11 +1389,8 @@ class _ColumnarMetricsView:
     hosts: Host name to ``_Host`` (stats by type, a lazy
       ``kernels.HostPivotStats`` once built).
     schemas: Type name to ``_Schema``.
-    times: Sample times (float seconds).
-    cluster_mean_by_type: Type to ``(n_times, n_events)`` value means (a
-      lazy ``kernels.PivotGrids`` once built).
-    cluster_mean_arc_by_type: Type to ``(n_times, n_events)`` arc means
-      (lazy like ``cluster_mean_by_type``).
+    pivots: The job's ``kernels.TypePivots`` (None without host data);
+      the cluster peak metrics bin its pairs.
     per_host_distinct_time_sum: Sample count for invalidation.
     acct: ``{"cores": 1, "nodes": 1}`` placeholder as in ``_JobForMetrics``.
   """
@@ -1413,15 +1406,13 @@ class _ColumnarMetricsView:
       None
 
     Examples:
-      >>> _ColumnarMetricsView("1").times.shape
-      (0,)
+      >>> _ColumnarMetricsView("1").pivots is None
+      True
     """
     self.jid = jid
     self.hosts: dict[str, Any] = {}
     self.schemas: dict[str, Any] = {}
-    self.times = np.array([], dtype=np.float64)
-    self.cluster_mean_by_type: Mapping[str, np.ndarray] = {}
-    self.cluster_mean_arc_by_type: Mapping[str, np.ndarray] = {}
+    self.pivots: TypePivots | None = None
     self.per_host_distinct_time_sum = 0
     self.acct = {"cores": 1, "nodes": 1}
 
@@ -1539,9 +1530,13 @@ class JobTableHandoff:
     Frame rows and largest metrics pivot grid of the pending table for
     ``jid``, without taking it.
 
-    A pivot grid (``FrameIndex.metrics_pivot`` ``per_host``) is hosts x
-    the owned time axis x the type's events, float64; the largest is
-    bounded by the job's hosts and its widest schema type.
+    A type's metrics pivot holds one row per (host, owned sample time)
+    pair of that type x its events, float64, once for value and once for
+    arc. No type has more pairs than ``distinct_time_count()`` (the
+    per-host distinct owned time sum) or more events than the widest
+    schema type, so ``distinct_time_count() x widest x 8 x 2`` bounds the
+    largest pivot without re-pivoting (the pivots are freed once the
+    metrics persisted).
 
     Args:
       jid (str): Job id.
@@ -1559,8 +1554,8 @@ class JobTableHandoff:
     if table is None:
       return 0, 0
     widest = max((len(evs) for evs in table.schema.values()), default=0)
-    n_t = int(table.index.owned_time_axis().shape[0])
-    return int(table.index.n_rows), len(table.frame.hosts) * n_t * widest * 8
+    pairs = int(table.distinct_time_count())
+    return int(table.index.n_rows), pairs * widest * 8 * 2
 
   def total_bytes(self) -> int:
     """

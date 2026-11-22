@@ -301,30 +301,99 @@ def test_collapse_residual_copies_matches_legacy():
   assert ek.shape == (0,) and ev.shape == (0,)
 
 
+def _reference_pivot(frame, owned, typ, events):
+  """Per-row dict reference of the ragged pivot: (host, time) pairs sorted,
+  device means of finite value / arc per (pair, event)."""
+  ev_pos = {e: i for i, e in enumerate(events)}
+  cells: dict[tuple[int, int], dict[int, list]] = {}
+  for r in np.flatnonzero(owned).tolist():
+    t, ev = frame.series[frame.series_id[r]]
+    if t != typ or ev not in ev_pos:
+      continue
+    pair = (int(frame.host_id[r]), int(frame.time_us[r]))
+    cells.setdefault(pair, {}).setdefault(ev_pos[ev], []).append(r)
+  pairs = sorted(cells)
+  out = {}
+  for col in ("value", "arc"):
+    grid = np.full((len(pairs), len(events)), np.nan)
+    vals = getattr(frame, col)
+    for i, pair in enumerate(pairs):
+      for j, rows in cells[pair].items():
+        v = vals[rows]
+        v = v[np.isfinite(v)]
+        if v.size:
+          grid[i, j] = v.sum() / v.size
+    out[col] = grid
+  hosts = [h for h, _t in pairs]
+  host_ids = sorted(set(hosts))
+  out["host_ids"] = np.array(host_ids, dtype=np.int64)
+  out["host_offsets"] = np.array(
+    [hosts.index(h) for h in host_ids] + [len(pairs)], dtype=np.int64
+  )
+  out["times_us"] = np.array([t for _h, t in pairs], dtype=np.int64)
+  out["times_s"] = (out["times_us"] // US).astype(np.float64)
+  return out
+
+
 @pytest.mark.parametrize("seed", [17, 18])
 def test_metrics_pivot_unchanged_by_series_lookup(seed):
+  """The vectorised event lookup gives the per-row reference pivot."""
   recs = _random_records(seed, shared=True, n=900)
   frame = JobFrame.from_records("1", recs)
   idx = kn.FrameIndex(frame)
   events = ["idle", "user", "ghost", "nice"]
   p = idx.metrics_pivot("host_cpu", events)
-  # Legacy per-row comprehension for the event index of every row.
-  ev_pos = {e: i for i, e in enumerate(events)}
   rows = idx.scoped_rows(
     "host_cpu",
     idx.rows_for_series(idx.series_ids("host_cpu", events)),
     job_only=True,
   )
-  eix = np.array(
-    [ev_pos[frame.series[s][1]] for s in frame.series_id[rows]],
-    dtype=np.int64,
-  )
-  owned = np.nonzero(idx.owned)[0]
-  axis = np.unique(frame.time_us[owned])
-  tix = np.searchsorted(axis, frame.time_us[rows])
-  n_e = len(events)
-  want = sg._np_grid_mean(
-    tix * n_e + eix, frame.value[rows], axis.shape[0] * n_e
-  ).reshape(axis.shape[0], n_e)
-  assert np.array_equal(p["cluster_value"], want, equal_nan=True)
-  assert p["per_host"].shape == (p["host_ids"].shape[0], axis.shape[0], n_e)
+  owned = np.zeros(len(frame), dtype=bool)
+  owned[rows] = True
+  want = _reference_pivot(frame, owned, "host_cpu", events)
+  for key, arr in want.items():
+    assert np.array_equal(p[key], arr, equal_nan=True), key
+
+
+def test_metrics_pivot_ragged_matches_reference(monkeypatch):
+  """Ragged pivot: unequal per-host sample counts, a host with rows of other
+  types only, an empty type, and Codon equal to NumPy when baked."""
+  rng = np.random.default_rng(3)
+  base = 1_790_000_040 * US
+  recs = []
+  for h, (host, n, off) in enumerate(
+    (("a", 7, 0), ("b", 3, 17), ("c", 11, 41))
+  ):
+    for k in range(n):
+      t = base + (60 * k + off) * US + h
+      for ev in ("user", "system"):
+        for dev in ("0", "1"):
+          v = float(np.float32(rng.random() * 100))
+          arc = None if k == 0 else float(np.float32(rng.random()))
+          recs.append((t, host, "host_cpu", ev, dev, 1, v, arc, None))
+  recs.append((base, "d", "host_mem", "used", None, 1, 5.0, None, None))
+  frame = JobFrame.from_records("1", recs)
+  idx = kn.FrameIndex(frame)
+  events = ["user", "system", "idle"]
+  p = idx.metrics_pivot("host_cpu", events)
+  want = _reference_pivot(frame, idx.owned, "host_cpu", events)
+  for key, arr in want.items():
+    assert np.array_equal(p[key], arr, equal_nan=True), key
+  assert np.diff(p["host_offsets"]).tolist() == [7, 3, 11]
+  assert frame.hosts.index("d") not in p["host_ids"].tolist()
+  empty = idx.metrics_pivot("nvidia_gpu", ["gpu_util"])
+  assert empty["value"].shape == (0, 1) and empty["host_offsets"].tolist() == [
+    0
+  ]
+  # Binning reuses the same pairs: one bin per pair is the pivot itself.
+  n = p["times_us"].size
+  v, a = idx.metrics_binned("host_cpu", events, np.arange(n), n)
+  assert np.array_equal(v, p["value"], equal_nan=True)
+  assert np.array_equal(a, p["arc"], equal_nan=True)
+  monkeypatch.delenv(codon_bridge.CODON_METRICS_DISABLE_ENV)
+  codon_bridge.reset_for_tests()
+  # Host .venv has no baked kernel; the container --ft run compares Codon.
+  if codon_bridge.kernels() is not None:
+    c = kn.FrameIndex(frame).metrics_pivot("host_cpu", events)
+    for key, arr in p.items():
+      assert np.array_equal(c[key], arr, equal_nan=True), key

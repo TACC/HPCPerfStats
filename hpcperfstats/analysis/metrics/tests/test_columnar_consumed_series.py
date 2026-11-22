@@ -192,6 +192,17 @@ _REDUCTIONS = {
     lambda ix: ix.metrics_pivot("host_cpu", ["nice", "missing"]),
     {("host_cpu", "nice")},
   ),
+  "metrics_binned": (
+    lambda ix: ix.metrics_binned(
+      "host_cpu",
+      ["nice", "missing"],
+      np.zeros(
+        ix.metrics_pivot("host_cpu", ["nice"])["times_us"].size, np.int64
+      ),
+      1,
+    ),
+    {("host_cpu", "nice")},
+  ),
   "has_owned_rows": (
     lambda ix: ix.has_owned_rows("host_cpu", ["nice", "missing"]),
     {("host_cpu", "nice")},

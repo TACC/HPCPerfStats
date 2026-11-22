@@ -434,34 +434,32 @@ def test_gpu_group_stats_match_pandas_with_affinity():
 
 
 def test_metrics_pivot_matches_job_for_metrics_pandas():
+  """Per host, the pivot holds that host's own owned sample times of the
+  type and the device mean of value / arc per (time, event)."""
   recs = _random_records(17)
   frame = JobFrame.from_records("1", recs)
   df = _df(recs, frame)
   events = ["user", "nice", "idle", "ghost"]
   p = kn.FrameIndex(frame).metrics_pivot("host_cpu", events)
-  owned = df[df.owned == 1]
-  times = np.sort(owned.t.unique())
-  np.testing.assert_array_equal(p["times_s"], (times // US).astype(np.float64))
-  sub = owned[owned.type == "host_cpu"]
-  cl = sub.groupby(["t", "event"])["value"].mean().unstack()
-  cl = cl.reindex(index=times).reindex(columns=events)
-  np.testing.assert_allclose(
-    p["cluster_value"], cl.to_numpy(dtype=float), equal_nan=True
-  )
-  cla = sub.groupby(["t", "event"])["arc"].mean().unstack()
-  cla = cla.reindex(index=times).reindex(columns=events)
-  np.testing.assert_allclose(
-    p["cluster_arc"], cla.to_numpy(dtype=float), equal_nan=True
-  )
+  sub = df[(df.owned == 1) & (df.type == "host_cpu")]
+  assert p["host_ids"].tolist() == sorted(sub.host_id.unique().tolist())
+  off = p["host_offsets"]
   for k, hid in enumerate(p["host_ids"].tolist()):
     hdf = sub[sub.host_id == hid]
-    piv = hdf.pivot_table(
-      index="t", columns="event", values="value", aggfunc="mean"
+    times = np.sort(hdf.t.unique())
+    sl = slice(off[k], off[k + 1])
+    np.testing.assert_array_equal(p["times_us"][sl], times)
+    np.testing.assert_array_equal(
+      p["times_s"][sl], (times // US).astype(np.float64)
     )
-    piv = piv.reindex(index=times).reindex(columns=events)
-    np.testing.assert_allclose(
-      p["per_host"][k], piv.to_numpy(dtype=float), equal_nan=True
-    )
+    for col in ("value", "arc"):
+      piv = hdf.pivot_table(
+        index="t", columns="event", values=col, aggfunc="mean"
+      )
+      piv = piv.reindex(index=times).reindex(columns=events)
+      np.testing.assert_allclose(
+        p[col][sl], piv.to_numpy(dtype=float), equal_nan=True
+      )
 
 
 def test_bucketed_job_value_matches_job_arc_pandas():

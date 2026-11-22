@@ -5,6 +5,7 @@ import time
 import warnings
 
 import numpy as np
+import pytest
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
 
@@ -13,6 +14,7 @@ from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 ensure_django()
 
 from hpcperfstats.analysis.metrics.lib import metrics
+from hpcperfstats.analysis.metrics.lib.columnar.testing import host_series
 from hpcperfstats.analysis.metrics.lib.gen.utils import utils as job_utils
 
 try:
@@ -70,7 +72,7 @@ def _synthetic_cpu_job(nt, nhosts=1, phase_drop_at=None):
 
     class _Host:
       def __init__(self, arr):
-        self.stats = {"cpu": {"agg": arr}}
+        self.stats = {"cpu": {"agg": host_series(arr, t)}}
 
     hosts[f"n{h}"] = _Host(cpu)
 
@@ -78,7 +80,6 @@ def _synthetic_cpu_job(nt, nhosts=1, phase_drop_at=None):
     def __init__(self):
       self.hosts = hosts
       self.schemas = {"cpu": schema}
-      self.times = t
       self.acct = {"cores": 1, "nodes": nhosts}
 
   return job_utils(_Job())
@@ -136,3 +137,22 @@ def test_time_imbalance_large_nt_completes_under_budget():
   assert elapsed < 2.0, (
     f"time_imbalance took {elapsed:.3f}s (expected O(n) < 2s)"
   )
+
+
+def test_time_imbalance_mostly_offset_not_false_zero():
+  """Regression (production false 0%): a host 17 s behind the other that
+  shares 3 of its ticks. On the union axis its rate was finite only at the
+  shared ticks and 0 elsewhere, so one side of a split integrated to 0 and
+  time_imbalance stored 0.0. Each host's own axis gives the real value."""
+  from hpcperfstats.analysis.metrics.tests import per_host_axis_fixtures as F
+
+  table = F.mostly_offset_table()
+  value, typename, _units = metrics.time_imbalance().compute_metric(
+    job_utils(table.metrics_view())
+  )
+  oracle = F.time_imbalance_oracle(table)
+  assert typename == "cpu"
+  assert oracle is not None and oracle > 50
+  assert value == pytest.approx(oracle, rel=1e-9)
+  head = F.load_baseline()["head_unaligned_characterization"]["mostly_offset"]
+  assert head["metrics"]["time_imbalance"] == 0.0

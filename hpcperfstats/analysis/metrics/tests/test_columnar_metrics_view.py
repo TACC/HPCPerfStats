@@ -1,5 +1,6 @@
-"""metrics_view pivots a type lazily: same grids as an eager pivot of every
-schema type, and a type no metric reads is never pivoted."""
+"""metrics_view pivots a type lazily: same per-host series as an eager pivot
+of every schema type, a type no metric reads is never pivoted, and the pivot
+is linear in the frame's rows."""
 
 from __future__ import annotations
 
@@ -40,26 +41,35 @@ def _table():
 
 
 def _eager(table):
-  """The pre-lazy view: pivot every schema type with events up front."""
+  """Pivot every schema type with events up front: per host, the
+  ``HostSeries`` fields of its slice of the type's pivot."""
   idx = table.index
-  cluster, arc, per_host = {}, {}, {}
+  pivots, per_host = {}, {}
   for typ, events in table.schema.items():
     if not events:
       continue
     piv = idx.metrics_pivot(typ, list(events))
     if piv["host_ids"].shape[0] == 0:
       continue
-    cluster[typ] = piv["cluster_value"]
-    arc[typ] = piv["cluster_arc"]
+    pivots[typ] = piv
+    off = piv["host_offsets"]
     for k, hid in enumerate(piv["host_ids"].tolist()):
-      per_host.setdefault(table.frame.hosts[hid], {})[typ] = piv["per_host"][k]
-  axis = np.unique(table.frame.time_us[idx.owned])
-  return cluster, arc, per_host, np.floor_divide(axis, US).astype(np.float64)
+      sl = slice(off[k], off[k + 1])
+      per_host.setdefault(table.frame.hosts[hid], {})[typ] = {
+        f: piv[col][sl]
+        for f, col in (
+          ("t_s", "times_s"),
+          ("t_us", "times_us"),
+          ("values", "value"),
+          ("arc", "arc"),
+        )
+      }
+  return pivots, per_host
 
 
 def test_metrics_view_lazy_matches_eager(monkeypatch):
   table = _table()
-  cluster, arc, per_host, times = _eager(table)
+  pivots, per_host = _eager(table)
   pivoted = []
   real = type(table.index).metrics_pivot
 
@@ -72,56 +82,61 @@ def test_metrics_view_lazy_matches_eager(monkeypatch):
   # Building the view pivots nothing; every type stays in the schema.
   assert pivoted == []
   assert list(view.schemas) == list(table.schema)
-  assert np.array_equal(view.times, times)
   assert sorted(view.hosts) == ["h1", "h2", "h3"]
-  # Key sets match the eager dicts without pivoting.
-  assert list(view.cluster_mean_by_type) == list(cluster)
-  assert bool(view.cluster_mean_arc_by_type) and pivoted == []
+  assert view.pivots.types == list(pivots)
   # One read pivots one type, once, for every host.
-  got = view.cluster_mean_by_type.get("mem")
-  assert np.array_equal(got, cluster["mem"], equal_nan=True)
-  assert np.array_equal(
-    view.hosts["h2"].stats["mem"]["agg"], per_host["h2"]["mem"], equal_nan=True
-  )
+  got = view.hosts["h2"].stats["mem"]["agg"]
+  assert np.array_equal(got.values, per_host["h2"]["mem"]["values"])
   assert view.hosts["h3"].stats.get("mem") is None
   assert pivoted == ["mem"]
   # Absent, foreign-only and event-less types are missing, not pivoted.
   for typ in ("absent", "ib", "no_events"):
-    assert view.cluster_mean_by_type.get(typ) is None
+    assert view.pivots.get(typ) is None
     assert typ not in view.hosts["h1"].stats
   assert pivoted == ["mem"]
-  # Every remaining grid equals the eager one.
-  for typ in cluster:
-    assert np.array_equal(
-      view.cluster_mean_by_type[typ], cluster[typ], equal_nan=True
-    )
-    assert np.array_equal(
-      view.cluster_mean_arc_by_type[typ], arc[typ], equal_nan=True
-    )
+  # Every host's series equals the eager slice, on the host's own times
+  # (the gpu type only has h1's one sample).
   for host, by_type in per_host.items():
     stats = view.hosts[host].stats
     assert sorted(stats) == sorted(by_type)
-    for typ, grid in by_type.items():
-      assert np.array_equal(stats[typ]["agg"], grid, equal_nan=True)
-  assert sorted(pivoted) == sorted(cluster)
+    for typ, fields in by_type.items():
+      series = stats[typ]["agg"]
+      for name, arr in fields.items():
+        assert np.array_equal(getattr(series, name), arr, equal_nan=True)
+  assert view.hosts["h1"].stats["gpu"]["agg"].t_us.tolist() == [30 * US]
+  assert view.hosts["h1"].stats["cpu"]["agg"].shape == (12, 3)
+  assert sorted(pivoted) == sorted(pivots)
 
 
-def test_owned_time_axis_is_computed_once(monkeypatch):
-  table = _table()
-  calls = []
-  real_unique = np.unique
+def _offset_table(n_hosts, n_samples=40, spread_s=50.0):
+  """``n_hosts`` hosts at 60 s with offsets spread over ``spread_s``."""
+  rows = []
+  for h in range(n_hosts):
+    off = spread_s * h / max(n_hosts - 1, 1)
+    for k in range(n_samples):
+      t = round((60 * k + off) * US)
+      for ev in ("user", "system"):
+        rows.append((t, f"h{h:03d}", "cpu", ev, None, 1, 1.0 * k, 1.0, None))
+  return table_from_records(
+    rows, jid=f"off{n_hosts}", schema={"cpu": ["user", "system"]}
+  )
 
-  def counting_unique(*args, **kwargs):
-    calls.append(1)
-    return real_unique(*args, **kwargs)
 
-  first = table.index.owned_time_axis()
-  monkeypatch.setattr(np, "unique", counting_unique)
-  assert table.index.owned_time_axis() is first
-  table.index.metrics_pivot("cpu", ["user"])
-  table.index.metrics_pivot("mem", ["used"])
-  # Only the per-type host unique runs; the time axis is not recomputed.
-  assert len(calls) == 2
+def test_pivot_bytes_linear_in_rows():
+  """Regression (hs04 job 100430, 162 hosts: 0.81 GiB per grid): the pivot
+  was hosts x the union of every host's offset sample times, so doubling
+  the hosts at a fixed offset spread quadrupled it. Per-host axes keep one
+  row per (host, sample) pair: doubling the hosts doubles the bytes."""
+
+  def nbytes(table):
+    """Bytes of the per-pair arrays (host ids and offsets are per host)."""
+    piv = table.index.metrics_pivot("cpu", ["user", "system"])
+    return sum(piv[k].nbytes for k in ("times_us", "times_s", "value", "arc"))
+
+  assert nbytes(_offset_table(16)) == 2 * nbytes(_offset_table(8))
+  pairs = 16 * 40
+  piv = _offset_table(16).index.metrics_pivot("cpu", ["user", "system"])
+  assert piv["value"].shape == (pairs, 2) and piv["times_us"].shape == (pairs,)
 
 
 def test_pivot_cache_is_bounded_by_bytes_and_repivots_identically():

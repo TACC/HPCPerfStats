@@ -97,9 +97,41 @@ def test_handoff_size_and_total_bytes_peek_without_taking():
   t = _table("x", 25)
   h.put(t)
   assert h.total_bytes() == _frame_bytes(t)
-  widest = max(len(evs) for evs in t.schema.values())
-  n_t = t.index.owned_time_axis().shape[0]
-  assert h.size("x") == (25, len(t.frame.hosts) * n_t * widest * 8)
+  # 25 owned sample times on one host x 1 event x float64 x (value, arc).
+  assert h.size("x") == (25, 25 * 1 * 8 * 2)
   assert h.size("missing") == (0, 0)
   assert h.pop("x") is t
   assert h.size("x") == (0, 0) and h.total_bytes() == 0
+
+
+def _offset_hosts_table(jid, n_hosts, n_samples):
+  """Hosts sampling every 60 s at distinct offsets (no shared tick), two
+  events per sample."""
+  rows = [
+    (
+      1_000_000 * (60 * k + h + 1),
+      f"h{h}",
+      "host_cpu",
+      ev,
+      None,
+      float(k),
+      0.0,
+      0.0,
+    )
+    for h in range(n_hosts)
+    for k in range(n_samples)
+    for ev in ("user", "system")
+  ]
+  return table_from_records(rows, jid=jid)
+
+
+def test_handoff_size_grid_is_linear_in_hosts_for_offset_samples():
+  """Per-host pivots hold one row per (host, sample time) pair, so hosts at
+  unaligned offsets cost hosts x samples, not hosts x the union axis
+  (hosts squared): doubling hosts doubles the reported grid bytes."""
+  h = JobTableHandoff()
+  h.put(_offset_hosts_table("four", 4, 10))
+  h.put(_offset_hosts_table("eight", 8, 10))
+  four, eight = h.size("four")[1], h.size("eight")[1]
+  assert four == 4 * 10 * 2 * 8 * 2
+  assert eight == 2 * four

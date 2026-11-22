@@ -112,7 +112,7 @@ def test_metrics_view_sparse_slow_tier_uses_nan_not_zero_fill():
   job = table.metrics_view()
   agg = job.hosts["host1"].stats["host_tt"]["agg"]
   assert agg.shape == (3, 2)
-  # Fast event a present at all three global timestamps.
+  # Fast event a present at all three of the type's timestamps.
   assert agg[0, 0] == 1000.0
   assert agg[1, 0] == 1100.0
   assert agg[2, 0] == 2000.0
@@ -120,26 +120,27 @@ def test_metrics_view_sparse_slow_tier_uses_nan_not_zero_fill():
   assert np.isnan(agg[0, 1])
   assert np.isnan(agg[1, 1])
   assert agg[2, 1] == 2500.0
-  rates = metrics._per_interval_rate(agg[:, 1], job.times)
+  rates = metrics._per_interval_rate(agg[:, 1], agg.t_s)
   assert np.isnan(rates[0])
   assert np.isnan(rates[1])
 
 
-def test_metrics_view_builds_time_axis_and_host_stats():
+def test_metrics_view_builds_per_host_axes_and_host_stats():
+  from hpcperfstats.analysis.metrics.lib.gen.utils import utils
+
   job = _two_host_table().metrics_view()
   assert job.jid == "123"
-  assert job.times.shape == (2,)
-  assert job.times[1] - job.times[0] == 300.0
   assert set(job.hosts) == {"host1", "host2"}
   assert list(job.schemas["cpu"].events) == ["user", "system"]
   agg1 = job.hosts["host1"].stats["cpu"]["agg"]
-  assert agg1.tolist() == [[10.0, 5.0], [11.0, 6.0]]
+  assert agg1.values.tolist() == [[10.0, 5.0], [11.0, 6.0]]
+  assert agg1.t_s[1] - agg1.t_s[0] == 300.0
   agg2 = job.hosts["host2"].stats["cpu"]["agg"]
-  assert agg2.tolist() == [[20.0, 10.0], [21.0, 11.0]]
+  assert agg2.values.tolist() == [[20.0, 10.0], [21.0, 11.0]]
   # host2 has no mem rows: no mem stats entry (utils.get_type skips the host).
   assert "mem" not in job.hosts["host2"].stats
   assert job.per_host_distinct_time_sum == 4
-  cm_cpu = job.cluster_mean_by_type["cpu"]
+  cm_cpu = metrics._cluster_grids(utils(job), "cpu").value
   assert abs(cm_cpu[0, 0] - 15.0) < 1e-9
   assert abs(cm_cpu[0, 1] - 7.5) < 1e-9
   assert abs(cm_cpu[1, 0] - 16.0) < 1e-9
@@ -205,6 +206,31 @@ def test_sanitize_metrics_compute_rows_coerces_list_identity_fields():
   assert out[0]["type"] == "procstat"
   assert out[0]["metric"] == "wallclock"
   assert out[0]["units"] == ""
+
+
+@pytest.mark.parametrize(
+  "bad", [float("nan"), np.inf, -np.inf, np.float32("nan")]
+)
+def test_sanitize_turns_non_finite_into_no_data(bad):
+  """Regression: six endpoint metrics persisted NaN on offset hosts. Any
+  non-finite real value is stored as None with the non-finite reason and a
+  staff-only no_data_codes entry; finite values and ints pass through."""
+  from hpcperfstats.analysis.metrics.lib.sentinel_reasons import (
+    researcher_visible,
+  )
+
+  rows = [
+    {"jid": "j1", "metric": "avg_freq", "value": bad, "no_data_reason": None},
+    {"jid": "j1", "metric": "ok", "value": 2.5, "no_data_reason": None},
+    {"jid": "j1", "metric": "n", "value": 3, "no_data_codes": {"codes": {}}},
+  ]
+  out = metrics._sanitize_metrics_compute_rows(rows)
+  assert out[0]["value"] is None
+  assert out[0]["no_data_reason"] == metrics.NON_FINITE_RESULT_MSG
+  assert out[0]["no_data_codes"] == {"codes": {}, "non_finite": True}
+  assert not researcher_visible(out[0]["no_data_codes"])
+  assert out[1]["value"] == 2.5 and out[1]["no_data_reason"] is None
+  assert out[2]["value"] == 3 and out[2]["no_data_codes"] == {"codes": {}}
 
 
 def test_coerced_catalog_metric_is_hashable_for_set_membership():

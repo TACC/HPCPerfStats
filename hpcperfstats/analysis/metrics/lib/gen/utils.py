@@ -30,6 +30,7 @@ from bokeh.models import (
 )
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.analysis.metrics.lib.columnar.kernels import HostSeries
 
 warnings.simplefilter(action="ignore", category=UserWarning)
 warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -105,27 +106,26 @@ def _pick_pmc_typename(schema_keys: Any) -> Any:
 
 class utils:
   """
-  Minimal job-like wrapper exposing host stats, schemas, times, and type
-  resolution (pmc/imc/cha) for metrics and plots.
+  Minimal job-like wrapper exposing host stats, schemas and type resolution
+  (pmc/imc/cha) for metrics and plots.
+
+  There is no job-wide time axis: every host's series of a type carries its
+  own sample times (:class:`HostSeries`).
 
   Attributes:
     cha: ``cha``.
-    dt: ``dt``.
     freq: ``freq``.
     hostnames: ``hostnames``.
-    hours: ``hours``.
     imc: ``imc``.
     job: ``job``.
     nhosts: ``nhosts``.
-    nt: ``nt``.
     pmc: ``pmc``.
-    t: ``t``.
     wayness: ``wayness``.
   """
 
   def __init__(self, job: Any) -> None:
     """
-    Derive host/time fields from a job and resolve pmc/imc/cha/freq types.
+    Derive host fields from a job and resolve pmc/imc/cha/freq types.
 
     Args:
       job (Any): Job record (Django ``job_data`` or job-like mapping).
@@ -142,10 +142,6 @@ class utils:
     self.nhosts = len(job.hosts.keys())
     self.hostnames = sorted(job.hosts.keys())
     self.wayness = int(job.acct["cores"]) / int(job.acct["nodes"])
-    self.hours = ((job.times[:] - job.times[0]) / 3600.0).astype(float)
-    self.t = job.times
-    self.nt = len(job.times)
-    self.dt = (job.times[-1] - job.times[0]).astype(float)
     self.pmc = None
     self.imc = None
     self.cha = None
@@ -164,11 +160,43 @@ class utils:
         self.cha = cha_typ
         break
 
+  def resolve_type(self, typename: Any) -> str | None:
+    """
+    Schema type a logical or legacy ``typename`` reads.
+
+    ``"pmc"`` / ``"imc"`` / ``"cha"`` map to the resolved family; a name
+    absent from the schemas probes ``type_probe_names`` (canonical and
+    legacy aliases, e.g. ``"lnet"`` -> ``"host_lnet"``).
+
+    Args:
+      typename (Any): Type name or logical alias.
+
+    Returns:
+      str | None: Schema key, or None when no alias is in the schemas.
+
+    Examples:
+      >>> utils(None).resolve_type("lnet")  # doctest: +SKIP
+      'host_lnet'
+    """
+    typename = {"imc": self.imc, "pmc": self.pmc, "cha": self.cha}.get(
+      typename, typename
+    )
+    if not typename:
+      return None
+    if typename in self.job.schemas:
+      return typename
+    return next(
+      (alt for alt in type_probe_names(typename) if alt in self.job.schemas),
+      None,
+    )
+
   def get_type(self, typename: Any, aggregate: bool = True) -> Any:
     """
     Return (schema, stats) for typename (e.g. pmc/imc/cha).
 
-    ``stats`` maps host to the device-summed series, or to a per-device dict
+    ``stats`` maps host to its :class:`HostSeries` of the type (the host's
+    own sample times; device mean on the columnar view, device sum when a
+    host carries several device series), or to a per-device dict of series
     when ``aggregate`` is False. Returns (None, {}) if the type is absent.
 
     Args:
@@ -176,28 +204,15 @@ class utils:
       aggregate (bool): Boolean flag for aggregate.
 
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: ``(schema, {host: HostSeries})``, ``(schema, {host: {device:
+      HostSeries}})`` or ``(None, {})``.
 
     Examples:
       >>> utils().get_type(None, True)  # doctest: +SKIP
     """
-    if typename == "imc":
-      typename = self.imc
-    if typename == "pmc":
-      typename = self.pmc
-    if typename == "cha":
-      typename = self.cha
-    if not typename:
+    resolved_typename = self.resolve_type(typename)
+    if resolved_typename is None:
       return None, {}
-
-    resolved_typename = typename
-    if resolved_typename not in self.job.schemas:
-      for alt in type_probe_names(typename):
-        if alt in self.job.schemas:
-          resolved_typename = alt
-          break
-      else:
-        return None, {}
     schema = self.job.schemas[resolved_typename]
     stats = {}
     for hostname, host in self.job.hosts.items():
@@ -206,37 +221,96 @@ class utils:
       host_type_stats = host.stats.get(resolved_typename)
       if host_type_stats is None:
         continue
-      # Read-only views, not copies: the columnar view's grids are shared
-      # (TypePivots) and grow with hosts squared, and each copy of one cost
-      # GiB per reader on large jobs.
-      grids = [_float_view(host_type_stats[d]) for d in host_type_stats]
+      series = [_read_only_series(host_type_stats[d]) for d in host_type_stats]
       if aggregate:
-        stats[hostname] = grids[0] if len(grids) == 1 else sum(grids)
+        stats[hostname] = series[0] if len(series) == 1 else _sum_series(series)
       else:
-        stats[hostname] = dict(zip(host_type_stats, grids, strict=True))
+        stats[hostname] = dict(zip(host_type_stats, series, strict=True))
     return schema, stats
 
 
-def _float_view(arr: Any) -> np.ndarray:
+def _read_only(arr: Any, dtype: Any) -> np.ndarray:
   """
-  Read-only float64 view of a stats grid, copying only when the dtype differs.
+  Read-only view of a grid as ``dtype``, copying only when the dtype differs.
 
   Args:
-    arr (Any): Per-host stats grid (array-like).
+    arr (Any): Array-like grid.
+    dtype (Any): NumPy dtype of the view.
 
   Returns:
-    np.ndarray: float64 array sharing memory with ``arr`` when it already is
-    float64; a write through it raises instead of changing a shared grid.
+    np.ndarray: Array sharing memory with ``arr`` when it already has
+    ``dtype``; a write through it raises instead of changing a shared grid.
 
   Examples:
     >>> a = np.zeros(3)
-    >>> v = _float_view(a)
+    >>> v = _read_only(a, np.float64)
     >>> v.base is a, v.flags.writeable
     (True, False)
   """
-  view = np.asarray(arr, dtype=np.float64).view()
+  view = np.asarray(arr, dtype=dtype).view()
   view.flags.writeable = False
   return view
+
+
+def _read_only_series(s: HostSeries) -> HostSeries:
+  """
+  :class:`HostSeries` of read-only views (no copies).
+
+  The columnar view's series are slices of the shared ``TypePivots`` grids,
+  so a reader must not change them, and a copy per reader would multiply
+  the pivot memory.
+
+  Args:
+    s (HostSeries): One host's series of one type.
+
+  Returns:
+    HostSeries: Same arrays as read-only views (float64 values, int64 us).
+
+  Examples:
+    >>> s = HostSeries(
+    ...   np.zeros(1), np.zeros(1, np.int64), np.ones((1, 1)), np.ones((1, 1))
+    ... )
+    >>> _read_only_series(s).values.flags.writeable
+    False
+  """
+  return HostSeries(
+    _read_only(s.t_s, np.float64),
+    _read_only(s.t_us, np.int64),
+    _read_only(s.values, np.float64),
+    _read_only(s.arc, np.float64),
+  )
+
+
+def _sum_series(series: list[HostSeries]) -> HostSeries:
+  """
+  Device sum of one host's series of one type (same sample times).
+
+  Args:
+    series (list[HostSeries]): Per-device series of one host.
+
+  Returns:
+    HostSeries: Values and arc summed over devices on the first series'
+    times.
+
+  Raises:
+    ValueError: The devices were sampled at different times.
+
+  Examples:
+    >>> s = HostSeries(
+    ...   np.zeros(1), np.zeros(1, np.int64), np.ones((1, 1)), np.ones((1, 1))
+    ... )
+    >>> _sum_series([s, s]).values.tolist()
+    [[2.0]]
+  """
+  first = series[0]
+  if any(not np.array_equal(s.t_us, first.t_us) for s in series[1:]):
+    raise ValueError("device series of one host differ in sample times")
+  return HostSeries(
+    first.t_s,
+    first.t_us,
+    sum(s.values for s in series),
+    sum(s.arc for s in series),
+  )
 
 
 def iter_queryset_values_dicts(

@@ -32,6 +32,10 @@ from hpcperfstats.analysis.metrics.lib.columnar import summary_series as ss
 from hpcperfstats.analysis.metrics.lib.columnar.job_table import (
   ColumnarJobTable,
 )
+from hpcperfstats.analysis.metrics.tests import (
+  per_host_axis_fixtures as per_host_axis,
+)
+from hpcperfstats.dbload.lib.monitor_naming.resolve import type_probe_names
 
 RTOL_EXACT = 1e-9
 # Per-sample sums come from PostgreSQL ``sum(real)`` (float4 accumulation in
@@ -97,6 +101,143 @@ GOLDEN_UNITS_UPDATES = {
   ("avg_arm_int8_ops", "Gops"): "Ginstr/s",
   ("avg_arm_int16_ops", "Gops"): "Ginstr/s",
 }
+# Node imbalances the capture stored as NULL ("No usable ... telemetry")
+# because their family lookup missed the current monitor keys
+# (fp_ops_retired, lowercase FP_ARITH, arm_est_flops; avg_mbw's DRAM try
+# order, ARM IMC and host_cpu_hw arm_dram_bw_bytes). They now resolve the
+# family of the paired avg_* metric: metric -> (paired avg_* metric, jids).
+# Oracle: one host has nothing to be imbalanced against, so exactly 0.0
+# with no reason (as node_imbalance already does); edge_multihost (4
+# hosts) equals the arc-rate oracle on its ``EDGE_IMBALANCE_SPECS`` family.
+# The golden row may carry the old fallback type ("imc"); the new row is
+# keyed by the type the family resolved to.
+GOLDEN_NULL_IMBALANCE_FAMILIES = {
+  "flops_node_imbalance": (
+    "avg_flops",
+    frozenset(
+      {
+        "11877",
+        "23538",
+        "3339983",
+        "3373492",
+        "3391066",
+        "3436068",
+        "3437751",
+        "3437797",
+        "3438814",
+        "3438818",
+        "3439147",
+        "3449555",
+        "3478520",
+        "5656",
+        "6270",
+        "6284",
+        "6285",
+        "9189",
+        "edge_gpupoison",
+        "edge_missinghost",
+        "edge_multihost",
+        "edge_rollover",
+        "edge_shared_a",
+        "edge_shared_b",
+        "edge_single",
+        "edge_small",
+      }
+    ),
+  ),
+  "dram_bw_node_imbalance": (
+    "avg_mbw",
+    frozenset(
+      {
+        "11877",
+        "23538",
+        "3437751",
+        "3438814",
+        "3438818",
+        "5656",
+        "6270",
+        "6284",
+        "6285",
+        "9189",
+      }
+    ),
+  ),
+}
+# Cluster peaks whose cluster-grid lookup used the metric's short type name
+# ("net" for the max_fabricbw Ethernet fallback) while the union-axis grids
+# were keyed by schema type (host_net), so the arc peak never ran and the
+# capture stored the per-host value-difference fallback. The lookup now
+# resolves through type_probe_names like get_type. Same for the
+# max_packetrate Ethernet fallback. (row type, metric) ->
+# (events, divisor, per-bin ceiling, peak above which the metric is NULL).
+# Oracle: ``per_host_axis.cluster_arc_peak_oracle`` (mean arc over every
+# (host, device) row per bin, each host's first owned sample left out,
+# summed over the events, peak / divisor).
+GOLDEN_CLUSTER_LOOKUP_DEVIATIONS = {
+  ("net", "max_fabricbw"): (("tx_bytes", "rx_bytes"), 1024 * 1024, None, 1e6),
+  ("net", "max_packetrate"): (("tx_packets", "rx_packets"), 1, 1e10, None),
+}
+# Cluster arc peaks the capture took at a host's first owned sample, whose
+# ingest arc covers the interval before the job (it can hold the previous
+# job's traffic). The cluster arc grid now leaves that sample out, so the
+# peak moves to the largest in-job interval. (jid, row type, metric) ->
+# (events, divisor, per-bin ceiling, peak above which the metric is NULL);
+# events absent from the schema are skipped like the metric skips them.
+# Same oracle as ``GOLDEN_CLUSTER_LOOKUP_DEVIATIONS``.
+GOLDEN_FIRST_ARC_PEAK_DEVIATIONS = {
+  ("3438818", "host_ib", "max_fabricbw"): (
+    ("port_xmit_data", "port_rcv_data"),
+    1024 * 1024,
+    None,
+    1e6,
+  ),
+  ("3449555", "host_numa", "max_numa_remote_rate"): (
+    ("numa_miss", "numa_foreign", "other_node"),
+    1.0,
+    None,
+    None,
+  ),
+}
+# Rate node imbalances on multi-host jobs (edge_multihost): the capture
+# took diff(value) / diff(t) on the union axis; they now compare the ingest
+# arc rates per time bin. Oracle:
+# ``per_host_axis.rate_imbalance_oracle`` on the ``EDGE_IMBALANCE_SPECS``
+# family (fabric_node_imbalance: the capture's 1.38e-5 is noise of near-equal
+# value differences; the per-host arcs are equal, so the oracle is 0.0).
+GOLDEN_MULTIHOST_ARC_IMBALANCES = frozenset(
+  {"node_imbalance", "lnet_node_imbalance", "fabric_node_imbalance"}
+)
+
+
+def _per_host_axis_oracle(table, jid, key):
+  """``(applies, oracle)`` of one metric row: the oracle of a
+  ``GOLDEN_CLUSTER_LOOKUP_DEVIATIONS`` or ``GOLDEN_FIRST_ARC_PEAK_DEVIATIONS``
+  row or of a ``GOLDEN_MULTIHOST_ARC_IMBALANCES`` row on a multi-host job;
+  ``(False, None)`` for every other row (compared to the golden)."""
+  spec = GOLDEN_CLUSTER_LOOKUP_DEVIATIONS.get(
+    key
+  ) or GOLDEN_FIRST_ARC_PEAK_DEVIATIONS.get((jid, *key))
+  if spec is not None:
+    events, divisor, max_sane, null_above = spec
+    typ = next(t for t in type_probe_names(key[0]) if t in table.schema)
+    peak = per_host_axis.cluster_arc_peak_oracle(
+      table,
+      typ,
+      [e for e in events if e in table.schema[typ]],
+      divisor,
+      max_sane,
+    )
+    if peak is not None and null_above is not None and peak > null_above:
+      return True, None
+    return True, peak
+  if key[1] in GOLDEN_MULTIHOST_ARC_IMBALANCES:
+    _kind, typ, weighted = per_host_axis.EDGE_IMBALANCE_SPECS[key[1]]
+    events = [e for e, _w in weighted]
+    if typ in table.schema and (
+      len(per_host_axis.host_series(table, typ, events)) > 1
+    ):
+      return True, per_host_axis.rate_imbalance_oracle(table, typ, weighted)
+  return False, None
 
 
 def capture_golden_scales(monkeypatch):
@@ -486,6 +627,28 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
       )
     return rounded_rows[key]["value"]
 
+  for metric, (paired, jids) in GOLDEN_NULL_IMBALANCE_FAMILIES.items():
+    if jid not in jids:
+      continue
+    (old_key,) = [k for k in exp if k[1] == metric]
+    (new_key,) = [k for k in got if k[1] == metric]
+    (paired_key,) = [k for k in got if k[1] == paired]
+    typ = new_key[0]
+    assert exp.pop(old_key)["value"] is None, f"jid={jid} {old_key}"
+    assert typ in type_probe_names(paired_key[0]), f"jid={jid} {new_key}"
+    hosts = per_host_axis.host_series(table, typ, table.schema[typ])
+    if len(hosts) == 1:
+      oracle = 0.0
+    else:
+      assert jid == "edge_multihost", f"jid={jid} {new_key}: no oracle"
+      _kind, o_typ, o_events = per_host_axis.EDGE_IMBALANCE_SPECS[metric]
+      oracle = per_host_axis.rate_imbalance_oracle(table, o_typ, o_events)
+    row = got.pop(new_key)
+    assert row.get("no_data_reason") is None, f"jid={jid} {new_key} reason"
+    assert row["value"] == pytest.approx(oracle, rel=RTOL_EXACT, abs=0), (
+      f"jid={jid} {new_key}: {row['value']!r} vs oracle {oracle!r}"
+    )
+    _record_deviation("metrics_null_imbalance_family_resolved", metric, 1.0)
   post_golden = sorted(set(got) - set(exp))
   assert {k[1] for k in post_golden} == set(POST_GOLDEN_METRIC_EVENTS) | set(
     POST_GOLDEN_SHARING_METRICS
@@ -527,6 +690,19 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
       (key[1], str(g["units"])), str(g["units"])
     )
     assert str(b["units"]) == want_units, f"jid={jid} {key} units"
+    applies, oracle = _per_host_axis_oracle(table, jid, key)
+    if (jid, *key) in GOLDEN_FIRST_ARC_PEAK_DEVIATIONS:
+      # A listed row must still differ from the capture (no stale entry).
+      assert b["value"] != g["value"], f"jid={jid} {key}: stale deviation"
+    if applies and b["value"] != g["value"]:
+      want = oracle if oracle is None else pytest.approx(oracle, rel=RTOL_EXACT)
+      assert b["value"] == want, (
+        f"jid={jid} {key}: {b['value']!r} vs {oracle!r}"
+      )
+      if oracle is not None:
+        assert b.get("no_data_reason") is None, f"jid={jid} {key} reason"
+      _record_deviation("metrics_per_host_axis_oracle", key[1], 1.0)
+      continue
     if (
       key[1] in GOLDEN_NULL_DEFECTS
       and g["value"] is None

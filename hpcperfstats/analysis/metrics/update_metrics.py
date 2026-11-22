@@ -7684,7 +7684,7 @@ def _log_admission_telemetry(stats: dict[str, Any]) -> None:
     ...     "measured_bytes": 1,
     ...     "budget_bytes": 4,
     ...     "rows_per_host_minute": 312.0,
-    ...     "grid_bytes_per_host_sq_minute": 60.0,
+    ...     "grid_bytes_per_host_minute": 611.0,
     ...   }
     ... )
   """
@@ -7696,8 +7696,7 @@ def _log_admission_telemetry(stats: dict[str, Any]) -> None:
     f"measured_gib={stats['measured_bytes'] / gib:.1f} "
     f"budget_gib={stats['budget_bytes'] / gib:.1f} "
     f"rows_per_host_min={float(stats['rows_per_host_minute']):.0f} "
-    f"grid_b_per_host2_min="
-    f"{float(stats['grid_bytes_per_host_sq_minute']):.0f} "
+    f"grid_b_per_host_min={float(stats['grid_bytes_per_host_minute']):.0f} "
     f"handoff_gib={HANDOFF.total_bytes() / gib:.1f} "
     f"rss_gib={process_memory.read_process_rss_bytes() / gib:.1f}",
     flush=True,

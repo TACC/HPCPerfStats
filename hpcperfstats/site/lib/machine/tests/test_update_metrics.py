@@ -6716,7 +6716,8 @@ def test_sliding_session_gets_memory_admission(monkeypatch):
     )
   )
   try:
-    assert seen["observe_size"](SimpleNamespace(jid="obs")) == (1, 8)
+    # 1 row; 1 (host, time) pair x 1 event x float64 x (value, arc).
+    assert seen["observe_size"](SimpleNamespace(jid="obs")) == (1, 16)
     assert seen["observe_size"](SimpleNamespace(jid="none")) == (0, 0)
   finally:
     HANDOFF.discard("obs")
@@ -6727,6 +6728,9 @@ def test_admission_telemetry_log_line(monkeypatch):
   """The once-a-minute line puts admission's in-flight estimate beside the
   HANDOFF size and process RSS, so RSS growth that no in-flight job
   explains (allocator retention, a leak) is visible in production logs."""
+  from hpcperfstats.analysis.metrics.lib import metrics_sliding_session as mss
+
+  grid = mss.METRICS_GRID_BYTES_PER_HOST_MINUTE
   lines = []
   monkeypatch.setattr(
     update_metrics, "log_print", lambda msg, **_k: lines.append(msg)
@@ -6741,12 +6745,12 @@ def test_admission_telemetry_log_line(monkeypatch):
       "measured_bytes": 2 << 30,
       "budget_bytes": 10 << 30,
       "rows_per_host_minute": 312.0,
-      "grid_bytes_per_host_sq_minute": 60.0,
+      "grid_bytes_per_host_minute": float(grid),
     }
   )
   assert lines == [
     "metrics admission: inflight=4 est_gib=1.0 measured_gib=2.0 "
-    "budget_gib=10.0 rows_per_host_min=312 grid_b_per_host2_min=60 "
+    f"budget_gib=10.0 rows_per_host_min=312 grid_b_per_host_min={grid} "
     f"handoff_gib={update_metrics.HANDOFF.total_bytes() / (1 << 30):.1f} "
     "rss_gib=3.0"
   ]
