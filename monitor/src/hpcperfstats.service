@@ -1,5 +1,7 @@
 [Unit]
 Description=Job-level Monitoring Service
+# Ordering only: a no-op where XPU Manager is not installed (no Wants=, never starts it).
+After=xpum.service
 
 [Service]
 Type=simple
@@ -15,6 +17,10 @@ ReadWritePaths=/var/lib/hpcperfstats /run
 # PrivateTmp hides; "-" skips nodes without XPU Manager. Bound at start: a later xpumd
 # restart that recreates them needs a monitor restart too.
 BindPaths=-/tmp/xpum_p.sock -/tmp/xpum_up.sock
+# xpum.service (Type=simple) creates the sockets ~10 s after it reports started, so wait for
+# them (host /tmp: "+" skips the sandbox) before BindPaths is applied to ExecStart. Returns at
+# once when xpum.service is not active, gives up after 60 s, and never fails the start.
+ExecStartPre=+/bin/sh -c 'systemctl -q is-active xpum.service || exit 0; i=0; while [ "$$i" -lt 60 ]; do [ -S /tmp/xpum_p.sock ] && [ -S /tmp/xpum_up.sock ] && exit 0; sleep 1; i=$$((i + 1)); done; exit 0'
 # Default per-process soft FD limit is often 1024; collectors (one perf fd per event per CPU) + dumpfiles can exceed it (EMFILE).
 LimitNOFILE=1048576
 EnvironmentFile=-/etc/sysconfig/hpcperfstatsd

@@ -715,7 +715,10 @@ a substitute for root):
 - `BindPaths=-/tmp/xpum_p.sock -/tmp/xpum_up.sock`: the XPU Manager daemon's sockets in
   the host `/tmp`, which `PrivateTmp` would otherwise hide from `xpumcli` (PVC
   `intel_gpu` emitted no rows: `XPUM Service Status Error`). Bound when the monitor
-  starts, so restart the monitor after restarting `xpumd`.
+  starts, so restart the monitor after restarting `xpumd`. `After=xpum.service` plus a
+  privileged `ExecStartPre` wait (up to 60 s, only while `xpum.service` is active) cover boot:
+  `xpumd` is `Type=simple` and creates the sockets about 10 s after it reports started. Both
+  are no-ops on nodes without XPU Manager.
 - **`PrivateDevices` is intentionally unset** so `/dev/infiniband`, GPU nodes, and
   perf remain available.
 
