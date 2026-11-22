@@ -57,7 +57,7 @@ $uptime 1
 !host_net rx_bytes,E,U=B tx_bytes,E,U=B rx_packets,E tx_packets,E
 !host_numa numa_hit,E numa_miss,E numa_foreign,E interleave_hit,E local_node,E other_node,E
 !lustre_llite {llite}
-!host_ib port_xmit_data,E port_rcv_data,E port_xmit_pkts,E port_rcv_pkts,E
+!host_ib port_xmit_data,E port_rcv_data,E port_xmit_packets,E port_rcv_packets,E
 !host_lnet tx_bytes,E,U=B rx_bytes,E,U=B
 !host_opa PortXmitData,E PortRcvData,E PortXmitPkts,E PortRcvPkts,E PortXmitWait,E SwPortCongestion,E PortRcvFECN,E PortRcvBECN,E
 !host_nfs read_ops,E write_ops,E

@@ -356,3 +356,23 @@ removed_legacy:
 - FIXED_CTR0
 - FIXED_CTR1
 - FIXED_CTR2
+# Type-scoped key retirements: the monitor no longer emits these keys on that
+# type; historical host_data rows keep them and readers still dual-read them.
+# Kept out of the flat removed_legacy list above, which feeds
+# REMOVED_LEGACY_SYMBOLS (legacy CTL/CTR hex decode for any schema carrying one
+# of its names; Codon mirror LEGACY_REMOVED_SYMBOLS).
+removed_legacy_events:
+  # MAD PortCountersExtended (host_ib_ext since 2016, merged into host_ib in
+  # June 2026). Fabric management resets PortCounters (Horizon read ~4x low or
+  # timed out); avg_packetsize / max_packetrate read sysfs port_xmit_packets /
+  # port_rcv_packets and fall back to port_xmit_pkts / port_rcv_pkts only on
+  # rows without them (METRICS_CONTRACT_VERSION 17).
+  host_ib:
+  - port_select
+  - counter_select
+  - port_xmit_pkts
+  - port_rcv_pkts
+  - port_unicast_xmit_pkts
+  - port_unicast_rcv_pkts
+  - port_multicast_xmit_pkts
+  - port_multicast_rcv_pkts

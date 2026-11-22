@@ -453,15 +453,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `counter_select`
-
-- **Definition:** IB MAD extended counter query selector field.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Configuration/metadata for counter queries rather than workload metrics. Use adjacent payload counters (`port_*`) for link health diagnosis.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `cpu_clock_est_cycles`
 
@@ -691,7 +683,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `dram_pre_count_miss`
 
@@ -733,7 +725,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** InfiniBand port counter: excessive buffer overruns (base IB sysfs counters).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `file_pages`
 
@@ -1270,14 +1262,14 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** InfiniBand port counter: failed link error recoveries (link went down; monitor comment in ib.c).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `link_error_recovery`
 
 - **Definition:** InfiniBand port counter: successful link error recovery events (monitor ib.c).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `load_1`
 
@@ -1308,7 +1300,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** InfiniBand port counter: local link integrity errors (hardware / cable quality).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `local_node`
 
@@ -1763,7 +1755,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** CPU package energy from intel_x86_rapl or amd_x86_rapl, a running total in mJ modulo 2^32 (its rate is watts); drives summary watts / amd_pkg_w and node power estimates.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/columnar/detail_series.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/columnar/detail_series.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_dcgm_cpu_power_agg.py; hpcperfstats/analysis/metrics/tests/test_metrics_x86_direct_perf.py; hpcperfstats/analysis/metrics/tests/test_node_power_est.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `pmu_enabled_time`
@@ -1809,22 +1801,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `port_multicast_rcv_pkts`
-
-- **Definition:** Multicast packets received (IB extended).
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `port_multicast_xmit_pkts`
-
-- **Definition:** Multicast packets transmitted (IB extended).
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
 ### `port_rcv_becn`
 
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
@@ -1846,22 +1822,22 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `port_rcv_data`
 
-- **Definition:** InfiniBand counter: payload bytes received.
+- **Definition:** InfiniBand counter: payload received, counted in 4-byte words (kernel sysfs).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** `host_ib`
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/columnar/job_table.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/analysis/metrics/lib/sentinel_reasons.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_codon_kernels.py; hpcperfstats/analysis/metrics/tests/test_columnar_bridge.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_aggregation.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_reasons.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_codon_kernels.py; hpcperfstats/analysis/metrics/tests/test_columnar_bridge.py; hpcperfstats/analysis/metrics/tests/test_ib_sysfs_packet_metrics.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_aggregation.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_reasons.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `port_rcv_errors`
 
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
 ### `port_rcv_fecn`
@@ -1874,95 +1850,55 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `port_rcv_packets`
 
-- **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `port_rcv_pkts`
-
-- **Definition:** Packets received (IB counters).
+- **Definition:** InfiniBand packets received (kernel sysfs 64-bit counter; source of IB packet size and rate metrics).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_ib_sysfs_packet_metrics.py
 
 ### `port_rcv_remote_physical_errors`
 
 - **Definition:** InfiniBand inbound physical-layer error counter.
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `port_rcv_switch_relay_errors`
 
 - **Definition:** InfiniBand switch relay errors on received traffic.
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-
-### `port_select`
-
-- **Definition:** IB MAD extended counter query selector field (configuration metadata).
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Configuration/metadata for counter queries rather than workload metrics. Use adjacent payload counters (`port_*`) for link health diagnosis.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `port_unicast_rcv_pkts`
-
-- **Definition:** Unicast packets received (IB extended).
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `port_unicast_xmit_pkts`
-
-- **Definition:** Unicast packets transmitted (IB extended).
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `port_xmit_constraint_errors`
 
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `port_xmit_data`
 
-- **Definition:** InfiniBand counter: payload bytes transmitted (width/units per IBTA and sysfs docs).
+- **Definition:** InfiniBand counter: payload transmitted, counted in 4-byte words (kernel sysfs).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** `host_ib`
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_codon_kernels.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_aggregation.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_admin_monitor_telemetry_health.py; hpcperfstats/site/lib/machine/tests/test_metrics.py; hpcperfstats/site/lib/machine/tests/test_repair_jstamp_deltas_command.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_codon_kernels.py; hpcperfstats/analysis/metrics/tests/test_ib_sysfs_packet_metrics.py; hpcperfstats/analysis/metrics/tests/test_metrics_sentinel_aggregation.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_admin_monitor_telemetry_health.py; hpcperfstats/site/lib/machine/tests/test_metrics.py; hpcperfstats/site/lib/machine/tests/test_repair_jstamp_deltas_command.py
 
 ### `port_xmit_discards`
 
 - **Definition:** Packets not transmitted because the port was down or congested.
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `port_xmit_packets`
 
-- **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `port_xmit_pkts`
-
-- **Definition:** Packets transmitted (IB counters).
+- **Definition:** InfiniBand packets transmitted (kernel sysfs 64-bit counter; source of IB packet size and rate metrics).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_ib_sysfs_packet_metrics.py
 
 ### `port_xmit_time_cong`
 
@@ -1978,7 +1914,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `port_xmit_wait_data`
 
@@ -2010,7 +1946,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `pp1_energy`
 
@@ -2018,7 +1954,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 
 ### `processes`
 
@@ -2356,7 +2292,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Minor link symbol errors on InfiniBand.
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
 ### `sysio_power_w`

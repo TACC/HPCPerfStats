@@ -28,6 +28,11 @@ Attributes:
   _GPU_VALUE_REASON_TYPES: GPU types the vendor-ordered GPU gauge metrics
     read; none in the schema means no GPU collector.
   _HOST_DATA_ROWS_MEMO_MAX_TIME_IN: Attribute.
+  _HOST_IB_PACKET_EVENT_PAIRS: host_ib ``(xmit, rcv)`` packet counter keys in
+    preference order: kernel sysfs ``port_*_packets``, then the retired MAD
+    ``port_*_pkts`` (history and legacy ``host_ib_ext``).
+  _IB_DATA_BYTES_PER_WORD: Bytes per host_ib ``port_*_data`` count; the raw
+    ``value`` is in 4-byte words (schema ``U=4B`` scales ``delta`` only).
   _MAX_FABRIC_BW_SANITY_MB_S: Attribute.
   _MAX_SANE_GPU_LINK_GBPS: Attribute.
   _MAX_SANE_PACKETRATE: Attribute.
@@ -727,7 +732,13 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # amd_mbw series sum them over every row (AMD_DF_BEAT_EVENTS), the old df
 # row's dram_chanN_bytes still read. Milan DF bandwidth steps up about 2x at
 # the monitor upgrade (channels 4-7 were never read); no backfill.
-METRICS_CONTRACT_VERSION = 16
+# 17 (2026-11-21): IB avg_packetsize / max_packetrate read the kernel sysfs
+# host_ib port_xmit_packets / port_rcv_packets, falling back to the retired
+# MAD port_xmit_pkts / port_rcv_pkts only on rows without them. Horizon values
+# were built from PortCounters that fabric management resets (about 4x low).
+# avg_packetsize also scales the raw port_*_data value from 4-byte words to
+# bytes (_IB_DATA_BYTES_PER_WORD); IB packet sizes read 4x higher.
+METRICS_CONTRACT_VERSION = 17
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.
@@ -861,6 +872,36 @@ def _per_interval_rate(values: Any, t: Any) -> Any:
 # physical fabric/GPU-link rate but well below uint64-wrap /1e9 display poison.
 _MAX_SANE_PACKETRATE = 1.0e10  # packets/s
 _MAX_SANE_GPU_LINK_GBPS = 1.0e5  # GB/s
+
+_HOST_IB_PACKET_EVENT_PAIRS = (
+  ("port_xmit_packets", "port_rcv_packets"),
+  ("port_xmit_pkts", "port_rcv_pkts"),
+)
+_IB_DATA_BYTES_PER_WORD = 4
+
+
+def _host_ib_packet_indices(schema: Any) -> tuple[int, int] | None:
+  """
+  Column indices of the first host_ib packet counter pair ``schema`` carries.
+
+  Args:
+    schema (Any): host_ib ``_Schema``, or None when the job has no host_ib.
+
+  Returns:
+    tuple[int, int] | None: ``(xmit, rcv)`` indices from
+    ``_HOST_IB_PACKET_EVENT_PAIRS`` (sysfs before MAD), or None when neither
+    pair is complete.
+
+  Examples:
+    >>> _host_ib_packet_indices(_Schema(["port_xmit_pkts", "port_rcv_pkts"]))
+    (0, 1)
+    >>> _host_ib_packet_indices(None) is None
+    True
+  """
+  for pair in _HOST_IB_PACKET_EVENT_PAIRS:
+    if _schema_has_events(schema, *pair):
+      return schema[pair[0]].index, schema[pair[1]].index
+  return None
 
 
 def _sane_peak_from_rates(
@@ -4531,6 +4572,9 @@ class avg_gpuutil:
 class avg_packetsize:
   """
   Average packet size (MB) from host_ib or opa port xmit/rcv data and packets.
+
+  host_ib packets come from ``_host_ib_packet_indices`` (sysfs, then MAD) and
+  its ``port_*_data`` words become bytes via ``_IB_DATA_BYTES_PER_WORD``.
   """
 
   def compute_metric(self, u: Any) -> Any:
@@ -4547,24 +4591,18 @@ class avg_packetsize:
       >>> avg_packetsize().compute_metric(None)  # doctest: +SKIP
     """
     ib_schema, ib_stats = u.get_type(HOST_IB_TYPE)
-    if ib_schema is not None and _schema_has_events(
-      ib_schema,
-      "port_xmit_pkts",
-      "port_rcv_pkts",
-      "port_xmit_data",
-      "port_rcv_data",
+    ib_pkts = _host_ib_packet_indices(ib_schema)
+    if ib_pkts is not None and _schema_has_events(
+      ib_schema, "port_xmit_data", "port_rcv_data"
     ):
       typename = HOST_IB_TYPE
       schema, _stats = ib_schema, ib_stats
-      tx, rx = (
-        schema["port_xmit_pkts"].index,
-        schema["port_rcv_pkts"].index,
-      )
+      tx, rx = ib_pkts
       tb, rb = (
         schema["port_xmit_data"].index,
         schema["port_rcv_data"].index,
       )
-      conv2mb = 1024 * 1024
+      conv2mb = 1024 * 1024 / _IB_DATA_BYTES_PER_WORD
     else:
       opa_schema, opa_stats, opa_typename = resolve_get_type(
         u, (HOST_OPA_TYPE,)
@@ -4829,6 +4867,8 @@ class max_mds:
 class max_packetrate:
   """
   Maximum packet rate (#/s) from host_ib or opa port xmit/rcv packets.
+
+  host_ib packets come from ``_host_ib_packet_indices`` (sysfs, then MAD).
   """
 
   def compute_metric(self, u: Any) -> Any:
@@ -4846,15 +4886,11 @@ class max_packetrate:
     """
     max_pr = 0
     ib_schema, ib_stats = u.get_type(HOST_IB_TYPE)
-    if ib_schema is not None and _schema_has_events(
-      ib_schema, "port_xmit_pkts", "port_rcv_pkts"
-    ):
+    ib_pkts = _host_ib_packet_indices(ib_schema)
+    if ib_pkts is not None:
       typename = HOST_IB_TYPE
-      schema, _stats = ib_schema, ib_stats
-      tx, rx = (
-        schema["port_xmit_pkts"].index,
-        schema["port_rcv_pkts"].index,
-      )
+      _stats = ib_stats
+      tx, rx = ib_pkts
     else:
       opa_schema, opa_stats = u.get_type("opa")
       if opa_schema is not None and _schema_has_events(

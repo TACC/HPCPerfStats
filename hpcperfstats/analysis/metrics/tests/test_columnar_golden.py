@@ -85,6 +85,12 @@ GOLDEN_RAPL_CAPTURE_CONV = 0.00001526
 # one byte each, not ``AMD_DF_BYTES_PER_BEAT``, so ``avg_mbw`` / ``amd_mbw``
 # are compared at that factor; test_amd_df_beat_bytes.py covers the real one.
 GOLDEN_AMD_DF_CAPTURE_BYTES_PER_BEAT = 1
+# Capture source and factor (contract 17): the capture built host_ib
+# avg_packetsize / max_packetrate from MAD port_*_pkts and read port_*_data
+# 4-byte words as bytes; test_ib_sysfs_packet_metrics.py covers the sysfs
+# preference and the word conversion.
+GOLDEN_IB_CAPTURE_PACKET_EVENT_PAIRS = (("port_xmit_pkts", "port_rcv_pkts"),)
+GOLDEN_IB_CAPTURE_BYTES_PER_WORD = 1
 # Units text changed on purpose after the capture (contract 8, O10):
 # (metric, golden units) -> current units. Values are never mapped.
 GOLDEN_UNITS_UPDATES = {
@@ -94,8 +100,9 @@ GOLDEN_UNITS_UPDATES = {
 
 
 def capture_golden_scales(monkeypatch):
-  """Make the RAPL watt and AMD DF bandwidth columns use the capture's
-  conversion factors."""
+  """Make the RAPL watt, AMD DF bandwidth and IB packet columns use the
+  capture's conversion factors and packet source."""
+  from hpcperfstats.analysis.metrics.lib import metrics as metrics_mod
   from hpcperfstats.analysis.metrics.lib.columnar import detail_series
   from hpcperfstats.analysis.metrics.lib.plot import summaryplot
   from hpcperfstats.dbload.lib.monitor_naming import canonical
@@ -105,6 +112,14 @@ def capture_golden_scales(monkeypatch):
   )
   monkeypatch.setattr(
     detail_series, "RAPL_MJ_RATE_TO_W", GOLDEN_RAPL_CAPTURE_CONV
+  )
+  monkeypatch.setattr(
+    metrics_mod,
+    "_HOST_IB_PACKET_EVENT_PAIRS",
+    GOLDEN_IB_CAPTURE_PACKET_EVENT_PAIRS,
+  )
+  monkeypatch.setattr(
+    metrics_mod, "_IB_DATA_BYTES_PER_WORD", GOLDEN_IB_CAPTURE_BYTES_PER_WORD
   )
   monkeypatch.setattr(
     summaryplot,
