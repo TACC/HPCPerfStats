@@ -37,7 +37,6 @@ Attributes:
   CHUNK_SIZE: Attribute.
   COMPUTE_BATCH_ABSOLUTE_MAX: Attribute.
   COMPUTE_BATCH_DOWNSHIFT_FACTOR: Attribute.
-  COMPUTE_BATCH_HEARTBEAT_LOG_INTERVAL_S: Seconds between mid-batch heartbeat logs.
   COMPUTE_BATCH_MIN_CAP: Attribute.
   COMPUTE_BATCH_UPSHIFT_STEP: Attribute.
   COMPUTE_BATCH_WORKER_MULTIPLIER: Attribute.
@@ -47,7 +46,7 @@ Attributes:
   DOCUMENTED_SCHEDULER_STALL_REASONS: Attribute.
   GC_COLLECT_EVERY_N_CHUNKS: Attribute.
   _GC_STATS: Process-wide cyclic-GC collection count and summed pause seconds
-    (filled by ``_gc_phase_callback``; surfaced on ``metrics progress``).
+    (filled by ``_gc_phase_callback``; surfaced on ``metrics census``).
   GLOBAL_SCHEDULER_BATCH_SIZE: Attribute.
   LAST_UPDATE_METRICS_DIAGNOSTICS: Attribute.
   METRICS_SCHEDULER_STALL_EXIT_CODE: Attribute.
@@ -68,7 +67,6 @@ Attributes:
   STALL_RECOVERY_MAX_WALL_SECONDS: Attribute.
   STALL_RECOVERY_PER_JID_POLL_TIMEOUT_SECONDS: Attribute.
   STALL_RECOVERY_PER_JID_TIMEOUT_SECONDS: Attribute.
-  STALL_WARNING_EVERY_PASSES: Attribute.
   STRICT_CHECK_BATCH_MIN: Attribute.
   STRICT_CHECK_BATCH_STEP: Attribute.
   STRICT_CHECK_COOLDOWN_SECONDS: Attribute.
@@ -99,6 +97,14 @@ Attributes:
   _BACKFILL_ADMIT_TIMES: Monotonic admit times inside that window.
   _BACKFILL_FAILED_FINAL: Count of backfill jobs closed out as failed_final.
   _BACKFILL_LOCK: Guards the two backfill process-global structures above.
+  CENSUS_LOG_INTERVAL_S: Seconds between ``metrics census`` log lines.
+  BACKFILL_CENSUS_INTERVAL_S: Minimum seconds between the ``job_data`` counts
+    behind the census ``backfill_db(hourly)`` token.
+  _BACKFILL_CENSUS_CACHE: Last ``_backfill_census`` result and its monotonic
+    time (written only by the census reporter thread).
+  _ADMISSION_SNAPSHOT: Latest sliding-session admission telemetry and its
+    monotonic time, read by the census.
+  _ADMISSION_SNAPSHOT_LOCK: Guards ``_ADMISSION_SNAPSHOT``.
   _ARTIFACT_CATCHUP_LAST_SCAN: Day -> monotonic time of its last Phase B scan.
   _ARTIFACT_CATCHUP_LOCK: Guards ``_ARTIFACT_CATCHUP_LAST_SCAN``.
   ARTIFACT_CATCHUP_INTERVAL_S: Minimum seconds between a day's Phase B scans.
@@ -111,7 +117,7 @@ import functools
 import gc
 import inspect
 import os
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
@@ -138,6 +144,7 @@ from hpcperfstats.analysis.metrics.lib.metrics_idle_slot_supplement import (
   resolve_nhosts_for_ref,
 )
 from hpcperfstats.analysis.metrics.lib.metrics_sliding_session import (
+  ADMISSION_TELEMETRY_INTERVAL_S,
   MemoryCostModel,
   resolve_metrics_pool_max_inflight,
   run_metrics_sliding_session,
@@ -328,7 +335,6 @@ RESCAN_IDLE_INTERVAL_MAX_SECONDS = 60.0
 RESCAN_ERROR_LOG_INTERVAL_SECONDS = 300.0
 # Only the newest window days are rescanned for jobs that end mid-pass.
 RESCAN_RECENT_DAYS = 2
-STALL_WARNING_EVERY_PASSES = 200
 STALL_EXIT_AFTER_SECONDS = 900.0
 # User-facing stall_reason strings (docs/TESTING.md); producer sets
 # no_ready_candidates / listing_query_failed; consumer sets compute_* /
@@ -358,7 +364,6 @@ COMPUTE_BATCH_DOWNSHIFT_FACTOR = 0.5
 COMPUTE_BATCH_UPSHIFT_STEP = 16
 COMPUTE_BATCH_WORKER_MULTIPLIER = 2
 COMPUTE_BATCH_ABSOLUTE_MAX = 64
-COMPUTE_BATCH_HEARTBEAT_LOG_INTERVAL_S = 60.0
 RESCAN_FETCH_LIMIT = CHUNK_SIZE
 TELEMETRY_SAMPLE_LIMIT = 2048
 RESCAN_SEEN_MULTIPLIER = 16
@@ -459,6 +464,12 @@ _BACKFILL_LOCK = threading.Lock()
 _BACKFILL_FAILED_FINAL: dict[str, int] = {"count": 0}
 # Monotonic admit times of backfill candidates for the hourly rate brake.
 _BACKFILL_ADMIT_TIMES: deque[float] = deque()
+CENSUS_LOG_INTERVAL_S = 60
+# The backfill counts scan job_data; the census reuses them between refreshes.
+BACKFILL_CENSUS_INTERVAL_S = 3600.0
+_BACKFILL_CENSUS_CACHE: dict[str, Any] = {"at": None, "census": {}}
+_ADMISSION_SNAPSHOT: dict[str, Any] = {"at": None, "stats": None}
+_ADMISSION_SNAPSHOT_LOCK = threading.Lock()
 
 
 def _note_job_outcome(outcome: dict[str, Any]) -> None:
@@ -1059,6 +1070,7 @@ def _new_scheduler_stats() -> Any:
     "compute_batch_size": 0,
     "compute_batch_completed_jids": 0,
     "compute_batch_started_at": None,
+    "compute_batch_progress_at": None,
     # Backfill lane (out-of-window recompute) accounting.
     "backfill_inflight": 0,
     "backfill_queued": 0,
@@ -1159,12 +1171,16 @@ def _next_compute_batch_cap(
   return current
 
 
-def _compute_batch_age_s(stats: Any) -> float:
+def _compute_batch_age_s(
+  stats: Any, key: str = "compute_batch_started_at"
+) -> float:
   """
-  Seconds since the current compute batch started, or ``0`` when idle.
+  Seconds since a compute-batch timestamp, or ``0`` when idle.
 
   Args:
-    stats (Any): Scheduler stats mapping with ``compute_batch_started_at``.
+    stats (Any): Scheduler stats mapping holding monotonic timestamps.
+    key (str): ``compute_batch_started_at`` (batch age) or
+      ``compute_batch_progress_at`` (seconds since the last finished jid).
 
   Returns:
     float: Non-negative age in seconds.
@@ -1173,9 +1189,7 @@ def _compute_batch_age_s(stats: Any) -> float:
     >>> _compute_batch_age_s({"compute_batch_started_at": None})
     0.0
   """
-  started = (
-    stats.get("compute_batch_started_at") if isinstance(stats, dict) else None
-  )
+  started = stats.get(key) if isinstance(stats, dict) else None
   if started is None:
     return 0.0
   return max(0.0, time.monotonic() - float(started))
@@ -1183,12 +1197,14 @@ def _compute_batch_age_s(stats: Any) -> float:
 
 class _ComputeBatchHeartbeat:
   """
-  Shared mid-batch phase / completed counters for metrics progress logs.
+  Shared mid-batch phase / completed counters for the ``metrics census``.
+
+  ``compute_batch_progress_at`` moves when the completed count changes, so
+  the census ``idle_s`` shows how long a batch has made no progress.
 
   Attributes:
     _stats: Mutable scheduler stats dict updated under ``_lock``.
     _lock: Thread lock protecting heartbeat fields on ``_stats``.
-    _last_log_at: Monotonic timestamp of the last heartbeat log line.
   """
 
   def __init__(self, stats: Any, lock: Any) -> None:
@@ -1207,7 +1223,6 @@ class _ComputeBatchHeartbeat:
     """
     self._stats = stats
     self._lock = lock
-    self._last_log_at = 0.0
 
   def begin(self, size: int) -> None:
     """
@@ -1224,12 +1239,13 @@ class _ComputeBatchHeartbeat:
       ...   0
       ... )  # doctest: +SKIP
     """
+    now = time.monotonic()
     with self._lock:
       self._stats["compute_batch_phase"] = "metrics"
       self._stats["compute_batch_size"] = int(max(0, size))
       self._stats["compute_batch_completed_jids"] = 0
-      self._stats["compute_batch_started_at"] = time.monotonic()
-    self.maybe_log(force=True)
+      self._stats["compute_batch_started_at"] = now
+      self._stats["compute_batch_progress_at"] = now
 
   def set_phase(self, phase: str) -> None:
     """
@@ -1248,7 +1264,6 @@ class _ComputeBatchHeartbeat:
     """
     with self._lock:
       self._stats["compute_batch_phase"] = str(phase or "idle")
-    self.maybe_log()
 
   def note_completed(self, completed: int, total: int | None = None) -> None:
     """
@@ -1266,11 +1281,13 @@ class _ComputeBatchHeartbeat:
       ...   0
       ... )  # doctest: +SKIP
     """
+    done = int(max(0, completed))
     with self._lock:
-      self._stats["compute_batch_completed_jids"] = int(max(0, completed))
+      if done != self._stats.get("compute_batch_completed_jids"):
+        self._stats["compute_batch_progress_at"] = time.monotonic()
+      self._stats["compute_batch_completed_jids"] = done
       if total is not None:
         self._stats["compute_batch_size"] = int(max(0, total))
-    self.maybe_log()
 
   def clear(self) -> None:
     """
@@ -1287,42 +1304,7 @@ class _ComputeBatchHeartbeat:
       self._stats["compute_batch_size"] = 0
       self._stats["compute_batch_completed_jids"] = 0
       self._stats["compute_batch_started_at"] = None
-    self._last_log_at = 0.0
-
-  def maybe_log(self, force: bool = False) -> None:
-    """
-    Emit a mid-batch heartbeat line at most once per log interval.
-
-    Args:
-      force (bool): When True, log even if the interval has not elapsed.
-
-    Returns:
-      None
-
-    Examples:
-      >>> _ComputeBatchHeartbeat(
-      ...   {}, threading.Lock()
-      ... ).maybe_log()  # doctest: +SKIP
-    """
-    now = time.monotonic()
-    if (
-      not force
-      and (now - self._last_log_at) < COMPUTE_BATCH_HEARTBEAT_LOG_INTERVAL_S
-    ):
-      return
-    with self._lock:
-      phase = str(self._stats.get("compute_batch_phase") or "idle")
-      size = int(self._stats.get("compute_batch_size") or 0)
-      completed = int(self._stats.get("compute_batch_completed_jids") or 0)
-      age_s = _compute_batch_age_s(self._stats)
-    if phase == "idle" and not force:
-      return
-    self._last_log_at = now
-    log_print(
-      f"metrics scheduler: compute batch heartbeat phase={phase} size={size} "
-      f"completed_jids={completed} age_s={age_s:.1f}",
-      flush=True,
-    )
+      self._stats["compute_batch_progress_at"] = None
 
 
 class MetricsPrewarmStallError(TimeoutError):
@@ -1402,7 +1384,6 @@ def _drain_prewarm_imap(
   total = len(jid_list)
   done = 0
   last_progress_at = time.monotonic()
-  last_heartbeat_log_at = 0.0
   results = []
 
   def _emit(phase: str = "prewarm") -> None:
@@ -1442,15 +1423,6 @@ def _drain_prewarm_imap(
           f"(tasks={total} completed={done})",
           partial_results=list(results),
         ) from None
-      now = time.monotonic()
-      if now - last_heartbeat_log_at >= COMPUTE_BATCH_HEARTBEAT_LOG_INTERVAL_S:
-        last_heartbeat_log_at = now
-        _emit("prewarm")
-        log_print(
-          f"metrics scheduler: prewarm drain heartbeat completed={done}/{total} "
-          f"stalled_for_s={stalled_for:.1f}",
-          flush=True,
-        )
       continue
     except StopIteration:
       if callable(iterator_close):
@@ -2082,9 +2054,266 @@ def _prewarm_jid_on_metrics_pool(jid: Any) -> Any:
     }
 
 
+def _census_group(name: str, pairs: Iterable[tuple[str, Any]]) -> str:
+  """
+  Format one ``name=key:value,...`` group of the ``metrics census`` line.
+
+  Args:
+    name (str): Group token name.
+    pairs (Iterable[tuple[str, Any]]): Ordered ``(key, value)`` pairs.
+
+  Returns:
+    str: The group token.
+
+  Examples:
+    >>> _census_group("deferred", [("q", 3), ("due", 1)])
+    'deferred=q:3,due:1'
+  """
+  return f"{name}=" + ",".join(f"{key}:{value}" for key, value in pairs)
+
+
+def _format_metrics_census(census: dict[str, Any]) -> str:
+  """
+  Build the once-a-minute ``metrics census`` line from scheduler stats.
+
+  One ``group=key:value,...`` token per concern (jobs, ready queue, listing,
+  readiness, deferral, compute batch, failures, prewarm, /pub/ EF, memory,
+  GC, backfill). Missing keys print as 0. The ``mem_gib`` group always has
+  the live HANDOFF and RSS sizes and adds admission's estimate and budget
+  (plus an ``admit`` group) only while a sliding session reported in-flight
+  work recently. ``backfill_db(hourly)`` holds ``job_data`` counts refreshed
+  at most every ``BACKFILL_CENSUS_INTERVAL_S``, so it repeats between
+  refreshes; it and the ``backfill`` group appear once any ``backfill_*``
+  key is present. ``census_error=`` names an exception from the stats getter.
+
+  Args:
+    census (dict[str, Any]): Reporter counts merged with the scheduler's
+      extra stats snapshot (keys as in ``_extra_stats_snapshot``).
+
+  Returns:
+    str: The full log line.
+
+  Examples:
+    >>> _format_metrics_census({"metrics_ok_total": 3}).split()[2]
+    'jobs=done_1h:0,done:0,ok:3,attempted:0'
+  """
+  get = census.get
+
+  def n(key: str) -> int:
+    """
+    Read an integer field, treating missing or None as 0.
+
+    Args:
+      key (str): Census key.
+
+    Returns:
+      int: The value.
+
+    Examples:
+      >>> n("inflight_jids")  # doctest: +SKIP
+    """
+    return int(get(key, 0) or 0)
+
+  def x(key: str, digits: int = 1) -> str:
+    """
+    Format a float field with ``digits`` decimals (missing reads as 0).
+
+    Args:
+      key (str): Census key.
+      digits (int): Decimal places.
+
+    Returns:
+      str: The formatted value.
+
+    Examples:
+      >>> x("compute_batch_age_s")  # doctest: +SKIP
+    """
+    return f"{float(get(key, 0.0) or 0.0):.{digits}f}"
+
+  def gib(key: str) -> str:
+    """
+    Format a byte count as GiB with one decimal.
+
+    Args:
+      key (str): Census key holding bytes.
+
+    Returns:
+      str: The formatted value.
+
+    Examples:
+      >>> gib("mem_rss_bytes")  # doctest: +SKIP
+    """
+    return f"{float(get(key, 0) or 0) / float(1 << 30):.1f}"
+
+  mem = [("handoff", gib("mem_handoff_bytes")), ("rss", gib("mem_rss_bytes"))]
+  if "admit_inflight" in census:
+    mem += [
+      ("est", gib("admit_est_bytes")),
+      ("meas", gib("admit_meas_bytes")),
+      ("budget", gib("admit_budget_bytes")),
+    ]
+  groups = [
+    _census_group(
+      "jobs",
+      [
+        ("done_1h", n("completed_last_hour")),
+        ("done", n("processed_total")),
+        ("ok", n("metrics_ok_total")),
+        ("attempted", n("attempted_total")),
+      ],
+    ),
+    _census_group(
+      "queue",
+      [
+        ("ready", n("ready_queue_len")),
+        ("enq", n("ready_enqueued_total")),
+        ("deq", n("ready_dequeued_total")),
+        ("inflight", n("inflight_jids")),
+      ],
+    ),
+    _census_group(
+      "scan",
+      [
+        ("days_pending", n("days_pending")),
+        ("candidates", n("candidate_jids")),
+        ("not_ready", n("skipped_not_ready")),
+      ],
+    ),
+    _census_group(
+      "readiness",
+      [
+        ("proxy_nr", n("proxy_not_ready_jids")),
+        ("strict_nr", n("strict_not_ready_jids")),
+        ("strict_ok", n("strict_ready_jids")),
+        ("cooldown", n("strict_cooldown_skips")),
+        ("gate_fail", n("gate_failure_persisted_jids")),
+        ("err_1h", n("readiness_error_chunks_last_hour")),
+        ("err", n("readiness_error_chunks_total")),
+      ],
+    ),
+    _census_group(
+      "strict",
+      [
+        ("batch", n("strict_batch_size_current")),
+        ("calls", n("strict_check_calls")),
+        ("timeouts", n("strict_check_timeouts")),
+        ("avg_ms", x("strict_check_avg_latency_ms", 2)),
+      ],
+    ),
+    _census_group(
+      "deferred",
+      [
+        ("q", n("deferred_not_ready_queue_size")),
+        ("due", n("deferred_not_ready_due_now")),
+        ("quar", n("deferred_quarantined_jids")),
+      ],
+    ),
+    _census_group(
+      "batch",
+      [
+        ("phase", str(get("compute_batch_phase") or "idle")),
+        (
+          "done",
+          f"{n('compute_batch_completed_jids')}/{n('compute_batch_size')}",
+        ),
+        ("age_s", x("compute_batch_age_s")),
+        ("idle_s", x("compute_batch_idle_s")),
+        ("total", n("compute_batches_total")),
+      ],
+    ),
+    _census_group(
+      "fail",
+      [
+        ("batch_exc", n("batch_compute_exceptions_total")),
+        ("per_jid", n("per_jid_fallback_failures_total")),
+        ("worker", n("worker_failed_outcomes_total")),
+        ("persist", n("parent_persist_failures_total")),
+        ("prewarm", n("prewarm_failed_total")),
+        ("failing", n("failing_jids")),
+        ("daily", n("daily_retry_jids")),
+        ("backoff_skips", n("failure_backoff_skips")),
+      ],
+    ),
+    _census_group(
+      "prewarm",
+      [
+        ("backlog", n("prewarm_backlog_jobs")),
+        ("oldest_s", x("prewarm_oldest_pending_age_s")),
+        ("backpressure", n("prewarm_backpressure_events")),
+        ("inline", n("prewarm_inline_fallback_jobs")),
+      ],
+    ),
+    _census_group(
+      "pub_ef",
+      [
+        ("degraded", n("public_ef_degraded")),
+        ("exc", n("public_ef_worker_exceptions_total")),
+        ("watchdog", n("public_ef_watchdog_timeouts_total")),
+        ("pending", n("public_ef_pending_tasks")),
+      ],
+    ),
+    _census_group("mem_gib", mem),
+  ]
+  if "admit_inflight" in census:
+    groups.append(
+      _census_group(
+        "admit",
+        [
+          ("inflight", n("admit_inflight")),
+          ("rows_hmin", f"{float(get('admit_rows_per_host_minute')):.0f}"),
+          (
+            "grid_b_hmin",
+            f"{float(get('admit_grid_bytes_per_host_minute')):.0f}",
+          ),
+        ],
+      )
+    )
+  groups.append(
+    _census_group(
+      "gc",
+      [("n", n("gc_collections_total")), ("pause_s", x("gc_pause_s_total"))],
+    )
+  )
+  if any(str(key).startswith("backfill_") for key in census):
+    groups.append(
+      _census_group(
+        "backfill",
+        [
+          ("v", get("backfill_version", "n/a")),
+          ("slots", f"{n('backfill_inflight')}/{n('backfill_slots')}"),
+          ("queued", n("backfill_queued")),
+          ("done", n("backfill_done_total")),
+          ("skipped", n("backfill_skipped_total")),
+          ("partial", n("backfill_partial_total")),
+          ("failed_final", n("backfill_failed_final")),
+        ],
+      )
+    )
+    groups.append(
+      _census_group(
+        "backfill_db(hourly)",
+        [
+          ("dirty", get("backfill_remaining_dirty", "n/a")),
+          ("stale", get("backfill_remaining_stale", "n/a")),
+          ("awaiting", get("backfill_awaiting", "n/a")),
+          ("partial_final", get("backfill_partial_final", "n/a")),
+          ("cursor", get("backfill_cursor_end_time", "n/a")),
+        ],
+      )
+    )
+  if get("census_error"):
+    groups.append(f"census_error={get('census_error')}")
+  return "metrics census " + " ".join(groups)
+
+
 class _CompletionReporter:
   """
-  Background heartbeat reporter for recent completion throughput.
+  Background thread that logs the ``metrics census`` line.
+
+  Every ``report_interval_s`` it formats the completion and readiness-error
+  counts it keeps (last-hour window plus totals) together with the extra
+  scheduler stats from ``set_extra_stats_getter`` via
+  ``_format_metrics_census``.
 
   Attributes:
     _completed_events: Attribute.
@@ -2102,7 +2331,7 @@ class _CompletionReporter:
 
   def __init__(
     self,
-    report_interval_s: int = 3600,
+    report_interval_s: int = CENSUS_LOG_INTERVAL_S,
     window_s: int = 3600,
   ) -> None:
     """
@@ -2312,78 +2541,18 @@ class _CompletionReporter:
       role="completion-reporter",
     )
     while not self._stop.wait(self._report_interval_s):
-      extra = ""
+      census: dict[str, Any] = {
+        "completed_last_hour": self.completed_in_window(),
+        "processed_total": self.completed_total(),
+        "readiness_error_chunks_last_hour": self.readiness_errors_in_window(),
+        "readiness_error_chunks_total": self.readiness_errors_total(),
+      }
       if callable(self._extra_stats_getter):
         try:
-          extra_map = self._extra_stats_getter() or {}
-          extra = (
-            " strict_batch_size_current={} strict_check_calls={} "
-            "strict_check_timeouts={} strict_check_avg_latency_ms={:.2f} "
-            "proxy_not_ready_jids={} strict_not_ready_jids={} strict_ready_jids={} "
-            "strict_cooldown_skips={} deferred_not_ready_queue_size={} "
-            "deferred_not_ready_due_now={} deferred_quarantined_jids={} "
-            "ready_enqueued_total={} ready_dequeued_total={} inflight_jids={} "
-            "compute_batches_total={} batch_compute_exceptions_total={} "
-            "per_jid_fallback_failures_total={} worker_failed_outcomes_total={} "
-            "parent_persist_failures_total={} attempted_total={} "
-            "metrics_ok_total={} prewarm_failed_total={} "
-            "failing_jids={} daily_retry_jids={} failure_backoff_skips={} "
-            "public_ef_degraded={} public_ef_worker_exceptions_total={} "
-            "public_ef_watchdog_timeouts_total={} public_ef_pending_tasks={} "
-            "prewarm_backlog_jobs={} prewarm_oldest_pending_age_s={:.3f} "
-            "prewarm_backpressure_events={} prewarm_inline_fallback_jobs={} "
-            "compute_batch_phase={} compute_batch_age_s={:.1f} "
-            "compute_batch_completed_jids={} compute_batch_size={} "
-            "gc_collections_total={} gc_pause_s_total={:.1f}".format(
-              int(extra_map.get("strict_batch_size_current", 0)),
-              int(extra_map.get("strict_check_calls", 0)),
-              int(extra_map.get("strict_check_timeouts", 0)),
-              float(extra_map.get("strict_check_avg_latency_ms", 0.0)),
-              int(extra_map.get("proxy_not_ready_jids", 0)),
-              int(extra_map.get("strict_not_ready_jids", 0)),
-              int(extra_map.get("strict_ready_jids", 0)),
-              int(extra_map.get("strict_cooldown_skips", 0)),
-              int(extra_map.get("deferred_not_ready_queue_size", 0)),
-              int(extra_map.get("deferred_not_ready_due_now", 0)),
-              int(extra_map.get("deferred_quarantined_jids", 0)),
-              int(extra_map.get("ready_enqueued_total", 0)),
-              int(extra_map.get("ready_dequeued_total", 0)),
-              int(extra_map.get("inflight_jids", 0)),
-              int(extra_map.get("compute_batches_total", 0)),
-              int(extra_map.get("batch_compute_exceptions_total", 0)),
-              int(extra_map.get("per_jid_fallback_failures_total", 0)),
-              int(extra_map.get("worker_failed_outcomes_total", 0)),
-              int(extra_map.get("parent_persist_failures_total", 0)),
-              int(extra_map.get("attempted_total", 0)),
-              int(extra_map.get("metrics_ok_total", 0)),
-              int(extra_map.get("prewarm_failed_total", 0)),
-              int(extra_map.get("failing_jids", 0)),
-              int(extra_map.get("daily_retry_jids", 0)),
-              int(extra_map.get("failure_backoff_skips", 0)),
-              int(extra_map.get("public_ef_degraded", 0)),
-              int(extra_map.get("public_ef_worker_exceptions_total", 0)),
-              int(extra_map.get("public_ef_watchdog_timeouts_total", 0)),
-              int(extra_map.get("public_ef_pending_tasks", 0)),
-              int(extra_map.get("prewarm_backlog_jobs", 0)),
-              float(extra_map.get("prewarm_oldest_pending_age_s", 0.0)),
-              int(extra_map.get("prewarm_backpressure_events", 0)),
-              int(extra_map.get("prewarm_inline_fallback_jobs", 0)),
-              str(extra_map.get("compute_batch_phase") or "idle"),
-              float(extra_map.get("compute_batch_age_s", 0.0)),
-              int(extra_map.get("compute_batch_completed_jids", 0)),
-              int(extra_map.get("compute_batch_size", 0)),
-              int(extra_map.get("gc_collections_total", 0)),
-              float(extra_map.get("gc_pause_s_total", 0.0)),
-            )
-          )
-          extra += _backfill_progress_suffix(extra_map)
-        except Exception:
-          extra = ""
-      log_print(
-        f"metrics progress: completed_last_hour={self.completed_in_window()} processed_total={self.completed_total()} "
-        f"readiness_error_chunks_last_hour={self.readiness_errors_in_window()} readiness_error_chunks_total={self.readiness_errors_total()}{extra}",
-        flush=True,
-      )
+          census.update(self._extra_stats_getter() or {})
+        except Exception as exc:
+          census["census_error"] = type(exc).__name__
+      log_print(_format_metrics_census(census), flush=True)
 
   def set_extra_stats_getter(self, getter: Any) -> None:
     """
@@ -5499,7 +5668,12 @@ def _backfill_progress_fields(
   slot_cap: int | None = None,
 ) -> dict[str, Any]:
   """
-  Backfill census for the hourly progress line; never raises.
+  Backfill fields for the ``metrics census`` line; never raises.
+
+  The ``job_data`` counts (``_backfill_census``) run at most every
+  ``BACKFILL_CENSUS_INTERVAL_S`` and are reused in between, a failed run
+  included, so the once-a-minute census does not scan ``job_data``. Only the
+  census reporter thread calls this, so the cache needs no lock.
 
   Args:
     before (Any): Window start, or None when no window is known.
@@ -5518,20 +5692,24 @@ def _backfill_progress_fields(
   """
   census: dict[str, Any] = {}
   if before is not None:
-    try:
-      census = _backfill_census(before, min_time)
-    except Exception as exc:
-      log_print(
-        f"metrics backfill: census failed {type(exc).__name__}: "
-        f"{_truncate_census_error_message(exc)}",
-        flush=True,
-      )
-      census = {}
-    finally:
-      # The hourly reporter thread must not keep an idle backend open.
-      with contextlib.suppress(Exception):
-        close_old_connections()
-        connections.close_all()
+    now = time.monotonic()
+    at = _BACKFILL_CENSUS_CACHE["at"]
+    if at is None or now - at >= BACKFILL_CENSUS_INTERVAL_S:
+      try:
+        census = _backfill_census(before, min_time)
+      except Exception as exc:
+        log_print(
+          f"metrics backfill: census failed {type(exc).__name__}: "
+          f"{_truncate_census_error_message(exc)}",
+          flush=True,
+        )
+      finally:
+        # The reporter thread must not keep an idle backend open.
+        with contextlib.suppress(Exception):
+          close_old_connections()
+          connections.close_all()
+      _BACKFILL_CENSUS_CACHE.update(at=now, census=census)
+    census = _BACKFILL_CENSUS_CACHE["census"]
   with _BACKFILL_LOCK:
     failed_final = int(_BACKFILL_FAILED_FINAL["count"])
   try:
@@ -5548,43 +5726,6 @@ def _backfill_progress_fields(
     "backfill_failed_final": failed_final,
     "backfill_slots": slots,
   }
-
-
-def _backfill_progress_suffix(extra_map: Any) -> str:
-  """
-  Format the backfill tokens appended to the hourly ``metrics progress`` line.
-
-  Args:
-    extra_map (Any): Extra stats snapshot (``backfill_*`` keys optional).
-
-  Returns:
-    str: Leading-space token string, or ``""`` when no backfill keys exist.
-
-  Examples:
-    >>> _backfill_progress_suffix({})
-    ''
-    >>> _backfill_progress_suffix(
-    ...   {"backfill_version": 1, "backfill_inflight": 2, "backfill_slots": 6}
-    ... )
-    ' backfill_version=1 backfill_remaining_dirty=n/a backfill_remaining_stale=n/a backfill_awaiting=n/a backfill_partial_final=n/a backfill_done_total=0 backfill_skipped_total=0 backfill_partial_total=0 backfill_failed_final=0 backfill_cursor_end_time=n/a backfill_slots=2/6'
-  """
-  if not any(str(k).startswith("backfill_") for k in extra_map):
-    return ""
-  get = extra_map.get
-  return (
-    f" backfill_version={get('backfill_version', 'n/a')}"
-    f" backfill_remaining_dirty={get('backfill_remaining_dirty', 'n/a')}"
-    f" backfill_remaining_stale={get('backfill_remaining_stale', 'n/a')}"
-    f" backfill_awaiting={get('backfill_awaiting', 'n/a')}"
-    f" backfill_partial_final={get('backfill_partial_final', 'n/a')}"
-    f" backfill_done_total={int(get('backfill_done_total', 0) or 0)}"
-    f" backfill_skipped_total={int(get('backfill_skipped_total', 0) or 0)}"
-    f" backfill_partial_total={int(get('backfill_partial_total', 0) or 0)}"
-    f" backfill_failed_final={int(get('backfill_failed_final', 0) or 0)}"
-    f" backfill_cursor_end_time={get('backfill_cursor_end_time', 'n/a')}"
-    f" backfill_slots={int(get('backfill_inflight', 0) or 0)}"
-    f"/{int(get('backfill_slots', 0) or 0)}"
-  )
 
 
 def _fill_ready_queue(
@@ -7660,14 +7801,14 @@ def _metrics_memory_budget_bytes() -> int:
   return budget
 
 
-def _log_admission_telemetry(stats: dict[str, Any]) -> None:
+def _record_admission_telemetry(stats: dict[str, Any]) -> None:
   """
-  Log the sliding session's in-flight memory picture beside process RSS.
+  Keep the sliding session's latest in-flight memory picture for the census.
 
   ``est`` is admission's estimate for jobs still in compute, ``measured`` the
-  frame-sized cost of jobs whose frame exists, ``handoff`` the frames parked
-  for prewarm; ``rss`` well above their sum means memory not attributed to
-  in-flight jobs (allocator retention or a leak).
+  frame-sized cost of jobs whose frame exists; the census prints them beside
+  HANDOFF and process RSS, so RSS well above their sum means memory not
+  attributed to in-flight jobs (allocator retention or a leak).
 
   Args:
     stats (dict[str, Any]): ``telemetry_fn`` payload from
@@ -7677,7 +7818,7 @@ def _log_admission_telemetry(stats: dict[str, Any]) -> None:
     None
 
   Examples:
-    >>> _log_admission_telemetry(  # doctest: +SKIP
+    >>> _record_admission_telemetry(  # doctest: +SKIP
     ...   {
     ...     "inflight": 2,
     ...     "estimated_bytes": 1,
@@ -7688,19 +7829,47 @@ def _log_admission_telemetry(stats: dict[str, Any]) -> None:
     ...   }
     ... )
   """
-  gib = float(1 << 30)
-  log_print(
-    "metrics admission: "
-    f"inflight={int(stats['inflight'])} "
-    f"est_gib={stats['estimated_bytes'] / gib:.1f} "
-    f"measured_gib={stats['measured_bytes'] / gib:.1f} "
-    f"budget_gib={stats['budget_bytes'] / gib:.1f} "
-    f"rows_per_host_min={float(stats['rows_per_host_minute']):.0f} "
-    f"grid_b_per_host_min={float(stats['grid_bytes_per_host_minute']):.0f} "
-    f"handoff_gib={HANDOFF.total_bytes() / gib:.1f} "
-    f"rss_gib={process_memory.read_process_rss_bytes() / gib:.1f}",
-    flush=True,
+  with _ADMISSION_SNAPSHOT_LOCK:
+    _ADMISSION_SNAPSHOT["at"] = time.monotonic()
+    _ADMISSION_SNAPSHOT["stats"] = dict(stats)
+
+
+def _admission_census_fields() -> dict[str, Any]:
+  """
+  Return the census memory fields: live HANDOFF / RSS bytes, plus admission.
+
+  The ``admit_*`` keys appear only while the last telemetry is younger than
+  two ``ADMISSION_TELEMETRY_INTERVAL_S`` periods; the session reports only
+  while work is in flight, so an older snapshot describes finished work.
+
+  Returns:
+    dict[str, Any]: ``mem_handoff_bytes``, ``mem_rss_bytes`` and, when
+    fresh, ``admit_inflight`` / ``admit_est_bytes`` / ``admit_meas_bytes`` /
+    ``admit_budget_bytes`` / ``admit_rows_per_host_minute`` /
+    ``admit_grid_bytes_per_host_minute``.
+
+  Examples:
+    >>> sorted(_admission_census_fields())[:1]  # doctest: +SKIP
+    ['mem_handoff_bytes']
+  """
+  fields: dict[str, Any] = {
+    "mem_handoff_bytes": HANDOFF.total_bytes(),
+    "mem_rss_bytes": process_memory.read_process_rss_bytes(),
+  }
+  with _ADMISSION_SNAPSHOT_LOCK:
+    at = _ADMISSION_SNAPSHOT["at"]
+    stats = _ADMISSION_SNAPSHOT["stats"]
+  if at is None or time.monotonic() - at > 2 * ADMISSION_TELEMETRY_INTERVAL_S:
+    return fields
+  fields.update(
+    admit_inflight=int(stats["inflight"]),
+    admit_est_bytes=stats["estimated_bytes"],
+    admit_meas_bytes=stats["measured_bytes"],
+    admit_budget_bytes=stats["budget_bytes"],
+    admit_rows_per_host_minute=stats["rows_per_host_minute"],
+    admit_grid_bytes_per_host_minute=stats["grid_bytes_per_host_minute"],
   )
+  return fields
 
 
 def _compute_jid_outcomes_sliding(
@@ -7910,7 +8079,7 @@ def _compute_jid_outcomes_sliding(
     admit_ok=_MemoryHeadroomGate(cfg.get_metrics_admit_headroom_mib()),
     cost_model=_METRICS_COST_MODEL,
     observe_size=lambda ref: HANDOFF.size(ref.jid),
-    telemetry_fn=_log_admission_telemetry,
+    telemetry_fn=_record_admission_telemetry,
   )
   timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
   # Sliding interleaves metrics+prewarm; report full session as batch wall and
@@ -8591,19 +8760,26 @@ def update_metrics_for_dates(
       )
       strict_check_cooldown_until = {}
       scheduler_shared_lock = threading.Lock()
+      # Rebound once the day iterators exist; the census may run before.
+      date_states: list[dict[str, Any]] = []
       completion_reporter = _CompletionReporter()
 
-      def _extra_stats_snapshot() -> Any:
+      def _extra_stats_snapshot() -> dict[str, Any]:
         """
-        Internal helper to handle extra stats snapshot.
+        Collect the scheduler stats the ``metrics census`` line prints.
 
         Returns:
-          Any: Value produced by this call (type depends on inputs).
+          dict[str, Any]: Stats keyed as ``_format_metrics_census`` reads
+          them (queue, listing, readiness, batch, failure, prewarm, /pub/,
+          memory, GC and backfill fields).
 
         Examples:
           >>> _extra_stats_snapshot()  # doctest: +SKIP
         """
         prewarm_snapshot = prewarm_pipeline.stats()
+        # deque len() is atomic; ready_queue_lock is created after this.
+        ready_queue_len = len(ready_queue)
+        days_pending = sum(1 for state in date_states if not state["done"])
         backfill_fields = _backfill_progress_fields(
           _end_time_calendar_day_half_open_bounds(min(dates))[0]
           if dates
@@ -8614,6 +8790,11 @@ def update_metrics_for_dates(
         with scheduler_shared_lock:
           return {
             **backfill_fields,
+            **_admission_census_fields(),
+            "ready_queue_len": ready_queue_len,
+            "days_pending": days_pending,
+            "candidate_jids": stats["candidate_jids"],
+            "skipped_not_ready": stats["skipped_not_ready"],
             "backfill_inflight": stats["backfill_inflight"],
             "backfill_queued": stats["backfill_queued"],
             "backfill_done_total": stats["backfill_done_total"],
@@ -8667,6 +8848,9 @@ def update_metrics_for_dates(
             ],
             "compute_batch_phase": stats["compute_batch_phase"],
             "compute_batch_age_s": _compute_batch_age_s(stats),
+            "compute_batch_idle_s": _compute_batch_age_s(
+              stats, "compute_batch_progress_at"
+            ),
             "compute_batch_completed_jids": stats[
               "compute_batch_completed_jids"
             ],
@@ -8906,47 +9090,19 @@ def update_metrics_for_dates(
             if inflight > 0 and proc == 0:
               if consumer_stall_since is None:
                 consumer_stall_since = time.monotonic()
-            if (
-              stall_iters == 1 or stall_iters % STALL_WARNING_EVERY_PASSES == 0
-            ):
-              pending_days = (
-                sum(1 for s in date_states if not s["done"])
-                if not producer_done.is_set()
-                else 0
-              )
-              with scheduler_shared_lock:
-                cand = stats["candidate_jids"]
-                skipped = stats["skipped_not_ready"]
-                proxy_not_ready = stats["proxy_not_ready_jids"]
-                strict_not_ready = stats["strict_not_ready_jids"]
-                deferred_q = stats["deferred_not_ready_queue_size"]
-                deferred_due = stats["deferred_not_ready_due_now"]
-                strict_ready = stats["strict_ready_jids"]
-                enq = stats["ready_enqueued_total"]
-                deq = stats["ready_dequeued_total"]
-                inflight = stats["inflight_jids"]
-              log_print(
-                "metrics scheduler: no ready jobs yet "
-                f"(pending_days={pending_days} candidate_jids={cand} skipped_not_ready={skipped} "
-                f"proxy_not_ready_jids={proxy_not_ready} strict_not_ready_jids={strict_not_ready} strict_ready_jids={strict_ready} "
-                f"deferred_not_ready_queue_size={deferred_q} deferred_not_ready_due_now={deferred_due} "
-                f"ready_enqueued_total={enq} ready_dequeued_total={deq} inflight_jids={inflight} stall_pass={stall_iters}); "
-                "still scanning candidates.",
-                flush=True,
-              )
-              if stall_iters == 1:
-                try:
-                  _log_metrics_window_census(
-                    dates,
-                    min_time=min_time,
-                    rerun=rerun,
-                    reason="empty_pass",
-                  )
-                except Exception as census_exc:
-                  log_print(
-                    f"metrics scheduler: empty_pass census failed {type(census_exc).__name__}",
-                    flush=True,
-                  )
+            if stall_iters == 1:
+              try:
+                _log_metrics_window_census(
+                  dates,
+                  min_time=min_time,
+                  rerun=rerun,
+                  reason="empty_pass",
+                )
+              except Exception as census_exc:
+                log_print(
+                  f"metrics scheduler: empty_pass census failed {type(census_exc).__name__}",
+                  flush=True,
+                )
             if _maybe_trigger_consumer_stall_exit(
               stats,
               consumer_stall_since,

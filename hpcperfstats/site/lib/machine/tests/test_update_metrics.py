@@ -5859,7 +5859,7 @@ def test_compute_batch_should_downshift_uses_batch_wall():
 
 @pytest.mark.machine_unit_mock
 def test_compute_batch_heartbeat_fields_on_progress():
-  """Mid-batch heartbeat updates shared stats exposed on metrics progress extras."""
+  """Mid-batch heartbeat updates the shared stats the metrics census prints."""
   stats = update_metrics._new_scheduler_stats()
   lock = threading.Lock()
   hb = update_metrics._ComputeBatchHeartbeat(stats, lock)
@@ -5870,9 +5870,21 @@ def test_compute_batch_heartbeat_fields_on_progress():
   assert stats["compute_batch_started_at"] is not None
   assert update_metrics._compute_batch_age_s(stats) >= 0.0
   hb.set_phase("persist")
+  stats["compute_batch_progress_at"] = time.monotonic() - 30.0
   hb.note_completed(12, 48)
   assert stats["compute_batch_phase"] == "persist"
   assert stats["compute_batch_completed_jids"] == 12
+  # Progress resets the census idle_s clock; a repeat count does not.
+  assert (
+    update_metrics._compute_batch_age_s(stats, "compute_batch_progress_at")
+    < 30.0
+  )
+  stats["compute_batch_progress_at"] = time.monotonic() - 30.0
+  hb.note_completed(12, 48)
+  assert (
+    update_metrics._compute_batch_age_s(stats, "compute_batch_progress_at")
+    >= 30.0
+  )
   hb.set_phase("prewarm")
   hb.note_completed(24, 48)
   extras = {
@@ -5889,6 +5901,7 @@ def test_compute_batch_heartbeat_fields_on_progress():
   assert stats["compute_batch_phase"] == "idle"
   assert stats["compute_batch_size"] == 0
   assert stats["compute_batch_started_at"] is None
+  assert stats["compute_batch_progress_at"] is None
 
 
 @pytest.mark.machine_unit_mock
@@ -6703,7 +6716,7 @@ def test_sliding_session_gets_memory_admission(monkeypatch):
   assert seen["admit_ok"].headroom_mib == 16384
   # One model per process, so learned densities survive from pass to pass.
   assert seen["cost_model"] is update_metrics._METRICS_COST_MODEL
-  assert seen["telemetry_fn"] is update_metrics._log_admission_telemetry
+  assert seen["telemetry_fn"] is update_metrics._record_admission_telemetry
   from hpcperfstats.analysis.metrics.lib.columnar.job_table import HANDOFF
   from hpcperfstats.analysis.metrics.lib.columnar.testing import (
     table_from_records,
@@ -6724,21 +6737,26 @@ def test_sliding_session_gets_memory_admission(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
-def test_admission_telemetry_log_line(monkeypatch):
-  """The once-a-minute line puts admission's in-flight estimate beside the
-  HANDOFF size and process RSS, so RSS growth that no in-flight job
-  explains (allocator retention, a leak) is visible in production logs."""
+def test_census_memory_tokens(monkeypatch):
+  """The census puts admission's in-flight estimate beside the HANDOFF size
+  and process RSS, so RSS growth that no in-flight job explains (allocator
+  retention, a leak) is visible in production logs; once the session stops
+  reporting, only the live HANDOFF / RSS sizes remain."""
   from hpcperfstats.analysis.metrics.lib import metrics_sliding_session as mss
 
   grid = mss.METRICS_GRID_BYTES_PER_HOST_MINUTE
-  lines = []
-  monkeypatch.setattr(
-    update_metrics, "log_print", lambda msg, **_k: lines.append(msg)
-  )
+  monkeypatch.setitem(update_metrics._ADMISSION_SNAPSHOT, "at", None)
+  monkeypatch.setitem(update_metrics._ADMISSION_SNAPSHOT, "stats", None)
   monkeypatch.setattr(
     update_metrics.process_memory, "read_process_rss_bytes", lambda: 3 << 30
   )
-  update_metrics._log_admission_telemetry(
+  monkeypatch.setattr(update_metrics.HANDOFF, "total_bytes", lambda: 1 << 29)
+  idle = update_metrics._admission_census_fields()
+  assert idle == {"mem_handoff_bytes": 1 << 29, "mem_rss_bytes": 3 << 30}
+  idle_line = update_metrics._format_metrics_census(idle)
+  assert " mem_gib=handoff:0.5,rss:3.0 " in idle_line
+  assert " admit=" not in idle_line
+  update_metrics._record_admission_telemetry(
     {
       "inflight": 4,
       "estimated_bytes": 1 << 30,
@@ -6748,12 +6766,106 @@ def test_admission_telemetry_log_line(monkeypatch):
       "grid_bytes_per_host_minute": float(grid),
     }
   )
-  assert lines == [
-    "metrics admission: inflight=4 est_gib=1.0 measured_gib=2.0 "
-    f"budget_gib=10.0 rows_per_host_min=312 grid_b_per_host_min={grid} "
-    f"handoff_gib={update_metrics.HANDOFF.total_bytes() / (1 << 30):.1f} "
-    "rss_gib=3.0"
+  line = update_metrics._format_metrics_census(
+    update_metrics._admission_census_fields()
+  )
+  assert (
+    " mem_gib=handoff:0.5,rss:3.0,est:1.0,meas:2.0,budget:10.0 "
+    f"admit=inflight:4,rows_hmin:312,grid_b_hmin:{grid} " in line
+  )
+  # A snapshot older than two telemetry periods describes finished work.
+  stale = time.monotonic() - 3 * update_metrics.ADMISSION_TELEMETRY_INTERVAL_S
+  monkeypatch.setitem(update_metrics._ADMISSION_SNAPSHOT, "at", stale)
+  assert "admit_inflight" not in update_metrics._admission_census_fields()
+
+
+@pytest.mark.machine_unit_mock
+def test_census_line_groups_every_scheduler_stat():
+  """One ``metrics census`` line carries every grouped scheduler stat (jobs,
+  queue, listing, readiness, deferral, batch heartbeat, failures, prewarm,
+  /pub/ EF, memory, GC) in a fixed order, so operators grep one line."""
+  line = update_metrics._format_metrics_census(
+    {
+      "completed_last_hour": 12,
+      "processed_total": 340,
+      "metrics_ok_total": 338,
+      "attempted_total": 345,
+      "ready_queue_len": 5,
+      "ready_enqueued_total": 400,
+      "ready_dequeued_total": 395,
+      "inflight_jids": 8,
+      "days_pending": 2,
+      "candidate_jids": 900,
+      "skipped_not_ready": 40,
+      "proxy_not_ready_jids": 3,
+      "strict_not_ready_jids": 2,
+      "strict_ready_jids": 400,
+      "gate_failure_persisted_jids": 1,
+      "readiness_error_chunks_last_hour": 1,
+      "readiness_error_chunks_total": 7,
+      "strict_batch_size_current": 16,
+      "strict_check_calls": 30,
+      "strict_check_avg_latency_ms": 12.5,
+      "deferred_not_ready_queue_size": 3,
+      "deferred_not_ready_due_now": 1,
+      "compute_batch_phase": "prewarm",
+      "compute_batch_completed_jids": 3,
+      "compute_batch_size": 10,
+      "compute_batch_age_s": 12.04,
+      "compute_batch_idle_s": 4.0,
+      "compute_batches_total": 12,
+      "worker_failed_outcomes_total": 2,
+      "failing_jids": 1,
+      "prewarm_backlog_jobs": 6,
+      "public_ef_degraded": 1,
+      "gc_collections_total": 5,
+      "gc_pause_s_total": 1.25,
+    }
+  )
+  assert line.split() == [
+    "metrics",
+    "census",
+    "jobs=done_1h:12,done:340,ok:338,attempted:345",
+    "queue=ready:5,enq:400,deq:395,inflight:8",
+    "scan=days_pending:2,candidates:900,not_ready:40",
+    "readiness=proxy_nr:3,strict_nr:2,strict_ok:400,cooldown:0,"
+    "gate_fail:1,err_1h:1,err:7",
+    "strict=batch:16,calls:30,timeouts:0,avg_ms:12.50",
+    "deferred=q:3,due:1,quar:0",
+    "batch=phase:prewarm,done:3/10,age_s:12.0,idle_s:4.0,total:12",
+    "fail=batch_exc:0,per_jid:0,worker:2,persist:0,prewarm:0,failing:1,"
+    "daily:0,backoff_skips:0",
+    "prewarm=backlog:6,oldest_s:0.0,backpressure:0,inline:0",
+    "pub_ef=degraded:1,exc:0,watchdog:0,pending:0",
+    "mem_gib=handoff:0.0,rss:0.0",
+    "gc=n:5,pause_s:1.2",
   ]
+  failed = update_metrics._format_metrics_census({"census_error": "KeyError"})
+  assert failed.endswith(" census_error=KeyError")
+
+
+@pytest.mark.machine_unit_mock
+def test_completion_reporter_logs_census_each_interval(monkeypatch):
+  """The reporter logs one census line per interval (default
+  ``CENSUS_LOG_INTERVAL_S``), and a failing stats getter degrades to the
+  reporter's own counts plus ``census_error=`` instead of a silent drop."""
+  assert (
+    update_metrics._CompletionReporter()._report_interval_s
+    == update_metrics.CENSUS_LOG_INTERVAL_S
+  )
+  lines = []
+  monkeypatch.setattr(
+    update_metrics, "log_print", lambda msg, **_k: lines.append(msg)
+  )
+  rep = update_metrics._CompletionReporter(report_interval_s=5)
+  rep.sync_completed_total(4)
+  rep.set_extra_stats_getter(lambda: {}["missing"])
+  waits = iter([False, True])
+  monkeypatch.setattr(rep._stop, "wait", lambda _s: next(waits))
+  rep._run()
+  assert len(lines) == 1
+  assert lines[0].startswith("metrics census jobs=done_1h:4,done:4,")
+  assert lines[0].endswith(" census_error=KeyError")
 
 
 @pytest.mark.machine_unit_mock
@@ -8316,7 +8428,7 @@ def test_fresh_days_relist_while_backfill_lane_keeps_pass_open(monkeypatch):
 
 @pytest.mark.machine_unit_mock
 def test_backfill_status_cli_and_census_line(monkeypatch):
-  """Stage 5: --backfill-* argv parsing and the hourly census tokens."""
+  """Stage 5: --backfill-* argv parsing and the census backfill groups."""
   parse = update_metrics._parse_backfill_cli_args
   assert parse(["um", "--backfill-status"]) == ("status", None, None)
   assert parse(["um", "--backfill-finalize-partials"]) == (
@@ -8333,7 +8445,7 @@ def test_backfill_status_cli_and_census_line(monkeypatch):
   assert parse(["um", "--before", "2026-08-01"])[2]
   assert parse(["um", "--backfill-finalize-partials", "--before", "soon"])[2]
   assert parse(["um"]) == (None, None, None)
-  suffix = update_metrics._backfill_progress_suffix(
+  suffix = update_metrics._format_metrics_census(
     {
       "backfill_version": 1,
       "backfill_remaining_dirty": 2,
@@ -8349,21 +8461,14 @@ def test_backfill_status_cli_and_census_line(monkeypatch):
       "backfill_slots": 6,
     }
   )
-  for token in (
-    "backfill_version=1",
-    "backfill_remaining_dirty=2",
-    "backfill_remaining_stale=30",
-    "backfill_awaiting=4",
-    "backfill_partial_final=5",
-    "backfill_done_total=6",
-    "backfill_skipped_total=7",
-    "backfill_partial_total=8",
-    "backfill_failed_final=9",
-    "backfill_cursor_end_time=2026-07-01T00:00:00+00:00",
-    "backfill_slots=3/6",
-  ):
-    assert token in suffix, token
+  assert suffix.split()[-2:] == [
+    "backfill=v:1,slots:3/6,queued:0,done:6,skipped:7,partial:8,failed_final:9",
+    "backfill_db(hourly)=dirty:2,stale:30,awaiting:4,partial_final:5,"
+    "cursor:2026-07-01T00:00:00+00:00",
+  ]
+  assert "backfill" not in update_metrics._format_metrics_census({})
   # Census failures degrade to n/a instead of killing the reporter thread.
+  monkeypatch.setattr(update_metrics, "_BACKFILL_CENSUS_CACHE", {"at": None})
   monkeypatch.setattr(
     update_metrics, "_backfill_census", lambda before, min_time: 1 / 0
   )
@@ -8371,6 +8476,46 @@ def test_backfill_status_cli_and_census_line(monkeypatch):
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   fields = update_metrics._backfill_progress_fields(timezone.now())
   assert fields["backfill_remaining_stale"] == "n/a"
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_census_counts_refresh_hourly_not_per_census(monkeypatch):
+  """The once-a-minute census reuses the job_data backfill counts for
+  ``BACKFILL_CENSUS_INTERVAL_S`` (a failed count included) instead of
+  scanning job_data every minute; they refresh once the interval passes."""
+  calls = []
+
+  def _census(before, min_time):
+    calls.append(before)
+    if len(calls) == 2:
+      raise RuntimeError("statement timeout")
+    return {"remaining_stale": len(calls)}
+
+  clock = [1000.0]
+  monkeypatch.setattr(update_metrics, "_BACKFILL_CENSUS_CACHE", {"at": None})
+  monkeypatch.setattr(update_metrics, "_backfill_census", _census)
+  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: clock[0])
+  monkeypatch.setattr(update_metrics, "connections", MagicMock())
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "log_print", lambda *a, **k: None)
+  now = timezone.now()
+  stale = [
+    update_metrics._backfill_progress_fields(now)["backfill_remaining_stale"]
+  ]
+  clock[0] += update_metrics.BACKFILL_CENSUS_INTERVAL_S - 1
+  stale.append(
+    update_metrics._backfill_progress_fields(now)["backfill_remaining_stale"]
+  )
+  clock[0] += 1
+  stale.append(
+    update_metrics._backfill_progress_fields(now)["backfill_remaining_stale"]
+  )
+  clock[0] += 60
+  stale.append(
+    update_metrics._backfill_progress_fields(now)["backfill_remaining_stale"]
+  )
+  assert stale == [1, 1, "n/a", "n/a"]
+  assert len(calls) == 2
 
 
 @pytest.mark.machine_unit_mock

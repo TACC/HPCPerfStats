@@ -105,10 +105,10 @@ within `metrics_memory_budget_pct` of the memory base
 most once a second) must be at least `metrics_admit_headroom_mib`. With
 nothing in flight one job always starts, so a job larger than the budget runs
 alone. The same check gates the primary fill and the continuous refill. Once a
-minute while work is in flight the session logs `metrics admission:
-inflight= est_gib= measured_gib= budget_gib= rows_per_host_min=
-grid_b_per_host_min= handoff_gib= rss_gib=`; RSS well above the estimated plus measured cost points at memory no
-in-flight job accounts for. A
+minute while work is in flight the session hands its admission picture to the
+`metrics census` line (§7: `mem_gib=handoff:,rss:,est:,meas:,budget:` and
+`admit=inflight:,rows_hmin:,grid_b_hmin:`); RSS well above the estimated plus
+measured cost points at memory no in-flight job accounts for. A
 ready-queue job the check refuses stays queued and smaller jobs behind it may
 start; once it has waited `metrics_memory_budget_head_wait_s`, jobs of its lane
 and lower-priority lanes stop starting ahead of it (an aged backfill job never
@@ -310,10 +310,9 @@ same inputs stores the real fingerprint (terminal unavailable).
 
 ## §7 Operator census
 
-- `metrics progress: completed_last_hour= processed_total= ... metrics_ok_total= prewarm_failed_total= failing_jids= daily_retry_jids= failure_backoff_skips= ... public_ef_degraded= ... backfill_version= backfill_remaining_dirty= backfill_remaining_stale= backfill_awaiting= backfill_partial_final= backfill_done_total= backfill_skipped_total= backfill_partial_total= backfill_failed_final= backfill_cursor_end_time= backfill_slots=k/n` (hourly). `completed_last_hour` / `processed_total` count **finished** jobs and move as jobs finish. The `backfill_remaining_*` / `awaiting` / `partial_final` counts are cheap `job_data` counts (`_backfill_census`; `n/a` when the census failed), `backfill_slots` is in flight / the cap in force (work-conserving, see §4.5).
+- `metrics census` (every `CENSUS_LOG_INTERVAL_S`, `_format_metrics_census`): one `group=key:value,...` token per concern. `jobs=done_1h:,done:,ok:,attempted:` (finished jobs; move as jobs finish), `queue=ready:,enq:,deq:,inflight:`, `scan=days_pending:,candidates:,not_ready:` (a pass with nothing ready shows `ready:0,inflight:0` here), `readiness=proxy_nr:,strict_nr:,strict_ok:,cooldown:,gate_fail:,err_1h:,err:`, `strict=batch:,calls:,timeouts:,avg_ms:`, `deferred=q:,due:,quar:`, `batch=phase:,done:c/n,age_s:,idle_s:,total:` (`idle_s` = seconds since a jid of the current batch last finished, so a slow batch reads `idle_s` small and a stuck one large), `fail=batch_exc:,per_jid:,worker:,persist:,prewarm:,failing:,daily:,backoff_skips:`, `prewarm=backlog:,oldest_s:,backpressure:,inline:`, `pub_ef=degraded:,exc:,watchdog:,pending:`, `mem_gib=handoff:,rss:` (plus `est:,meas:,budget:` and an `admit=inflight:,rows_hmin:,grid_b_hmin:` group while a sliding session reported in-flight work within two `ADMISSION_TELEMETRY_INTERVAL_S` periods), `gc=n:,pause_s:`, then with the backfill lane `backfill=v:,slots:k/n,queued:,done:,skipped:,partial:,failed_final:` (`slots` is in flight / the cap in force, work-conserving, see §4.5) and `backfill_db(hourly)=dirty:,stale:,awaiting:,partial_final:,cursor:`. The `(hourly)` group holds cheap `job_data` counts (`_backfill_census`) refreshed at most every `BACKFILL_CENSUS_INTERVAL_S` and repeated in between (`n/a` until the first count, and for an hour after a failed one). `census_error=<Type>` means the stats getter raised; the reporter's own counts still print.
 - `metrics backfill status: version= window_start= remaining_dirty= remaining_stale= awaiting_ingest= partial_final= cursor_end_time= slots= enabled= quiescence_days=` (`--backfill-status`).
 - `metrics backfill: jid= failed_final version= last_error=`; `metrics scheduler: fresh window relisted while the backfill lane keeps the pass open`.
-- `metrics scheduler: compute batch heartbeat phase= size= completed_jids= age_s=` (60 s).
 - `metrics_deferred_coverage jid= start_ok= end_ok= ... hosts_covered=N/M` (once per jid per pass).
 - `metrics scheduler: listing done; leaving N not-ready jid(s) to the next pass`.
 - `metrics scheduler: pass N done; next pass in Ss public_ef_last={...}`.

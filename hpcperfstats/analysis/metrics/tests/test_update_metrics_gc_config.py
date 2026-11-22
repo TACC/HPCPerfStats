@@ -4,7 +4,7 @@ Regression tests for update_metrics cyclic-GC configuration and telemetry.
 The free-threaded collector is stop-the-world and scans the whole heap; with a
 wide metrics pool its pauses cost ~8% of wall time at 8 threads. The scheduler
 exposes ``[PIPELINE] metrics_gc_threshold`` and counts collections and pause
-seconds on the ``metrics progress`` heartbeat so operators can see it.
+seconds on the ``metrics census`` line so operators can see it.
 """
 
 from __future__ import annotations
@@ -73,7 +73,10 @@ def test_main_applies_gc_config_after_slot_budget_log():
   )
 
 
-def test_progress_line_carries_gc_counters():
+def test_census_line_carries_gc_counters():
   text = open(um.__file__, encoding="utf-8").read()
-  assert "gc_collections_total={} gc_pause_s_total={:.1f}" in text
   assert '"gc_collections_total": int(_GC_STATS["collections"])' in text
+  line = um._format_metrics_census(
+    {"gc_collections_total": 7, "gc_pause_s_total": 0.75}
+  )
+  assert " gc=n:7,pause_s:0.8" in line
