@@ -307,14 +307,22 @@ def schema_rows_near_bounds(
   scope, scope_params = _scope_sql(
     jid, [host] if host in set(exclusive_hosts or ()) else ()
   )
+  # UNION of two plain time predicates, never ``(range) OR time = x``: chunk
+  # exclusion cannot use an OR of time predicates, so hs04 planned that form
+  # against every host_data chunk (112 s planning, 0.2 s execution) and hit
+  # the statement timeout. UNION also removes duplicate triples.
+  head = (
+    "SELECT d.type, d.event, d.unit FROM host_data d WHERE d.host = %s AND "
+  )
   sql = (
-    "SELECT DISTINCT d.type, d.event, d.unit FROM host_data d"
-    " WHERE d.host = %s AND ((d.time >= %s AND d.time <= %s) OR d.time = %s)"
-    f" AND {scope}"
+    f"{head}d.time >= %s AND d.time <= %s AND {scope}"
+    f" UNION {head}d.time = %s AND {scope}"
   )
   hi = min(last, first + timedelta(seconds=max(1, int(slice_s))))
   with _profile_phase("db_fetch"), connection.cursor() as cursor:
-    cursor.execute(sql, [host, first, hi, last, *scope_params])
+    cursor.execute(
+      sql, [host, first, hi, *scope_params, host, last, *scope_params]
+    )
     return [tuple(row) for row in cursor.fetchall()]
 
 

@@ -331,7 +331,7 @@ When backends are exhausted, `psql` itself is refused with **`FATAL: sorry, too 
 
 ### Anti-pattern — heredoc SQL in a pasted block (hpcperfstats01 2026-11-17)
 
-A `psql -f - <<'SQL' … SQL` block pasted with leading spaces (terminal or chat indentation) never ends: the indented `  SQL` is not the terminator, the shell sits at `>`, the operator presses Ctrl-C, and nothing runs. One long `-c "…"` line instead breaks the 70-character paste limit (copy/paste hard-wraps it).
+A `psql -f - <<'SQL' … SQL` block pasted with leading spaces never ends: the indented `  SQL` is not the terminator, the shell sits at `>`, the operator presses Ctrl-C, and nothing runs. The indent is not the operator's doing: **copying a code block out of the Claude Code TUI adds 2 leading spaces to every line, every time** (hpcperfstats04 2026-11-21, the `schema_rows_near_bounds` EXPLAIN block failed the same way). Every heredoc in a chat block is therefore broken; `<<-` does not help (it strips tabs only). One long `-c "…"` line instead breaks the 70-character paste limit (copy/paste hard-wraps it). The Claude Code Stop hook (`.claude/hooks/hpc_claude_hooks.py`, `shell_block_issues`) rejects a final message whose `bash`/`sh` fence has a heredoc or a line over 70 characters. A double-quoted `Q="…"` built over several short lines also works when the SQL needs shell variables: use `'…'` SQL literals inside it, never `$$` (bash expands it to the PID).
 
 | Do | Don't |
 |----|-------|

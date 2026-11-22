@@ -1033,3 +1033,52 @@ def test_hosts_owning_mid_sample_checks_one_sample_not_the_window(monkeypatch):
     "71526",
     ["a.x", "b.x"],
   ]
+
+
+def test_schema_rows_near_bounds_unions_plain_time_predicates(monkeypatch):
+  """hs04 2026-11-21: ``(range) OR time = last`` defeated chunk exclusion,
+  so planning alone took 112 s against every host_data chunk and the jid_table
+  schema probe hit the statement timeout. The probe must be a UNION of two
+  plain time predicates (1 ms to plan, same rows)."""
+  from django.db import connection
+
+  import hpcperfstats.analysis.metrics.lib.metrics_host_data_sql as sql_mod
+
+  seen = []
+
+  class _Cur:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *_a):
+      return False
+
+    def execute(self, sql, params):
+      seen.append((sql, params))
+
+    def fetchall(self):
+      return [("host_cpu", "user", "cs")]
+
+  monkeypatch.setattr(connection, "cursor", lambda: _Cur())
+  first = datetime(2026, 11, 19, 6, 51, tzinfo=UTC)
+  last = datetime(2026, 11, 19, 7, 9, tzinfo=UTC)
+  out = sql_mod.schema_rows_near_bounds("h.x", first, last, 600, "99319")
+  assert out == [("host_cpu", "user", "cs")]
+  sql, params = seen[0]
+  assert " OR d.time" not in sql and "DISTINCT" not in sql
+  left, right = sql.split(" UNION ")
+  assert "d.host = %s AND d.time >= %s AND d.time <= %s AND" in left
+  assert "d.host = %s AND d.time = %s AND" in right
+  assert "COALESCE(d.jid, '')" in left and "COALESCE(d.jid, '')" in right
+  hi = first + timedelta(seconds=600)
+  assert params == [
+    "h.x",
+    first,
+    hi,
+    "99319",
+    "99319",
+    "h.x",
+    last,
+    "99319",
+    "99319",
+  ]
