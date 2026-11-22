@@ -116,6 +116,8 @@ PARITY_FEATURES: tuple[ParityFeature, ...] = (
     (
       f"{_T}/test_codon_collapse_parity.py::test_plain_host_collapse_matches_groupby_sum",
       f"{_T}/test_keep_dev_type_set_parity.py::test_codon_collapse_matches_cpython_for_socket_rows",
+      f"{_T}/test_keep_dev_type_set_parity.py::test_overlapping_jid_gpu_payloads_do_not_double_per_device_rows",
+      f"{_T}/test_codon_canonical_parity.py::test_pyext_overlapping_jid_gpu_payloads_keep_one_reading",
       f"{_T}/test_codon_shared_stamp_per_device_deltas.py::test_shared_stamp_keeps_per_device_deltas",
     ),
   ),

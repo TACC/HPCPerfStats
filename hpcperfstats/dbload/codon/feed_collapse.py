@@ -1632,8 +1632,9 @@ def collapse_full_cols(
   CCM power gauges (``host_cpu_hw``/``cpu_counter_metrics`` x DCGM CPU power
   events) use the cluster-mean-sum port. ``nvidia_gpu`` rows nan-out DCGM
   blank values (``>= 2**47``) before per-event-class aggregation (max/mean/
-  OR/sum); ``amd_gpu``/``intel_gpu`` always sum with ``dev``. ``jid`` is
-  first-in-group. Output is sorted by ``(host, type, dev, event, time)``.
+  OR/sum); ``amd_gpu``/``intel_gpu`` sum with ``dev``. GPU sum groups take
+  the max ``value`` (copies of one device reading) and sum ``delta``.
+  ``jid`` is first-in-group. Output is sorted by ``(host, type, dev, event, time)``.
   """
   n = len(times)
   out_time: list[float] = []
@@ -1705,7 +1706,8 @@ def collapse_full_cols(
       vagg = _or_reduceat(slice_v)
       dagg = sum_d[g]
     else:
-      vagg = sum_v[g]
+      # GPU keys keep ``dev``: a repeated key is a copy of one reading.
+      vagg = _max_skipna(slice_v) if types[i0] in GPU_TYPES else sum_v[g]
       dagg = sum_d[g]
     out_time.append(times[i0])
     out_host.append(hosts[i0])

@@ -248,3 +248,69 @@ def test_collapse_unit_keeps_dev_for_stamped_and_plain_socket_rows() -> None:
   cpu = out[out["type"] == "cpu"]
   assert cpu["dev"].tolist() == [""]
   assert cpu["value"].tolist() == [3.0]
+
+
+def _overlapping_gpu_tick_lines() -> list[str]:
+  """Shared-node burst where two jid payloads both carry GPU 0.
+
+  The monitor freezes one timestamp per burst and each jid payload holds its
+  granted plus fd-scanned GPUs (``job_shared_emit.c``), so overlapping sets
+  repeat the same ``(dev, event, time)``. GPU rows keep hardware ``dev``.
+  """
+  nv = (
+    "!nvidia_gpu gpu_util,U=% power_usage,U=W gpu_count temperature "
+    "gpu_io_link_total_bytes,E,W=64"
+  )
+  amd = "!amd_gpu gpu_util,U=% power_usage,U=W"
+  lines = [nv, amd]
+  for t, link0, link1 in ((1000.0, 1000, 500), (1010.0, 2000, 600)):
+    lines += [
+      "%jobs jids=41,42",
+      "%affinity jid=41 cpus=0 gpus=0",
+      f"{t} 41 hostA",
+      f"nvidia_gpu 0 @full 74 300 2 60 {link0}",
+      "amd_gpu 0 @full 74 300",
+      "%jobs jids=41,42",
+      "%affinity jid=42 cpus=1 gpus=0,1",
+      f"{t} 42 hostA",
+      f"nvidia_gpu 0 @full 74 300 2 60 {link0}",
+      f"nvidia_gpu 1 @full 50 200 2 50 {link1}",
+      "amd_gpu 0 @full 74 300",
+    ]
+  return lines
+
+
+def test_overlapping_jid_gpu_payloads_do_not_double_per_device_rows() -> None:
+  """One device's copies in two jid payloads collapse to one value (b')."""
+  lines = _overlapping_gpu_tick_lines()
+  py = _cpython_rows(lines)
+  cd = _codon_rows(lines)
+  for out in (py, cd):
+    for typ in ("nvidia_gpu", "amd_gpu"):
+      for event, want in (("gpu_util", 74.0), ("power_usage", 300.0)):
+        sel = (
+          (out["type"] == typ) & (out["dev"] == "0") & (out["event"] == event)
+        )
+        assert out.loc[sel, "value"].tolist() == [want, want], (typ, event)
+    link = out[
+      (out["type"] == "nvidia_gpu")
+      & (out["dev"] == "0")
+      & (out["event"] == "gpu_io_link_total_bytes")
+    ].sort_values("time")
+    # Counter value is the reading, not twice it; the delta stays exact.
+    assert link["value"].tolist() == [1000.0, 2000.0]
+    assert link["delta"].tolist()[1] == 1000.0
+    assert link["arc"].tolist()[1] == 100.0
+    one = out[
+      (out["type"] == "nvidia_gpu")
+      & (out["dev"] == "1")
+      & (out["event"] == "gpu_util")
+    ]
+    assert one["value"].tolist() == [50.0, 50.0]
+  keys = ["type", "dev", "event", "time"]
+  p = py.sort_values(keys).reset_index(drop=True)
+  c = cd.sort_values(keys).reset_index(drop=True)
+  assert p[keys].astype(str).equals(c[keys].astype(str))
+  for col in ("value", "delta"):
+    for got, want in zip(c[col], p[col], strict=True):
+      assert (math.isnan(got) and math.isnan(want)) or math.isclose(got, want)

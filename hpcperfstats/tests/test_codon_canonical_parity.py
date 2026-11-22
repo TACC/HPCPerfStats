@@ -417,6 +417,38 @@ def test_pyext_matches_cpython_whole_file_path(pyext: Any) -> None:
     )
 
 
+def test_pyext_overlapping_jid_gpu_payloads_keep_one_reading(
+  pyext: Any,
+) -> None:
+  """The baked collapse takes one copy of a GPU reading two jid payloads of
+  one shared-node burst both carried (it summed them: 148 % from 74 %)."""
+  from hpcperfstats.tests.test_codon_feed_delta_collapse_arc import (
+    _assert_rows_match,
+  )
+  from hpcperfstats.tests.test_keep_dev_type_set_parity import (
+    _cpython_rows,
+    _overlapping_gpu_tick_lines,
+  )
+
+  lines = _overlapping_gpu_tick_lines()
+  got = _pyext_sentinel_rows(pyext, [lines])
+  for typ in ("nvidia_gpu", "amd_gpu"):
+    vals = {v[0] for k, v in got.items() if k[1:4] == (typ, "0", "gpu_util")}
+    assert vals == {74.0}, typ
+  py = _cpython_rows(lines)
+  want = {
+    (r.host, r.type, r.dev, r.event, float(r.time)): (r.value, r.delta, r.arc)
+    for r in py.itertuples()
+  }
+  _assert_rows_match(
+    {
+      k: tuple(float("nan") if x is None else x for x in v)
+      for k, v in got.items()
+    },
+    want,
+  )
+
+
 def test_pyext_file_session_seeds_bridge_max(
   pyext: Any, tmp_path: Path
 ) -> None:

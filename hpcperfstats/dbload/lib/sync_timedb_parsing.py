@@ -818,6 +818,9 @@ def peak_merge_proc_objs_with_existing(
 EVENTMAPS_BY_TYPE = legacy_parsing.EVENTMAPS_BY_TYPE
 map_hardware_counter_vals = legacy_parsing.map_hardware_counter_vals
 
+# Per-device gauges and counters. Collapse keeps ``dev``, so a repeated key is
+# another copy of the same reading (overlapping jid GPU sets in one burst):
+# ``value`` reduces by max and ``delta`` sums (the copy diffs to 0).
 _NVIDIA_GPU_SUM_EVENTS = frozenset(
   {
     "gpu_util",
@@ -1423,13 +1426,6 @@ def _collapse_nvidia_gpu_group(group: Any) -> Any:
         "delta": group["delta"].mean(),
       }
     )
-  if event_name in _NVIDIA_GPU_SUM_EVENTS:
-    return pd.Series(
-      {
-        "value": group["value"].sum(min_count=1),
-        "delta": group["delta"].sum(min_count=1),
-      }
-    )
   if event_name in _NVIDIA_GPU_MEAN_EVENTS:
     return pd.Series(
       {
@@ -1449,9 +1445,11 @@ def _collapse_nvidia_gpu_group(group: Any) -> Any:
         "delta": group["delta"].sum(min_count=1),
       }
     )
+  # Sum class and unknown events: duplicates within one ``dev`` are copies
+  # of one reading, so the value is their max; the delta still sums.
   return pd.Series(
     {
-      "value": group["value"].sum(min_count=1),
+      "value": group["value"].max(),
       "delta": group["delta"].sum(min_count=1),
     }
   )
@@ -1529,6 +1527,7 @@ def _groupby_sum_min_count(
   gcols: Any,
   *,
   assume_duplicates: bool = False,
+  value_max: bool = False,
 ) -> Any:
   """
   Sum value/delta across devs with pandas ``sum(min_count=1)`` NaN semantics.
@@ -1544,6 +1543,9 @@ def _groupby_sum_min_count(
     df (Any): Df passed to this helper.
     gcols (Any): Gcols passed to this helper.
     assume_duplicates (bool): Skip identity short-circuit; cast categories.
+    value_max (bool): Reduce ``value`` by max (``delta`` still sums). For
+      groups keyed on hardware ``dev``, where every duplicate is another copy
+      of one device reading (two jid payloads of one shared-node burst).
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -1566,6 +1568,8 @@ def _groupby_sum_min_count(
       df[col] = df[col].astype("category")
   grouped = df.groupby(gcols, observed=True, sort=False)
   out = grouped[["value", "delta"]].sum(min_count=1)
+  if value_max:
+    out["value"] = grouped["value"].max()
   if "jid" in getattr(df, "columns", ()):
     out = out.join(grouped["jid"].first())
   return out.reset_index()
@@ -1648,7 +1652,7 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
   parts = []
   sum_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_SUM]
   if not sum_df.empty:
-    parts.append(_groupby_sum_min_count(sum_df, gcols))
+    parts.append(_groupby_sum_min_count(sum_df, gcols, value_max=True))
 
   max_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_MAX]
   if not max_df.empty:
@@ -4491,7 +4495,9 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
     with _held_parse_stage("collapse_gpu_s"):
       if not other_gpu_df.empty:
         # Identity groups when each (host,dev,event,time) is unique.
-        parts.append(_groupby_sum_min_count(other_gpu_df, gcols_gpu))
+        parts.append(
+          _groupby_sum_min_count(other_gpu_df, gcols_gpu, value_max=True)
+        )
       if not nv_df.empty:
         parts.append(_collapse_nvidia_gpu_vectorized(nv_df, gcols_gpu))
 
