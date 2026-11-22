@@ -4,7 +4,6 @@ from __future__ import annotations
 import time
 
 from .message_parse import (
-    fast_schema_keys,
     schema_key_name,
     schema_token_is_event_counter,
 )
@@ -13,7 +12,7 @@ from .papi_shm_validate import (
     check_host_cpu_hw_rates,
     check_papi_row_invariants,
 )
-from .payload_parse import rows_by_type, sample_header_timestamp
+from .payload_parse import row_key_names, rows_by_type, sample_header_timestamp
 
 # Keys retired by round 2 (D33/D36): their presence in a schema means an old emitter.
 RETIRED_KEYS = {
@@ -99,14 +98,12 @@ def _host_cpu_hw_values(
     body: str, schema_by_type: dict[str, list[str]], *, enable_slow: bool, tier: str
 ) -> dict[str, dict[str, int]]:
     """dev -> key -> value of the host_cpu_hw rows of one payload (``tier`` "@fast" / "@full")."""
-    keys = schema_by_type["host_cpu_hw"]
     rows = rows_by_type(
         body, schema_by_type, require_tier=enable_slow, allowed_tier=tier if enable_slow else None
     ).get("host_cpu_hw", [])
     out: dict[str, dict[str, int]] = {}
     for row in rows:
-        names = [schema_key_name(k) for k in (fast_schema_keys(keys) if row.tier == "@fast" else keys)]
-        out[row.dev] = _value_map(row.values, names)
+        out[row.dev] = _value_map(row.values, row_key_names(row, schema_by_type))
     return out
 
 

@@ -29,8 +29,8 @@ import time
 from pathlib import Path
 
 from .host_live_probes import probe_power_socket_watts
-from .message_parse import fast_schema_keys, schema_key_name, schema_token_is_event_counter
-from .payload_parse import metric_value_at_key, rows_by_type
+from .message_parse import schema_key_name, schema_token_is_event_counter
+from .payload_parse import metric_value_at_key, row_key_names, rows_by_type
 
 _PROC_STAT_FIELDS = ("user", "nice", "system", "idle", "iowait", "irq", "softirq")
 # /sys/block/<dev>/stat field order (block.c KEYS).
@@ -248,9 +248,8 @@ def check_independent_reads(
         rows = rows_by_type(body, schema_by_type, require_tier=require_tier, allowed_tier=allowed_tier)
         values: dict[tuple[str, str, str], int] = {}
         for type_name in {k[0] for k in live}:
-            keys = schema_by_type.get(type_name, [])
             for row in rows.get(type_name, []):
-                names = [schema_key_name(k) for k in (fast_schema_keys(keys) if row.tier == "@fast" else keys)]
+                names = row_key_names(row, schema_by_type)
                 for name in names:
                     v = metric_value_at_key(row.values, names, name)
                     if v is not None:

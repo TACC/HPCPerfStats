@@ -22,6 +22,7 @@
 #include "nvidia_gpu_nvml.h"
 #include "nvidia_gpu_nvml_convert.h"
 #include "nvidia_gpu_dcgm_field.h"
+#include "stats_sentinel_debug.h"
 
 /* GPM metric -> dcgm_data_t ratio field (offset of a double) or PROF byte field. */
 enum nvml_gpm_dst { GPM_DST_RATIO, GPM_DST_BYTES };
@@ -460,7 +461,8 @@ static int nvml_take_window(struct nvml_gpu *g, long long now_us)
   int cur = 1 - g->prev;
   unsigned int m;
 
-  r = g_api.gpm_sample_get(g->dev, g->sample[cur]);
+  r = STATS_FAULT("nvml_fetch", NULL, NULL) ? NVML_ERROR_UNKNOWN
+                                            : g_api.gpm_sample_get(g->dev, g->sample[cur]);
   if (r != 0) {
     nvml_set_err("nvmlGpmSampleGet", r);
     return -1;

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
+from .message_parse import fast_schema_keys, schema_key_name
 from .row_validate import split_fields, token_is_uint, token_sentinel_code, validate_metric_row
 
 
@@ -42,6 +43,12 @@ def iter_metric_rows(
         value_start = 3 if tier else 2
         values = split_fields(s)[value_start:]
         yield MetricRow(type_name, dev, tier, values)
+
+
+def row_key_names(row: MetricRow, schema_by_type: dict[str, list[str]]) -> list[str]:
+    """Key names of ``row.values`` in order (an ``@fast`` row carries only the fast-tier keys)."""
+    keys = schema_by_type.get(row.type_name, [])
+    return [schema_key_name(k) for k in (fast_schema_keys(keys) if row.tier == "@fast" else keys)]
 
 
 def rows_by_type(

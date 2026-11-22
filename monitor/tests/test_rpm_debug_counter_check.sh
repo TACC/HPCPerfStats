@@ -362,7 +362,7 @@ want fault_inject NOT_RUN
 grep -q 'no perf' "${RES}" || fail "NOT_RUN reason lost: $(cat "${RES}")"
 
 # --- fault_inject_verify.sh output -> status: the checker's NOT_RUN line (no planned fault
-# point reached, e.g. dcgm_fetch on an NVML+GPM node) is NOT_RUN, not PASS ---
+# point reached on the node) is NOT_RUN, not PASS ---
 for c in "PASS 0 fault_inject: PASS (0 failure(s))" "FAIL 1 fault_inject: FAIL (1 failure(s))" \
   "NOT_RUN 0 fault_inject: NOT_RUN (no planned fault point was reached on this node)" \
   "SKIP 0 SKIP: fault injection (FAULT_INJECT=0)"; do

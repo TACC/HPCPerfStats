@@ -21,6 +21,14 @@ already exist; perf_open faults act at begin and hold for the whole run. The ope
 directory latch holds it until the restart, so it starts after every other host_ib fault has
 been checked for resume.
 
+nvidia_gpu gets both GPU fault points, since only the run shows which source serves the node:
+nvml_fetch first (a failed GPM sample hands the GPUs to the DCGM path for the rest of the run),
+then dcgm_fetch after the nvml_fetch resume check, so on an NVML+GPM node it fires on that
+fallback. A fired nvml_fetch passes when, after release, every GPU row is still emitted and reads
+values not all frozen at the pre-fault reading, or carries BACKEND_ERROR on every key (DCGM
+unusable here); the DCGM path's NOT_PRESENT / READ_FAILED / INVALID_VALUE keys (GPM-only
+tensor_dmma_active, fields its watch profile lacks) are then not out of plan.
+
 Output is bounded (--max-lines); the full report goes to --report.
 """
 from __future__ import annotations
@@ -41,7 +49,8 @@ sys.path.insert(0, str(MONITOR / "scripts"))
 from lib.cross_sample_validate import check_sentinel_bridges  # noqa: E402
 from lib.fault_ci_files import CI_COVERED_FILES  # noqa: E402
 from lib.message_parse import parse_schema_counts, schema_key_name  # noqa: E402
-from lib.payload_parse import sample_header_timestamp  # noqa: E402
+from lib.payload_parse import iter_metric_rows, row_key_names, sample_header_timestamp  # noqa: E402
+from lib.row_validate import token_is_uint, token_sentinel_code  # noqa: E402
 from lib.sentinel_catalog import SENTINEL_SLUGS, sentinels_banner_version  # noqa: E402
 from lib.sentinel_validate import sentinel_keys  # noqa: E402
 from lib.shm_snapshot import SnapshotPair, read_shm_sample  # noqa: E402
@@ -54,6 +63,7 @@ def _code(slug: str) -> int:
 NOT_UPDATED = _code("NOT_UPDATED")
 READ_FAILED = _code("READ_FAILED")
 BACKEND_ERROR = _code("BACKEND_ERROR")
+INVALID_VALUE = _code("INVALID_VALUE")
 BACKOFF = _code("BACKOFF")
 PMU_BUSY = _code("PMU_BUSY")
 NOT_PRESENT = _code("NOT_PRESENT")
@@ -63,7 +73,8 @@ RESUME_AFTER = 2  # released cycles before the resume check
 KINDS = ("fast", "full")
 POLL_SEC = 0.5
 # Why a planned point may never run on a node that has its collector.
-_NOT_REACHED_HINT = {"dcgm_fetch": "NVML+GPM serves the GPUs"}
+_NOT_REACHED_HINT = {"dcgm_fetch": "NVML+GPM serves the GPUs and DCGM never fetched",
+                     "nvml_fetch": "DCGM serves the GPUs (not every GPU has GPM)"}
 
 _IB_MAD_KEYS = (
     "port_select counter_select port_xmit_pkts port_rcv_pkts port_unicast_xmit_pkts "
@@ -114,12 +125,18 @@ def build_plan(caps: dict, manifest: dict, *, ticks: int, sys_root: Path) -> lis
     plan: list[dict] = []
 
     def add(point: str, type_name: str, keys: list[str], codes: list[int], resume: bool, *,
-            delay: int | None = ARM_DELAY, n: int = ticks, also: tuple[int, ...] = ()) -> None:
+            delay: int | None = ARM_DELAY, n: int = ticks, also: tuple[int, ...] = (),
+            fallback: bool = False) -> None:
         """delay None: active from begin until the restart (perf_open). `also`: codes the
-        fault's aftermath may leave on its keys besides the forced ones."""
+        fault's aftermath may leave on its keys besides the forced ones. `fallback`: the
+        release is judged by fallback_check (another source takes over) instead of resume."""
         spec = point if delay is None else f"{point}@{delay}+{n}" if delay else f"{point}@{n}"
         plan.append({"spec": spec, "type": type_name, "keys": keys, "codes": codes, "resume": resume,
-                     "delay": delay, "ticks": n, "also": list(also)})
+                     "delay": delay, "ticks": n, "also": list(also), "fallback": fallback})
+
+    def after_resume(type_name: str) -> int:
+        """Delay whose window opens past every planned `type_name` resume check and its slack."""
+        return max((resume_index(e) for e in plan if e["type"] == type_name), default=0) + 2
 
     if "host_ps" in schema:
         add("open:/proc/loadavg", "host_ps",
@@ -128,7 +145,9 @@ def build_plan(caps: dict, manifest: dict, *, ticks: int, sys_root: Path) -> lis
         # Fewer ticks than the MAD fail threshold: BACKEND_ERROR, BACKOFF only on a long run.
         add("mad_query", "host_ib", list(_IB_MAD_KEYS), [BACKEND_ERROR, BACKOFF], True)
     if "nvidia_gpu" in schema:
-        add("dcgm_fetch", "nvidia_gpu", ["*"], [BACKEND_ERROR], True)
+        add("nvml_fetch", "nvidia_gpu", ["*"], [BACKEND_ERROR], True,
+            also=(NOT_PRESENT, READ_FAILED, INVALID_VALUE), fallback=True)
+        add("dcgm_fetch", "nvidia_gpu", ["*"], [BACKEND_ERROR], True, delay=after_resume("nvidia_gpu"))
     if "host_power_socket" in schema:
         add("hwmon_read", "host_power_socket", ["*"], [READ_FAILED], True)
     if "host_cpu_hw" in schema and backend == "arm":
@@ -145,9 +164,8 @@ def build_plan(caps: dict, manifest: dict, *, ticks: int, sys_root: Path) -> lis
         # The failed walk marks every host_ib key; the directory latch then answers ENOENT
         # (NOT_PRESENT) until the restart, so the fault needs one cycle and has no resume check.
         # It starts two cycles after the last host_ib resume check, past that window's slack.
-        start = max((resume_index(e) for e in plan if e["type"] == "host_ib"), default=0) + 2
         add("opendir:/sys/class/infiniband", "host_ib", ["*"], [READ_FAILED], False,
-            delay=max(start, ARM_DELAY), n=1, also=(NOT_PRESENT,))
+            delay=after_resume("host_ib"), n=1, also=(NOT_PRESENT,))
     return plan
 
 
@@ -252,9 +270,71 @@ def not_reached(plan: list[dict], fired: dict[str, int] | None) -> set[str]:
     return {e["spec"] for e in plan if fired is not None and fired.get(e["spec"]) == 0}
 
 
-def _sentinels(body: str, kind: str, schema: dict[str, list[str]]) -> dict[tuple[str, str, str], int]:
+def _tier_args(body: str, kind: str) -> dict:
+    """Row-parse tier arguments: tier markers are required when the sample carries them."""
     tier = f"@{kind}" if f" @{kind}" in body else None
-    return sentinel_keys(body, schema, require_tier=tier is not None, allowed_tier=tier)
+    return {"require_tier": tier is not None, "allowed_tier": tier}
+
+
+def _sentinels(body: str, kind: str, schema: dict[str, list[str]]) -> dict[tuple[str, str, str], int]:
+    return sentinel_keys(body, schema, **_tier_args(body, kind))
+
+
+def _type_rows(body: str, kind: str, schema: dict[str, list[str]],
+               type_name: str) -> dict[str, dict[str, str]]:
+    """dev -> {key: token} of every `type_name` row in one sample."""
+    return {row.dev: dict(zip(row_key_names(row, schema), row.values))
+            for row in iter_metric_rows(body, schema, **_tier_args(body, kind)) if row.type_name == type_name}
+
+
+def fallback_check(entry: dict, plan: list[dict], samples: list[tuple],
+                   schema: dict[str, list[str]]) -> tuple[list[str], list[str]]:
+    """Release check of a fired fault whose source hands its rows to another one (nvml_fetch:
+    the DCGM path). Samples from cycle resume_index(entry) on, outside the other windows of the
+    type, must show every row seen before then in each `full` sample, and each row must read
+    values that are not all equal to its last reading before the fault armed, or carry
+    BACKEND_ERROR on every key in every such sample (the other source is unusable here)."""
+    type_name, spec, start = entry["type"], entry["spec"], resume_index(entry)
+    others = [fault_window(e) for e in plan if e is not entry and e["type"] == type_name]
+    rows = [(c, kind, _type_rows(body, kind, schema, type_name)) for c, _, kind, body, _ in samples]
+    after = [(kind, r) for c, kind, r in rows
+             if c >= start and not any(lo <= c and (hi is None or c < hi) for lo, hi in others)]
+    devs = {d for c, _, r in rows if c < start for d in r}
+    fulls = [set(r) for kind, r in after if kind == "full"]
+    if not fulls:
+        return [], [f"FAIL fault_inject {spec}: no full sample at or after cycle {start} outside the "
+                    f"other {type_name} fault windows"]
+    gone = sorted(devs - set.intersection(*fulls))
+    if gone:
+        return [], [f"FAIL fault_inject {spec}: {type_name} row(s) gone after the fallback: "
+                    + ", ".join(gone[:8])]
+    pre: dict[str, dict[str, str]] = {}
+    for c, _, r in rows:
+        if c < entry["delay"]:
+            for d, toks in r.items():
+                pre.setdefault(d, {}).update((k, v) for k, v in toks.items() if token_is_uint(v))
+    errors: list[str] = []
+    valued = blocked = 0
+    for d in sorted(devs):
+        seen = [r[d] for _, r in after if d in r]
+        read = [(k, v) for toks in seen for k, v in toks.items() if token_is_uint(v)]
+        if not read:
+            if all(token_sentinel_code(v) == BACKEND_ERROR for toks in seen for v in toks.values()):
+                blocked += 1
+            else:
+                errors.append(f"FAIL fault_inject {spec}: {type_name}/{d} has neither values nor "
+                              "BACKEND_ERROR after the fallback")
+            continue
+        compared = [(k, v) for k, v in read if k in pre.get(d, {})]
+        if compared and all(pre[d][k] == v for k, v in compared):
+            errors.append(f"FAIL fault_inject {spec}: {type_name}/{d} values frozen at the pre-fault "
+                          "reading after the fallback")
+        else:
+            valued += 1
+    if errors:
+        return [], errors
+    note = f"PASS fault_inject {spec}: {valued} {type_name} row(s) read values after the fallback"
+    return [note + (f", {blocked} BACKEND_ERROR (fallback source unusable here)" if blocked else "")], []
 
 
 def _samples(cap_dir: Path) -> list[tuple[int, float, str, str]]:
@@ -296,8 +376,10 @@ def check(plan: list[dict], manifest: dict, cap_dir: Path, *, sample_freq: float
 
     expected: dict[tuple[str, str], set[int]] = {}
     for entry in plan:
+        # A fault point that never ran leaves no aftermath.
+        also = [] if entry["spec"] in unreached else entry.get("also", [])
         for key in _keys_of(entry, schema):
-            expected.setdefault((entry["type"], key), set()).update(entry["codes"] + entry.get("also", []))
+            expected.setdefault((entry["type"], key), set()).update(entry["codes"] + also)
     for entry in plan:
         if entry["spec"] in unreached:
             hint = _NOT_REACHED_HINT.get(re.split(r"[:!@]", entry["spec"], maxsplit=1)[0])
@@ -313,7 +395,11 @@ def check(plan: list[dict], manifest: dict, cap_dir: Path, *, sample_freq: float
                           + "/".join(SENTINEL_SLUGS[c] for c in entry["codes"]))
         else:
             notes.append(f"PASS fault_inject {entry['spec']}: {len(hit)} key(s)")
-        if entry["resume"]:
+        if entry.get("fallback"):
+            f_notes, f_errors = fallback_check(entry, plan, samples, schema)
+            notes.extend(f_notes)
+            errors.extend(f_errors)
+        elif entry["resume"]:
             # First sample of each mirror after release; only `full` carries the slow-tier keys.
             after: dict[str, dict] = {}
             for c_, _, kind, _, m in samples:

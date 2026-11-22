@@ -2695,7 +2695,7 @@ class FaultInjectScheduleTests(unittest.TestCase):
         # dcgm_fetch / opendir / mad_query marked empty tables.
         plan = {e["spec"].split("@")[0]: e for e in self._ib_plan()}
         self.assertEqual(plan["mad_query"]["spec"], "mad_query@1+3")
-        self.assertEqual(plan["dcgm_fetch"]["spec"], "dcgm_fetch@1+3")
+        self.assertEqual(plan["nvml_fetch"]["spec"], "nvml_fetch@1+3")
 
     def test_opendir_runs_alone_after_the_mad_resume_check(self) -> None:
         # Regression: opendir shared the window with mad_query, so the stopped port walk never
@@ -2708,7 +2708,8 @@ class FaultInjectScheduleTests(unittest.TestCase):
         self.assertTrue(opendir["spec"].startswith("opendir:/sys/class/infiniband@"))
         self.assertEqual((opendir["keys"], opendir["ticks"], opendir["resume"]), (["*"], 1, False))
         self.assertGreater(fic.fault_window(opendir)[0], fic.resume_index(mad))
-        self.assertEqual(fic.capture_count(plan), fic.fault_window(opendir)[1])
+        self.assertEqual(fic.capture_count([e for e in plan if e["type"] == "host_ib"]),
+                         fic.fault_window(opendir)[1])
 
     def _capture(self, td: Path, rows: list[str], kind_of=None, fired: str | None = None) -> Path:
         """One sample per collect cycle 30 s apart, `full` unless kind_of(i) says `fast`; with a
@@ -2825,8 +2826,10 @@ class FaultInjectScheduleTests(unittest.TestCase):
 
         plan = [e for e in self._ib_plan() if e["type"] == "nvidia_gpu"]
         manifest = {"enable_slow_tier": False, "types": {"nvidia_gpu": {"schema_keys": ["gpu_util,"]}}}
-        for fired, want, want_rc in (("dcgm_fetch@1+3 0\n", "fault_inject: NOT_RUN", 0),
-                                     ("dcgm_fetch@1+3 3\n", "fault_inject: FAIL", 1)):
+        specs = [e["spec"] for e in plan]
+        self.assertEqual(specs, ["nvml_fetch@1+3", "dcgm_fetch@8+3"])
+        for fired, want, want_rc in ((f"{specs[0]} 0\n{specs[1]} 0\n", "fault_inject: NOT_RUN", 0),
+                                     (f"{specs[0]} 0\n{specs[1]} 3\n", "fault_inject: FAIL", 1)):
             with tempfile.TemporaryDirectory() as td:
                 cap = Path(td) / "cap"
                 cap.mkdir()
@@ -2846,6 +2849,120 @@ class FaultInjectScheduleTests(unittest.TestCase):
                                    str(Path(td) / "manifest.json"), "--capture-dir", str(cap)])
             self.assertTrue(out.getvalue().strip().splitlines()[-1].startswith(want), out.getvalue())
             self.assertEqual(rc, want_rc)
+
+
+class FaultInjectGpuSourceTests(unittest.TestCase):
+    """nvidia_gpu plans nvml_fetch and dcgm_fetch; a fired nvml_fetch must hand the rows to DCGM."""
+
+    SCHEMA = ["gpu_util,", "tensor_dmma_active,"]
+
+    def _plan(self) -> list[dict]:
+        import fault_inject_check as fic
+
+        manifest = {"types": {"nvidia_gpu": {"schema_keys": self.SCHEMA}}}
+        with tempfile.TemporaryDirectory() as td:
+            return fic.build_plan({}, manifest, ticks=3, sys_root=Path(td))
+
+    def _check(self, row_for, fired: str) -> tuple[list[str], list[str]]:
+        """One `full` sample per cycle 30 s apart; row_for(i, nvml, dcgm) gives the nvidia_gpu 0
+        values of cycle i, or None for no row."""
+        import fault_inject_check as fic
+
+        plan = self._plan()
+        nvml, dcgm = plan
+        manifest = {"enable_slow_tier": False, "types": {"nvidia_gpu": {"schema_keys": self.SCHEMA}}}
+        with tempfile.TemporaryDirectory() as td:
+            cap = Path(td)
+            (cap / "schema").write_text("$hpcperfstats 3.1\n$sentinels 1\n!nvidia_gpu "
+                                        + " ".join(self.SCHEMA) + "\n", encoding="utf-8")
+            (cap / "baseline.full").write_text("1.0 j1 h1\nnvidia_gpu 0 40 12\n", encoding="utf-8")
+            for i in range(fic.capture_count(plan) + 1):
+                row = row_for(i, nvml, dcgm)
+                (cap / f"t{i}.full").write_text(f"{100 + 30 * i}.0 j1 h1\n"
+                                                + (f"nvidia_gpu 0 {row}\n" if row else ""),
+                                                encoding="utf-8")
+            (cap / "fault_fired").write_text(fired, encoding="utf-8")
+            return fic.check(plan, manifest, cap, sample_freq=30.0)
+
+    @staticmethod
+    def _in(i: int, entry: dict) -> bool:
+        return entry["delay"] <= i < entry["delay"] + entry["ticks"]
+
+    def _fired(self, nvml_fires: int, dcgm_fires: int) -> str:
+        nvml, dcgm = self._plan()
+        return f"{nvml['spec']} {nvml_fires}\n{dcgm['spec']} {dcgm_fires}\n"
+
+    def test_both_points_planned_with_separate_windows(self) -> None:
+        # Regression: only dcgm_fetch was planned, so a node served by NVML+GPM got no GPU fault.
+        import fault_inject_check as fic
+
+        nvml, dcgm = self._plan()
+        self.assertEqual((nvml["spec"], nvml["keys"], nvml["fallback"]), ("nvml_fetch@1+3", ["*"], True))
+        self.assertEqual(dcgm["spec"].split("@")[0], "dcgm_fetch")
+        self.assertFalse(dcgm["fallback"])
+        self.assertGreater(fic.fault_window(dcgm)[0], fic.resume_index(nvml))
+        self.assertEqual(fic.capture_count([nvml, dcgm]), fic.resume_index(dcgm) + 1)
+
+    def _dcgm_after_fallback(self, i: int, nvml: dict, dcgm: dict) -> str:
+        """NVML values, one BACKEND_ERROR cycle, then the DCGM path (tensor_dmma_active
+        NOT_PRESENT), whose own fault window shows BACKEND_ERROR again."""
+        if i < nvml["delay"]:
+            return "40 12"
+        if i == nvml["delay"] or self._in(i, dcgm):
+            return "-7 -7"
+        return f"{41 + i} -2"
+
+    def test_fired_nvml_fetch_with_dcgm_rows_passes(self) -> None:
+        notes, errors = self._check(self._dcgm_after_fallback, self._fired(1, 3))
+        self.assertEqual(errors, [])
+        self.assertIn("PASS fault_inject nvml_fetch@1+3: 1 nvidia_gpu row(s) read values after the fallback",
+                      notes)
+        self.assertTrue(any(n.startswith("PASS fault_inject dcgm_fetch@") for n in notes), notes)
+
+    def test_fired_nvml_fetch_with_dcgm_unusable_passes_on_backend_error(self) -> None:
+        def rows(i: int, nvml: dict, dcgm: dict) -> str:
+            return "40 12" if i < nvml["delay"] else "-7 -7"
+
+        notes, errors = self._check(rows, self._fired(1, 0))
+        self.assertEqual(errors, [])
+        self.assertTrue(any(n.startswith("PASS fault_inject nvml_fetch@1+3: 0 nvidia_gpu row(s)")
+                            and n.endswith("1 BACKEND_ERROR (fallback source unusable here)") for n in notes),
+                        notes)
+        self.assertTrue(any(n.startswith("NOTE fault_inject dcgm_fetch@") for n in notes), notes)
+
+    def test_fired_nvml_fetch_with_rows_gone_fails(self) -> None:
+        def rows(i: int, nvml: dict, dcgm: dict) -> str | None:
+            return self._dcgm_after_fallback(i, nvml, dcgm) if i <= nvml["delay"] else None
+
+        errors = self._check(rows, self._fired(1, 0))[1]
+        self.assertIn("FAIL fault_inject nvml_fetch@1+3: nvidia_gpu row(s) gone after the fallback: 0", errors)
+
+    def test_fired_nvml_fetch_with_values_frozen_fails(self) -> None:
+        def rows(i: int, nvml: dict, dcgm: dict) -> str:
+            return "-7 -7" if i == nvml["delay"] or self._in(i, dcgm) else "40 12"
+
+        errors = self._check(rows, self._fired(1, 3))[1]
+        self.assertEqual(errors, ["FAIL fault_inject nvml_fetch@1+3: nvidia_gpu/0 values frozen at the "
+                                  "pre-fault reading after the fallback"])
+
+    def test_unreached_nvml_fetch_is_a_note_and_leaves_no_aftermath(self) -> None:
+        # DCGM serves the node: nvml_fetch never runs, dcgm_fetch fires in its own window.
+        def rows(i: int, nvml: dict, dcgm: dict) -> str:
+            return "-7 -7" if self._in(i, dcgm) else f"{40 + i} 12"
+
+        notes, errors = self._check(rows, self._fired(0, 3))
+        self.assertEqual(errors, [])
+        self.assertIn("NOTE fault_inject nvml_fetch@1+3: fault point not reached on this node "
+                      "(0 fires; e.g. DCGM serves the GPUs (not every GPU has GPM))", notes)
+        self.assertTrue(any(n.startswith("PASS fault_inject dcgm_fetch@") for n in notes), notes)
+
+        # Without the fallback the DCGM-path codes are not excused.
+        def leak(i: int, nvml: dict, dcgm: dict) -> str:
+            return f"{40 + i} -2" if i == 2 else rows(i, nvml, dcgm)
+
+        errors = self._check(leak, self._fired(0, 3))[1]
+        self.assertEqual(errors, ["FAIL fault_inject: nvidia_gpu/0 tensor_dmma_active changed to NOT_PRESENT "
+                                  "outside the injected points"])
 
 
 class EmitBuildCapabilitiesFleetTests(unittest.TestCase):

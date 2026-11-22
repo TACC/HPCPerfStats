@@ -6,7 +6,8 @@
  * in the /dev/shm "sentinels" file, and each state transition is logged once;
  * - STATS_FAULT(point, subject, &err) lets the debug_fault_inject conf key force a failure at a
  * fault point for N collect cycles, optionally after D clean ones: open, opendir (I/O
- * primitives), perf_open (subject: event name), mad_query (HCA), dcgm_fetch, hwmon_read (meter
+ * primitives), perf_open (subject: event name), mad_query (HCA), dcgm_fetch, nvml_fetch (GPM
+ * sample; the NVML+GPM source gives up and DCGM serves the next collect), hwmon_read (meter
  * name: CPU, Grace, SysIO, Module), scandir (host_proc), statfs (host_tmpfs mount dir),
  * net_rebuild_slow (host_net).
  *

@@ -11,8 +11,7 @@ from pathlib import Path
 
 from .host_live_probes import probe_power_socket_watts
 from .independent_read import opa_counter_files
-from .message_parse import fast_schema_keys, schema_key_name
-from .payload_parse import iter_metric_rows
+from .payload_parse import iter_metric_rows, row_key_names
 from .row_validate import token_sentinel_code
 from .sentinel_catalog import (
     CATALOG_VERSION,
@@ -34,10 +33,7 @@ def sentinel_keys(
     for row in iter_metric_rows(
         body, schema_by_type, require_tier=require_tier, allowed_tier=allowed_tier
     ):
-        keys = schema_by_type[row.type_name]
-        if row.tier == "@fast":
-            keys = fast_schema_keys(keys)
-        for name, tok in zip((schema_key_name(k) for k in keys), row.values):
+        for name, tok in zip(row_key_names(row, schema_by_type), row.values):
             code = token_sentinel_code(tok)
             if code is not None:
                 out[(row.type_name, row.dev, name)] = code
@@ -182,10 +178,7 @@ def check_allowed_sentinels(
             patterns = expect_nb.get(row.type_name)
             if not patterns:
                 continue
-            keys = schema_by_type[row.type_name]
-            if row.tier == "@fast":
-                keys = fast_schema_keys(keys)
-            for name, tok in zip((schema_key_name(k) for k in keys), row.values):
+            for name, tok in zip(row_key_names(row, schema_by_type), row.values):
                 if tok.isdigit() and _match({p: True for p in patterns}, name):
                     errors.append(
                         f"FAIL sentinel not_built {kind} {row.type_name}/{row.dev} {name}: value {tok}"

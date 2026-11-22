@@ -1,15 +1,18 @@
 /* Fault-injection matrix for the hardware fault points (built with -DDEBUG in every build):
  * perf_open (EBUSY PMU_BUSY, EACCES PERMISSION_DENIED), mad_query (BACKEND_ERROR, then BACKOFF
  * once the fail streak triggers), dcgm_fetch (BACKEND_ERROR on every GPU row) and hwmon_read
- * (READ_FAILED), plus a failed host_ib port walk (opendir errno code on every row) and a DCGM
- * fetch that fails from the first cycle (rows still appear). Each is forced through the debug_fault_inject table over the existing fakes
- * (fake perf, MAD and DCGM test hooks, a fake hwmon tree), lands on exactly its keys, and
- * recovers after release; then every registered failure site in this binary must have fired. */
+ * (READ_FAILED), plus a failed host_ib port walk (opendir errno code on every row), a DCGM
+ * fetch that fails from the first cycle (rows still appear) and nvml_fetch (BACKEND_ERROR for one
+ * cycle, then the DCGM path serves the GPU). Each is forced through the debug_fault_inject table
+ * over the existing fakes (fake perf, MAD, NVML and DCGM test hooks, a fake hwmon tree), lands on
+ * exactly its keys, and recovers after release; then every registered failure site in this binary
+ * must have fired. */
 #include <assert.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -31,6 +34,16 @@
 #include "stats_registry.h"
 #include "stats_sentinel_debug.h"
 #include "test_fake_perf.h"
+
+/* host_ib schema, taken before nvidia_gpu.h (via the NVML headers) redefines KEYS. */
+#define X SCHEMA_DEF
+static const char g_ib_def[] = JOIN(KEYS);
+#undef X
+#undef KEYS
+
+#include "nvidia_gpu_dcgm_watch.h"
+#include "nvidia_gpu_nvml.h"
+#include "nvml.h"
 
 extern struct stats_type nvidia_gpu_stats_type;
 
@@ -466,6 +479,158 @@ static void test_dcgm_fetch(void)
   dcgm_gpu_dyn_test_set_hooks(NULL);
 }
 
+/* Stub NVML API serving one GPM-capable GPU. */
+static int g_nvml_sample_gets;
+static int g_nvml_allocs;
+static int g_nvml_sample_slots[2];
+
+static nvidia_gpu_nvml_ret_t nvml_ok(void)
+{
+  return 0;
+}
+static const char *nvml_err(nvidia_gpu_nvml_ret_t r)
+{
+  (void)r;
+  return "stub error";
+}
+static nvidia_gpu_nvml_ret_t nvml_count(unsigned int *n)
+{
+  *n = 1;
+  return 0;
+}
+static nvidia_gpu_nvml_ret_t nvml_by_index(unsigned int i, nvidia_gpu_nvml_dev_t *d)
+{
+  *d = (nvidia_gpu_nvml_dev_t)(uintptr_t)(i + 1);
+  return 0;
+}
+static nvidia_gpu_nvml_ret_t nvml_clock(nvidia_gpu_nvml_dev_t d, int type, unsigned int *mhz)
+{
+  (void)d;
+  (void)type;
+  *mhz = 1980;
+  return 0;
+}
+static nvidia_gpu_nvml_ret_t nvml_power(nvidia_gpu_nvml_dev_t d, unsigned int *mw)
+{
+  (void)d;
+  *mw = 151000;
+  return 0;
+}
+static nvidia_gpu_nvml_ret_t nvml_util(nvidia_gpu_nvml_dev_t d, void *u)
+{
+  nvmlUtilization_t *util = u;
+
+  (void)d;
+  util->gpu = 97;
+  util->memory = 41;
+  return 0;
+}
+static nvidia_gpu_nvml_ret_t nvml_mem(nvidia_gpu_nvml_dev_t d, void *m)
+{
+  nvmlMemory_t *mem = m;
+
+  (void)d;
+  mem->total = 1048576ULL * 1000;
+  mem->used = 1048576ULL * 600;
+  mem->free = mem->total - mem->used;
+  return 0;
+}
+static nvidia_gpu_nvml_ret_t nvml_gpm_support(nvidia_gpu_nvml_dev_t d, void *s)
+{
+  (void)d;
+  ((nvmlGpmSupport_t *)s)->isSupportedDevice = 1;
+  return 0;
+}
+static nvidia_gpu_nvml_ret_t nvml_alloc(nvidia_gpu_nvml_sample_t *s)
+{
+  *s = &g_nvml_sample_slots[g_nvml_allocs++ % 2];
+  return 0;
+}
+static nvidia_gpu_nvml_ret_t nvml_free(nvidia_gpu_nvml_sample_t s)
+{
+  (void)s;
+  return 0;
+}
+static nvidia_gpu_nvml_ret_t nvml_sample_get(nvidia_gpu_nvml_dev_t d, nvidia_gpu_nvml_sample_t s)
+{
+  (void)d;
+  (void)s;
+  g_nvml_sample_gets++;
+  return 0;
+}
+static nvidia_gpu_nvml_ret_t nvml_metrics_get(void *p)
+{
+  nvmlGpmMetricsGet_t *mg = p;
+
+  for (unsigned int m = 0; m < mg->numMetrics; m++) {
+    mg->metrics[m].nvmlReturn = 0;
+    mg->metrics[m].value = 50.0;
+  }
+  return 0;
+}
+
+static const struct nvidia_gpu_nvml_api g_nvml_api = {
+    .init = nvml_ok,
+    .shutdown = nvml_ok,
+    .error_string = nvml_err,
+    .device_count = nvml_count,
+    .device_by_index = nvml_by_index,
+    .clock_info = nvml_clock,
+    .power_usage = nvml_power,
+    .utilization = nvml_util,
+    .memory_info = nvml_mem,
+    .gpm_query_support = nvml_gpm_support,
+    .gpm_sample_alloc = nvml_alloc,
+    .gpm_sample_free = nvml_free,
+    .gpm_sample_get = nvml_sample_get,
+    .gpm_metrics_get = nvml_metrics_get,
+};
+
+/* The NVML path closes a GPM window only once NVIDIA_GPU_NVML_GPM_MIN_GAP_US has passed. */
+static void gpu_tick_after_gpm_gap(void)
+{
+  usleep((useconds_t)(NVIDIA_GPU_NVML_GPM_MIN_GAP_US + 10000));
+  gpu_tick();
+}
+
+/* Regression: no fault point covered the NVML+GPM source, so on GPM-capable GPUs the live fault
+ * layer injected no GPU failure. A forced nvml_fetch takes the real failure path: the cycle marks
+ * every GPU key BACKEND_ERROR, NVML is given up for the process, and the next collect reads the
+ * DCGM path (GPM-only tensor_dmma_active NOT_PRESENT there). Runs last: NVML stays given up. */
+static void test_nvml_fetch_falls_back_to_dcgm(void)
+{
+  struct dcgm_gpu_dyn_test_hooks hooks;
+  struct stats *gpu;
+  int gets;
+
+  set_dcgm_hooks(&hooks);
+  nvidia_gpu_runtime_cleanup(); /* a node on NVML+GPM never prepared the DCGM path */
+  nvidia_gpu_nvml_test_set_api(&g_nvml_api);
+  assert(nvidia_gpu_stats_type.st_begin(&nvidia_gpu_stats_type) == 0);
+  gpu_tick_after_gpm_gap();
+  gpu = get_current_stats(&nvidia_gpu_stats_type, "0");
+  assert(state(gpu, "gpu_util") == STATS_SENTINEL_OK);
+  assert(gpu->s_val[schema_ref(&nvidia_gpu_stats_type.st_schema, "gpu_util")] == 97);
+  assert(state(gpu, "tensor_dmma_active") == STATS_SENTINEL_OK);
+
+  assert(stats_fault_inject_set("nvml_fetch@1") == 1);
+  gpu_tick_after_gpm_gap();
+  assert(stats_fault_inject_fired(0) == 1);
+  for (size_t k = 0; k < nvidia_gpu_stats_type.st_schema.sc_len; k++)
+    assert(gpu->s_val_state[k] == STATS_SENTINEL_BACKEND_ERROR);
+
+  gets = g_nvml_sample_gets;
+  assert(nvidia_gpu_stats_type.st_begin(&nvidia_gpu_stats_type) == 0); /* no NVML retry */
+  gpu_tick();
+  assert(g_nvml_sample_gets == gets);
+  assert(state(gpu, "gpu_util") == STATS_SENTINEL_OK);
+  assert(gpu->s_val[schema_ref(&nvidia_gpu_stats_type.st_schema, "gpu_util")] == 42);
+  assert(state(gpu, "tensor_dmma_active") == STATS_SENTINEL_NOT_PRESENT);
+  assert(stats_fault_inject_set(NULL) == 0);
+  nvidia_gpu_nvml_test_set_api(NULL);
+  dcgm_gpu_dyn_test_set_hooks(NULL);
+}
+
 static void init_type(struct stats_type *t, const char *name, const char *def)
 {
   memset(t, 0, sizeof(*t));
@@ -473,10 +638,6 @@ static void init_type(struct stats_type *t, const char *name, const char *def)
   t->st_schema_def = (char *)def;
   t->st_enabled = 1;
 }
-
-#define X SCHEMA_DEF
-static const char g_ib_def[] = JOIN(KEYS);
-#undef X
 
 int main(void)
 {
@@ -496,6 +657,7 @@ int main(void)
   test_hwmon_read();
   test_dcgm_fetch_fails_at_start();
   test_dcgm_fetch();
+  test_nvml_fetch_falls_back_to_dcgm();
 
   never = stats_sentinel_sites_report(NULL);
   if (never != 0) {
