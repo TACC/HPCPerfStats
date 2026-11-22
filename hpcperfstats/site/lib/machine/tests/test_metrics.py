@@ -822,10 +822,10 @@ def test_max_fabricbw_rejects_packet_rate_scale_as_mb_s():
   value, typename, units = max_fabricbw().compute_metric(MockU())
   assert units == "MB/s"
   assert typename == "host_ib"
-  # With MiB conversion: (5e10)/10 / (1024**2) ≈ 4768 MB/s - finite and << 5e9.
+  # port_*_data value is 4-byte words: 4 * 5e10 / 10 / MiB, about 19073 MB/s.
   assert value is not None
   assert value < 1e6
-  assert value == pytest.approx(5.0e10 / 10.0 / (1024 * 1024))
+  assert value == pytest.approx(4 * 5.0e10 / 10.0 / (1024 * 1024))
 
 
 @pytest.mark.machine_unit_mock

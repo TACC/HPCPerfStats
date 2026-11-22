@@ -737,7 +737,8 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # MAD port_xmit_pkts / port_rcv_pkts only on rows without them. Horizon values
 # were built from PortCounters that fabric management resets (about 4x low).
 # avg_packetsize also scales the raw port_*_data value from 4-byte words to
-# bytes (_IB_DATA_BYTES_PER_WORD); IB packet sizes read 4x higher.
+# bytes (_IB_DATA_BYTES_PER_WORD); IB packet sizes read 4x higher, and so does
+# max_fabricbw on host_ib jobs that fall back from arc to value.
 METRICS_CONTRACT_VERSION = 17
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
@@ -981,6 +982,7 @@ def _peak_interval_rate_from_cluster_mean(
   column_indices: Any,
   divisor: Any,
   max_sane: Any | None = None,
+  value_scale: float = 1.0,
 ) -> Any:
   """
   Peak rate from cluster means: prefer ``arc``, else dy/dt on ``value``.
@@ -995,6 +997,9 @@ def _peak_interval_rate_from_cluster_mean(
     column_indices (Any): Column indices passed to this helper.
     divisor (Any): Divisor passed to this helper.
     max_sane (Any | None): One of ``Any``, ``None``.
+    value_scale (float): Factor applied to the ``value`` fallback only, for
+      counters whose raw ``value`` unit differs from ``arc`` (host_ib
+      ``port_*_data`` words, ``_IB_DATA_BYTES_PER_WORD``).
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -1016,7 +1021,7 @@ def _peak_interval_rate_from_cluster_mean(
     if j < 0 or j >= cm.shape[1]:
       return None
     s = s + cm[:, j]
-  ratio = _per_interval_rate(s, u.t)
+  ratio = _per_interval_rate(s * value_scale, u.t)
   return _sane_peak_from_rates(ratio, divisor=divisor, max_sane=max_sane)
 
 
@@ -4662,7 +4667,8 @@ class max_fabricbw:
   """
   Maximum fabric bandwidth (MB/s) from host_ib or host_opa port data.
 
-  Uses the same MiB / OPA flit conversions as ``Metrics._job_arc_avg_ibbw``.
+  Uses the same MiB / OPA flit conversions as ``Metrics._job_arc_avg_ibbw``;
+  host_ib ``value`` paths first turn ``port_*_data`` words into bytes.
   """
 
   def compute_metric(self, u: Any) -> Any:
@@ -4679,6 +4685,7 @@ class max_fabricbw:
       >>> max_fabricbw().compute_metric(None)  # doctest: +SKIP
     """
     max_bw = 0
+    value_scale = 1.0
     schema, _stats, typename = resolve_get_type(u, (HOST_IB_TYPE,))
     if schema is not None and _schema_has_events(
       schema, "port_xmit_data", "port_rcv_data"
@@ -4688,6 +4695,7 @@ class max_fabricbw:
         schema["port_rcv_data"].index,
       )
       conv2mb = 1024 * 1024
+      value_scale = _IB_DATA_BYTES_PER_WORD
     else:
       schema, _stats, typename = resolve_get_type(u, (HOST_OPA_TYPE,))
       if schema is not None and _schema_has_events(
@@ -4707,7 +4715,7 @@ class max_fabricbw:
         tx, rx = schema["tx_bytes"].index, schema["rx_bytes"].index
         conv2mb = 1024 * 1024
     cluster_peak = _peak_interval_rate_from_cluster_mean(
-      u, typename, [tx, rx], conv2mb
+      u, typename, [tx, rx], conv2mb, value_scale=value_scale
     )
     if cluster_peak is not None:
       if cluster_peak > _MAX_FABRIC_BW_SANITY_MB_S:
@@ -4720,7 +4728,7 @@ class max_fabricbw:
         max_bw = max(max_bw, fin.max())
     if max_bw == 0:
       return None, typename, "MB/s"
-    value = max_bw / conv2mb
+    value = max_bw * value_scale / conv2mb
     if value > _MAX_FABRIC_BW_SANITY_MB_S:
       return None, typename, "MB/s"
     return value, typename, "MB/s"
