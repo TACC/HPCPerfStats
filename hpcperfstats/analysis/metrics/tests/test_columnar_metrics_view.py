@@ -122,3 +122,31 @@ def test_owned_time_axis_is_computed_once(monkeypatch):
   table.index.metrics_pivot("mem", ["used"])
   # Only the per-type host unique runs; the time axis is not recomputed.
   assert len(calls) == 2
+
+
+def test_pivot_cache_is_bounded_by_bytes_and_repivots_identically():
+  """Regression (hs04 OOM, 2026-11-21): job 100430 (162 hosts) held 24
+  pivot grids, 19.5 GiB, for the whole metrics run. The cache now evicts
+  the least recently used pivot past ``max_bytes``, keeps the newest one,
+  and an evicted type pivots again to the same values."""
+  from hpcperfstats.analysis.metrics.lib.columnar.kernels import TypePivots
+
+  table = _table()
+  events = {"cpu": ["user", "system", "idle"], "mem": ["used"]}
+  eager = {t: table.index.metrics_pivot(t, e) for t, e in events.items()}
+  pivots = TypePivots(table.index, events, max_bytes=1)
+  cpu, _ = pivots.get("cpu")
+  assert list(pivots._cache) == ["cpu"]  # newest kept though over the cap
+  pivots.get("mem")
+  assert list(pivots._cache) == ["mem"]  # cpu evicted
+  again, _ = pivots.get("cpu")
+  assert again is not cpu and pivots.pivots_built == 3
+  for key, grid in eager["cpu"].items():
+    assert np.array_equal(again[key], grid, equal_nan=True)
+  # A cap that fits both keeps both, and a hit pivots nothing.
+  roomy = TypePivots(table.index, events)
+  roomy.get("cpu"), roomy.get("mem"), roomy.get("cpu")
+  assert roomy.pivots_built == 2 and set(roomy._cache) == {"cpu", "mem"}
+  assert sum(roomy._bytes.values()) == sum(
+    v.nbytes for p in eager.values() for v in p.values()
+  )

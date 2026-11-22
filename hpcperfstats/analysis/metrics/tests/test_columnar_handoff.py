@@ -89,14 +89,17 @@ def test_handoff_put_counts_frame_index_bytes():
   assert h._total_bytes == _arrays_bytes(t.frame) + index_bytes
 
 
-def test_handoff_rows_and_total_bytes_peek_without_taking():
-  """Admission reads a finished job's frame size from the handoff (its
-  measured cost) without taking the table the prewarm still needs."""
+def test_handoff_size_and_total_bytes_peek_without_taking():
+  """Admission reads a finished job's frame rows and largest pivot grid from
+  the handoff (its measured cost) without taking the table the prewarm
+  still needs."""
   h = JobTableHandoff()
   t = _table("x", 25)
   h.put(t)
-  assert h.rows("x") == 25
-  assert h.rows("missing") == 0
   assert h.total_bytes() == _frame_bytes(t)
+  widest = max(len(evs) for evs in t.schema.values())
+  n_t = t.index.owned_time_axis().shape[0]
+  assert h.size("x") == (25, len(t.frame.hosts) * n_t * widest * 8)
+  assert h.size("missing") == (0, 0)
   assert h.pop("x") is t
-  assert h.rows("x") == 0 and h.total_bytes() == 0
+  assert h.size("x") == (0, 0) and h.total_bytes() == 0

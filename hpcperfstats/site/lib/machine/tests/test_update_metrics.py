@@ -6716,8 +6716,8 @@ def test_sliding_session_gets_memory_admission(monkeypatch):
     )
   )
   try:
-    assert seen["observe_rows"](SimpleNamespace(jid="obs")) == 1
-    assert seen["observe_rows"](SimpleNamespace(jid="none")) == 0
+    assert seen["observe_size"](SimpleNamespace(jid="obs")) == (1, 8)
+    assert seen["observe_size"](SimpleNamespace(jid="none")) == (0, 0)
   finally:
     HANDOFF.discard("obs")
 
@@ -6741,11 +6741,12 @@ def test_admission_telemetry_log_line(monkeypatch):
       "measured_bytes": 2 << 30,
       "budget_bytes": 10 << 30,
       "rows_per_host_minute": 312.0,
+      "grid_bytes_per_host_sq_minute": 60.0,
     }
   )
   assert lines == [
     "metrics admission: inflight=4 est_gib=1.0 measured_gib=2.0 "
-    "budget_gib=10.0 rows_per_host_min=312 "
+    "budget_gib=10.0 rows_per_host_min=312 grid_b_per_host2_min=60 "
     f"handoff_gib={update_metrics.HANDOFF.total_bytes() / (1 << 30):.1f} "
     "rss_gib=3.0"
   ]

@@ -140,3 +140,20 @@ def test_pick_pmc_typename_set_build_handles_sequence_typenames():
   """Iterable schema labels may stringify nested sequences; ``set()`` must not crash."""
   keys = ["intel_x86_pmc_gpr8", ["legacy", "label"], "intel_x86_pmc_gpr4"]
   assert utils_mod._pick_pmc_typename(keys) == "intel_x86_pmc_gpr8"
+
+
+def test_get_type_returns_read_only_views_not_copies():
+  """Regression (hs04 OOM, 2026-11-21): ``get_type`` copied every host's
+  grid with ``astype`` (3.3-3.9 GiB per call on a 162-host job). It now
+  returns read-only float64 views of the pivot grids, same values."""
+  job = _MockJob()
+  grid = job.hosts["host1"].stats["nvidia_gpu"]["gpu0"]
+  u = utils(job)
+  _, split = u.get_type("nvidia_gpu", aggregate=False)
+  view = split["host1"]["gpu0"]
+  assert np.shares_memory(view, grid) and not view.flags.writeable
+  assert np.array_equal(view, grid)
+  _, agg = u.get_type("nvidia_gpu", aggregate=True)
+  assert np.shares_memory(agg["host1"], grid)
+  # The caller's grid stays writable; only the returned view is locked.
+  assert grid.flags.writeable

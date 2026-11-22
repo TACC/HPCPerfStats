@@ -87,10 +87,15 @@ flowchart TD
 **Admission (sliding session).** A job starts only while a pool thread is
 free **and** its estimated memory fits: `MemoryCostModel.cost` =
 `estimated_sample_count` (`max(1, nhosts) x ceil(runtime / 60)`) x rows per
-host-minute x `METRICS_PEAK_BYTES_PER_ROW` (`lib/metrics_sliding_session.py`).
-Rows per host-minute is the p90 of recent finished jobs, never below
-`METRICS_ROWS_PER_HOST_MINUTE`, and a job whose metrics finished is costed at
-its measured frame rows from then on. The summed cost of every job in
+host-minute x `METRICS_PEAK_BYTES_PER_ROW` (`lib/metrics_sliding_session.py`),
+plus its metrics pivot grids: the largest grid `G` = host-minutes x `nhosts`
+x grid bytes per host-minute per host, and `min(PIVOT_CACHE_MAX_BYTES,
+G x PIVOTED_TYPES_PER_JOB)` held beside it. Hosts sample at unaligned
+offsets, so a grid spans the union of every host's sample times and grows
+with hosts squared. Both densities are the p90 of recent finished jobs,
+never below `METRICS_ROWS_PER_HOST_MINUTE` /
+`METRICS_GRID_BYTES_PER_HOST_SQ_MINUTE`, and a job whose metrics finished is
+costed at its measured frame rows from then on (its grids are gone). The summed cost of every job in
 flight (metrics or prewarm phase; artifact-only jobs count in full) must stay
 within `metrics_memory_budget_pct` of the memory base
 (cgroup `memory.max`, else host `MemTotal`), and memory headroom (cgroup

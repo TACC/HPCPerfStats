@@ -7684,6 +7684,7 @@ def _log_admission_telemetry(stats: dict[str, Any]) -> None:
     ...     "measured_bytes": 1,
     ...     "budget_bytes": 4,
     ...     "rows_per_host_minute": 312.0,
+    ...     "grid_bytes_per_host_sq_minute": 60.0,
     ...   }
     ... )
   """
@@ -7695,6 +7696,8 @@ def _log_admission_telemetry(stats: dict[str, Any]) -> None:
     f"measured_gib={stats['measured_bytes'] / gib:.1f} "
     f"budget_gib={stats['budget_bytes'] / gib:.1f} "
     f"rows_per_host_min={float(stats['rows_per_host_minute']):.0f} "
+    f"grid_b_per_host2_min="
+    f"{float(stats['grid_bytes_per_host_sq_minute']):.0f} "
     f"handoff_gib={HANDOFF.total_bytes() / gib:.1f} "
     f"rss_gib={process_memory.read_process_rss_bytes() / gib:.1f}",
     flush=True,
@@ -7907,7 +7910,7 @@ def _compute_jid_outcomes_sliding(
     head_wait_s=float(cfg.get_metrics_memory_budget_head_wait_s()),
     admit_ok=_MemoryHeadroomGate(cfg.get_metrics_admit_headroom_mib()),
     cost_model=_METRICS_COST_MODEL,
-    observe_rows=lambda ref: HANDOFF.rows(ref.jid),
+    observe_size=lambda ref: HANDOFF.size(ref.jid),
     telemetry_fn=_log_admission_telemetry,
   )
   timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)

@@ -26,10 +26,16 @@ Attributes:
   MODE_ORM: Plain ``SUM`` engine (``Coalesce(Sum, 0)``) used for GPU,
     per-device and type-detail aggregates.
   _COLUMNS: Float column names a kernel may reduce.
+  PIVOT_CACHE_MAX_BYTES: Grid bytes ``TypePivots`` keeps across reads of a
+    job's types. A grid is hosts x the union of every host's sample times x
+    events, so it grows with hosts squared; keeping every pivoted type of a
+    162-host job held 19.5 GiB (hpcperfstats04, 2026-11-21). An evicted
+    type is pivoted again on its next read, with the same values.
 """
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 
@@ -55,6 +61,7 @@ MODE_SQL = "sql"
 MODE_ORM = "orm"
 
 _COLUMNS = ("value", "arc", "delta")
+PIVOT_CACHE_MAX_BYTES = 2 << 30
 
 
 @dataclass(frozen=True)
@@ -1035,9 +1042,12 @@ class FrameIndex:
 
 class TypePivots:
   """
-  :meth:`FrameIndex.metrics_pivot` per type, computed on first use and kept.
+  :meth:`FrameIndex.metrics_pivot` per type, computed on first use.
 
   Complex metrics read a few types; a type nobody reads is never pivoted.
+  Pivots are kept least-recently-used first until their grids exceed
+  ``max_bytes``; the newest pivot is always kept, and an evicted type is
+  pivoted again on its next read with the same values.
 
   Attributes:
     index: FrameIndex the pivots read.
@@ -1045,11 +1055,18 @@ class TypePivots:
     types: Types whose pivot has hosts (job-owned rows of their events), in
       ``events`` order.
     _known: ``types`` as a set.
-    _cache: Type to ``(pivot, position of each host id in the pivot)``.
+    max_bytes: Grid bytes kept across types.
+    pivots_built: ``metrics_pivot`` calls so far (re-pivots included).
+    _cache: Type to ``(pivot, position of each host id in the pivot)``,
+      least recently read first.
+    _bytes: Grid bytes of each cached pivot.
   """
 
   def __init__(
-    self, index: FrameIndex, events: Mapping[str, Sequence[str]]
+    self,
+    index: FrameIndex,
+    events: Mapping[str, Sequence[str]],
+    max_bytes: int = PIVOT_CACHE_MAX_BYTES,
   ) -> None:
     """
     Find the pivotable types without pivoting any.
@@ -1057,6 +1074,7 @@ class TypePivots:
     Args:
       index (FrameIndex): Frame index of the job.
       events (Mapping[str, Sequence[str]]): Event column order per type.
+      max_bytes (int): Grid bytes kept across types.
 
     Returns:
       None
@@ -1074,7 +1092,12 @@ class TypePivots:
       t for t, ev in self.events.items() if ev and index.has_owned_rows(t, ev)
     ]
     self._known = set(self.types)
-    self._cache: dict[str, tuple[dict[str, object], dict[int, int]]] = {}
+    self.max_bytes = int(max_bytes)
+    self.pivots_built = 0
+    self._cache: OrderedDict[str, tuple[dict[str, object], dict[int, int]]] = (
+      OrderedDict()
+    )
+    self._bytes: dict[str, int] = {}
 
   def get(self, typ: str) -> tuple[dict[str, object], dict[int, int]] | None:
     """
@@ -1097,10 +1120,19 @@ class TypePivots:
     if typ not in self._known:
       return None
     hit = self._cache.get(typ)
-    if hit is None:
-      piv = self.index.metrics_pivot(typ, self.events[typ])
-      pos = {h: k for k, h in enumerate(piv["host_ids"].tolist())}
-      hit = self._cache[typ] = (piv, pos)
+    if hit is not None:
+      self._cache.move_to_end(typ)
+      return hit
+    piv = self.index.metrics_pivot(typ, self.events[typ])
+    self.pivots_built += 1
+    pos = {h: k for k, h in enumerate(piv["host_ids"].tolist())}
+    hit = self._cache[typ] = (piv, pos)
+    self._bytes[typ] = sum(
+      v.nbytes for v in piv.values() if isinstance(v, np.ndarray)
+    )
+    while len(self._cache) > 1 and sum(self._bytes.values()) > self.max_bytes:
+      oldest, _ = self._cache.popitem(last=False)
+      del self._bytes[oldest]
     return hit
 
 

@@ -1534,23 +1534,33 @@ class JobTableHandoff:
       self._total_bytes -= self._bytes.pop(str(jid), 0)
       return self._tables.pop(str(jid), None)
 
-  def rows(self, jid: str) -> int:
+  def size(self, jid: str) -> tuple[int, int]:
     """
-    Frame rows of the pending table for ``jid`` without taking it.
+    Frame rows and largest metrics pivot grid of the pending table for
+    ``jid``, without taking it.
+
+    A pivot grid (``FrameIndex.metrics_pivot`` ``per_host``) is hosts x
+    the owned time axis x the type's events, float64; the largest is
+    bounded by the job's hosts and its widest schema type.
 
     Args:
       jid (str): Job id.
 
     Returns:
-      int: Row count, or 0 when no table is pending (evicted or absent).
+      tuple[int, int]: ``(rows, grid bytes)``, ``(0, 0)`` when no table is
+      pending (evicted or absent).
 
     Examples:
-      >>> JobTableHandoff().rows("x")
-      0
+      >>> JobTableHandoff().size("x")
+      (0, 0)
     """
     with self._lock:
       table = self._tables.get(str(jid))
-      return int(table.index.n_rows) if table is not None else 0
+    if table is None:
+      return 0, 0
+    widest = max((len(evs) for evs in table.schema.values()), default=0)
+    n_t = int(table.index.owned_time_axis().shape[0])
+    return int(table.index.n_rows), len(table.frame.hosts) * n_t * widest * 8
 
   def total_bytes(self) -> int:
     """

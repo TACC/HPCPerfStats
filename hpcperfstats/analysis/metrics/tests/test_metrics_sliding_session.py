@@ -475,7 +475,9 @@ def test_continuous_session_stop_leaves_queued_work_for_later():
 # only, so a burst of large backfill jobs (each holding several copies of
 # its frame) took up to 188 GB RSS and the process was OOM-killed.
 
-_C = mss.METRICS_ROWS_PER_HOST_MINUTE * mss.METRICS_PEAK_BYTES_PER_ROW
+# Cost of one single-host host-minute (frame plus pivot grids); linear in
+# samples while the held grids stay under the pivot cache cap.
+_C = mss.MemoryCostModel().cost(SimpleNamespace(estimated_sample_count=1))
 
 
 class _CountdownAsync:
@@ -695,7 +697,7 @@ def test_cost_model_learns_denser_jobs_but_never_drops_below_floor():
   (single-host golden corpus) under-costed production jobs measured at
   238-335 rows per host-minute, so admission let in about twice the
   budget. The model floors at the production p90 and learns upward."""
-  model = mss.MemoryCostModel(rows_floor=300, bytes_per_row=100)
+  model = mss.MemoryCostModel(rows_floor=300, bytes_per_row=100, grid_floor=0)
   timed = {"runtime_s": 600.0}
   assert model.rows_per_host_minute() == 300
   for _ in range(20):
@@ -727,7 +729,7 @@ def _slow_prewarm_pool():
 def test_measured_frame_size_replaces_the_estimate():
   """Once a job's metrics finished, its in-flight cost is its frame rows x
   peak bytes per row, not the host-minute estimate."""
-  model = mss.MemoryCostModel(rows_floor=10, bytes_per_row=10)
+  model = mss.MemoryCostModel(rows_floor=10, bytes_per_row=10, grid_floor=0)
   refs = [_ref("a", 10, runtime_s=600.0), _ref("b", 10, runtime_s=600.0)]
   budget = 1500  # one estimate (10 x 10 x 10) fits, two do not
 
@@ -738,24 +740,24 @@ def test_measured_frame_size_replaces_the_estimate():
       primary=refs,
       memory_budget_bytes=budget,
       cost_model=model,
-      observe_rows=observe,
+      observe_size=observe,
     )
     return next(before for jid, before in pool.submits if jid == "b")
 
   # Estimate only: b waits for a's prewarm to finish as well.
   assert _run(None) == frozenset()
   # a's frame turned out to be 5 rows (50 bytes): b starts during its prewarm.
-  assert "pw:a" in _run(lambda ref: 5 if ref.jid == "a" else 0)
+  assert "pw:a" in _run(lambda ref: (5, 0) if ref.jid == "a" else (0, 0))
 
 
 @pytest.mark.machine_unit_mock
 def test_measured_rows_teach_the_session_model():
-  model = mss.MemoryCostModel(rows_floor=1, bytes_per_row=1)
+  model = mss.MemoryCostModel(rows_floor=1, bytes_per_row=1, grid_floor=0)
   _session(
     _TrackPool(),
     primary=[_ref("a", 4, runtime_s=240.0)],
     cost_model=model,
-    observe_rows=lambda ref: 400,
+    observe_size=lambda ref: (400, 0),
   )
   assert model.rows_per_host_minute() == 100
 
@@ -772,7 +774,7 @@ def test_admission_telemetry_reports_estimated_and_measured(monkeypatch):
     primary=[_ref("a", 10, runtime_s=600.0)],
     memory_budget_bytes=123,
     cost_model=model,
-    observe_rows=lambda ref: 7,
+    observe_size=lambda ref: (7, 0),
     telemetry_fn=seen.append,
   )
   assert seen
@@ -782,6 +784,42 @@ def test_admission_telemetry_reports_estimated_and_measured(monkeypatch):
     "measured_bytes",
     "budget_bytes",
     "rows_per_host_minute",
+    "grid_bytes_per_host_sq_minute",
   }
-  assert seen[0]["estimated_bytes"] == 10 * 100 * 10
+  assert seen[0]["estimated_bytes"] == model.cost(_ref("a", 10))
   assert seen[-1]["measured_bytes"] == 70 and seen[-1]["budget_bytes"] == 123
+
+
+def test_cost_prices_pivot_grids_that_grow_with_hosts_squared():
+  """Regression (hs04 OOM, 2026-11-21): job 100430 (162 hosts x 551 min,
+  24.7M rows) peaked at 28.9 GiB, 1254 B/row, against a 140 B/row cost.
+  Hosts sample at unaligned offsets, so each metrics pivot grid is hosts x
+  the union of every host's sample times x events: it grows with hosts
+  squared, and a per-row cost cannot see it."""
+  model = mss.MemoryCostModel(
+    rows_floor=1, bytes_per_row=0, grid_floor=60, pivot_cache_bytes=10**8
+  )
+  small = model.cost(_ref("s", 1000, nhosts=1))
+  assert small == 1000 * 60 * (1 + mss.PIVOTED_TYPES_PER_JOB)
+  # Same host-minutes on 100x the hosts: 100x the grid, cache capped.
+  wide = model.cost(_ref("w", 1000, nhosts=100))
+  assert wide == 1000 * 100 * 60 + 10**8
+  # The hs04 job: one grid about 0.8 GiB, plus a full pivot cache.
+  hs04 = mss.MemoryCostModel().cost(_ref("100430", 162 * 551, nhosts=162))
+  grid = 162 * 551 * 162 * mss.METRICS_GRID_BYTES_PER_HOST_SQ_MINUTE
+  assert grid > 0.8 * (1 << 30)
+  assert hs04 >= grid + mss.PIVOT_CACHE_MAX_BYTES
+
+
+def test_cost_model_learns_denser_grids_but_never_drops_below_floor():
+  model = mss.MemoryCostModel(rows_floor=1, bytes_per_row=0, grid_floor=60)
+  timed = {"runtime_s": 600.0, "nhosts": 10}
+  for _ in range(20):
+    model.observe(_ref("sparse", 100, **timed), 1, 100 * 10 * 6)
+  assert model.grid_bytes_per_host_sq_minute() == 60
+  for _ in range(200):
+    model.observe(_ref("dense", 100, **timed), 1, 100 * 10 * 600)
+  assert model.grid_bytes_per_host_sq_minute() == 600
+  # Unknown grid size (0) teaches rows only.
+  model.observe(_ref("rows", 100, **timed), 1, 0)
+  assert model.grid_bytes_per_host_sq_minute() == 600

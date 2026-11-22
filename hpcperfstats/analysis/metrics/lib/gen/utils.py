@@ -206,16 +206,37 @@ class utils:
       host_type_stats = host.stats.get(resolved_typename)
       if host_type_stats is None:
         continue
+      # Read-only views, not copies: the columnar view's grids are shared
+      # (TypePivots) and grow with hosts squared, and each copy of one cost
+      # GiB per reader on large jobs.
+      grids = [_float_view(host_type_stats[d]) for d in host_type_stats]
       if aggregate:
-        host_sum = 0
-        for devname in host_type_stats:
-          host_sum += host_type_stats[devname].astype(float)
-        stats[hostname] = host_sum
+        stats[hostname] = grids[0] if len(grids) == 1 else sum(grids)
       else:
-        stats[hostname] = {}
-        for devname in host_type_stats:
-          stats[hostname][devname] = host_type_stats[devname].astype(float)
+        stats[hostname] = dict(zip(host_type_stats, grids, strict=True))
     return schema, stats
+
+
+def _float_view(arr: Any) -> np.ndarray:
+  """
+  Read-only float64 view of a stats grid, copying only when the dtype differs.
+
+  Args:
+    arr (Any): Per-host stats grid (array-like).
+
+  Returns:
+    np.ndarray: float64 array sharing memory with ``arr`` when it already is
+    float64; a write through it raises instead of changing a shared grid.
+
+  Examples:
+    >>> a = np.zeros(3)
+    >>> v = _float_view(a)
+    >>> v.base is a, v.flags.writeable
+    (True, False)
+  """
+  view = np.asarray(arr, dtype=np.float64).view()
+  view.flags.writeable = False
+  return view
 
 
 def iter_queryset_values_dicts(
