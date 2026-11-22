@@ -1223,6 +1223,17 @@ test -n "$J" && python3 -c 'if 1:
     print(d["overall"], d["counts"])' "$J"
 ```
 
+**Superseded (c561-009 2026-11-22):** the `if 1:` form failed again with **`IndentationError: unexpected indent`** on a paste that changed the relative indentation of its lines (a nested `for` body), while the same block printed fine on another node. Uniform indent is not guaranteed. **Corrected:** write the program as `;`-separated statements on the first line and put every continuation line inside an open bracket, where Python ignores indentation. No `if`, no `for` block, no line that starts a statement. Test it as written, with `sed 's/^/  /'`, with leading spaces stripped, and with uneven indentation:
+
+```bash
+test -n "$J" && python3 -c 'import json, sys; d = json.load(
+    open(sys.argv[1])); print(d["overall"], d["counts"],
+    d["capability_slug"]); print("\n".join("%-8s %-16s %s %s" % (
+    c["status"], c["name"], "-" if c["ratio"] is None
+    else "%.3f" % c["ratio"], (c["reason"] or "")[:80])
+    for c in d["checks"]))' "$J"
+```
+
 ## Overlap
 
 - **`podman-runtime.mdc`** — rootless runtime, `/data` storage, project
