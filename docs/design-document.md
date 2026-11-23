@@ -192,7 +192,7 @@ It also includes **`rsync_data`** (via **`rsync_data_wrapper.sh`**, preferring g
 
 ### 7.2 Archive layout (listend)
 
-`listend.py` appends monitor payloads under the configured **archive directory**, per host, using a **`current`** file and **`$`-prefixed rotation** semantics. Epoch-named files and hardlink relationships are coordinated so **`sync_timedb`** can avoid racing active writes (see `hpcperfstats/dbload/lib/sync_timedb_archive_helpers.py` and listend tests). This is the **transport/archive contract** documented in `HPCPerfStats/monitor/cursor-rules/monitor-workspace-contract.mdc`.
+`listend.py` appends monitor payloads under the configured **archive directory**, per host, using a **`current`** file and **`$`-prefixed rotation** semantics. Epoch-named files and hardlink relationships are coordinated so **`sync_timedb`** can avoid racing active writes (see `hpcperfstats/dbload/lib/sync_timedb_archive_helpers.py` and listend tests). This is the **transport/archive contract** documented in `HPCPerfStats/monitor/cursor-rules/monitor-workspace-contract.mdc`. A per-host duplicate-sample guard keeps a redelivered or re-sent sample (same header line) from being appended twice, and an archive item whose consume channel already went away is left for the broker to redeliver instead of being archived (`listend-live-db-ingest-contract.mdc`).
 
 **Cluster syslog (pipeline):** under the same **`data_dir`** bind mount, **`logs/current/`** holds live per-host syslog files (date in the filename), and **`logs/log_archive/`** holds sealed **daily** **`*.tar.gz`** bundles—analogous in operator terms to **`archive_dir`’s `current`** workflow and **`daily_archive`** cold storage, though the on-disk mechanics differ.
 

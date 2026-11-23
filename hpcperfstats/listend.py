@@ -48,6 +48,17 @@ Attributes:
   _sticky_archive_tls: Per-archive-thread kept ``current`` fd and flock sidecar.
   _digit_epoch_link_cache: host_dir -> (digit epoch path, inode) for ``$`` rotate.
   _digit_epoch_link_cache_lock: Guard for the digit-link cache.
+  _DUP_GUARD_SLOTS: Header keys per generation dict in the per-host
+    duplicate-sample guard.
+  _DUP_GUARD_MAX_HOSTS: Host guards kept before the oldest is dropped.
+  _dup_guard_by_host: host_dir -> ``[current, previous]`` dicts of header
+    key -> appended span; written only by the host's affine archive thread.
+  _LISTEND_DUP_STAT_KEYS: Ordered counter names of the ``listend
+    dup_samples`` summary line.
+  _listend_dup_stats: Window counters for skipped duplicates and the
+    archive-then-requeue paths (stale acks, nacks).
+  _listend_dup_hosts: Hosts with a skipped duplicate in the window.
+  _listend_dup_stats_lock: Guard for the two dup-summary structures.
   _ARCHIVE_REORDER_HOLD_SECONDS: Per-host reorder hold when N>1 consumers.
   _AMQP_CONSUME_STAGGER_SECONDS: Delay before first consume per consumer index.
   _AmqpConsumeSession: Per-consumer connection, generation, and reconnect flag.
@@ -131,6 +142,27 @@ _DIGIT_EPOCH_NAME_MAX_ATTEMPTS = 10_000
 _sticky_archive_tls = local()
 _digit_epoch_link_cache: dict[str, tuple[str, int]] = {}
 _digit_epoch_link_cache_lock = Lock()
+# A key is one appended message (from its first new header). Two
+# generations keep the last 1x-2x this many messages per host: at one
+# message a minute, 4-8 h of history (broker redelivery lands within
+# minutes). Worst case about 52 KiB per host (about 200 MiB at 4000 hosts).
+_DUP_GUARD_SLOTS = 256
+_DUP_GUARD_MAX_HOSTS = 16_384
+_dup_guard_by_host: dict[str, list] = {}
+_LISTEND_DUP_STAT_KEYS = (
+  "skipped",
+  "redelivered",
+  "fresh",
+  "trimmed_msgs",
+  "skipped_bytes",
+  "stale_unarchived",
+  "stale_acks",
+  "backpressure_nacks",
+  "error_nacks",
+)
+_listend_dup_stats: dict[str, int] = dict.fromkeys(_LISTEND_DUP_STAT_KEYS, 0)
+_listend_dup_hosts: set[str] = set()
+_listend_dup_stats_lock = Lock()
 
 
 class ArchiveAppendResult(NamedTuple):
@@ -140,13 +172,15 @@ class ArchiveAppendResult(NamedTuple):
     host: FQDN host token from the monitor payload.
     path: Absolute path of the ``current`` file written.
     offset: Byte offset of this payload in ``path`` (0 for ``$`` rewrite).
-    length: UTF-8 byte length of the written payload.
+    length: Byte length written (0 when every sample was a duplicate).
+    dup_samples: Duplicate samples skipped by the archive guard.
   """
 
   host: str
   path: str
   offset: int
   length: int
+  dup_samples: int = 0
 
 
 class _AmqpConsumeSession:
@@ -219,6 +253,7 @@ class _ArchiveWorkItem(NamedTuple):
     session: Originating ``_AmqpConsumeSession``, or None (global ack).
     recv_monotonic: ``time.monotonic()`` when queued.
     ack_generation: Session generation at enqueue. ``0`` skips that check.
+    redelivered: AMQP ``redelivered`` flag of the delivery.
   """
 
   delivery_tag: Any
@@ -229,6 +264,7 @@ class _ArchiveWorkItem(NamedTuple):
   session: Any
   recv_monotonic: float
   ack_generation: int = 0
+  redelivered: bool = False
 
 
 _message_timestamps = deque()
@@ -849,6 +885,206 @@ def _monitor_payload_as_text(message: Any) -> str:
   return str(message)
 
 
+def _first_sample_header(payload: bytes, is_dollar: bool) -> tuple[int, bytes]:
+  """Return the offset and bytes of the payload's first sample header line.
+
+  A sample header is a digit-leading ``<epoch.frac> <jid> <host>`` line.
+  For a digit payload it is the first line after leading whitespace (O(1)).
+  A ``$`` payload walks its schema lines to the first plausible unix-second
+  line, skipping the ``1 <fqdn>`` host line.
+
+  Args:
+    payload (bytes): Raw AMQP body.
+    is_dollar (bool): True for a ``$`` schema-rotation payload.
+
+  Returns:
+    tuple[int, bytes]: ``(offset, line without newline)``, or ``(-1, b"")``
+    when the payload has no sample header.
+
+  Examples:
+    >>> _first_sample_header(b"\\n1700000000.5 1 h\\ncpu 1\\n", False)
+    (1, b'1700000000.5 1 h')
+    >>> _first_sample_header(b"$x\\n1 h\\n1700000000.5 1 h\\n", True)[0]
+    7
+    >>> _first_sample_header(b"foo bar h\\n", False)
+    (-1, b'')
+  """
+  n = len(payload)
+  i = 0
+  while i < n and payload[i] in b" \t\n\r\v\f":
+    i += 1
+  while i < n:
+    nl = payload.find(b"\n", i)
+    end = n if nl < 0 else nl
+    if 48 <= payload[i] <= 57:
+      line = payload[i:end]
+      if not is_dollar:
+        return i, line
+      token = line.split(None, 1)[0].decode("ascii", "replace")
+      if _parse_plausible_unix_seconds(token) is not None:
+        return i, line
+    if not is_dollar:
+      break
+    i = end + 1
+  return -1, b""
+
+
+def _sample_header_key(payload: bytes, pos: int) -> int:
+  """Return the guard key of the header line starting at ``pos``.
+
+  The key is the process-local hash of the whole header line, so samples
+  that share a timestamp but not a jid (shared-node bursts freeze one
+  timestamp across per-jid payloads) stay distinct.
+
+  Args:
+    payload (bytes): Raw AMQP body.
+    pos (int): Offset of a sample header line.
+
+  Returns:
+    int: ``hash`` of the header line bytes (without the newline).
+
+  Examples:
+    >>> _sample_header_key(b"1700000000.5 1 h\\ncpu 1\\n", 0) == hash(
+    ...   b"1700000000.5 1 h"
+    ... )
+    True
+  """
+  nl = payload.find(b"\n", pos)
+  return hash(payload[pos:] if nl < 0 else payload[pos:nl])
+
+
+def _dup_guard_for_new_host(host_dir: str) -> list:
+  """Create and register an empty duplicate guard for one host.
+
+  The guard is ``[current, previous]`` dicts of header key -> appended
+  span. ``append_monitor_payload_to_archive`` adds keys to ``current`` and
+  turns it into ``previous`` (dropping the older) once it holds
+  ``_DUP_GUARD_SLOTS`` keys. Past ``_DUP_GUARD_MAX_HOSTS`` hosts the
+  oldest-inserted host is dropped.
+
+  Args:
+    host_dir (str): Per-host archive directory (the guard key).
+
+  Returns:
+    list: The new ``[{}, {}]`` guard.
+
+  Examples:
+    >>> _dup_guard_for_new_host("/tmp/doctest-host")
+    [{}, {}]
+    >>> del _dup_guard_by_host["/tmp/doctest-host"]
+  """
+  if len(_dup_guard_by_host) >= _DUP_GUARD_MAX_HOSTS:
+    with contextlib.suppress(RuntimeError, StopIteration, KeyError):
+      del _dup_guard_by_host[next(iter(_dup_guard_by_host))]
+  guard: list = [{}, {}]
+  _dup_guard_by_host[host_dir] = guard
+  return guard
+
+
+def _dup_guard_new_bytes_offset(
+  payload: bytes, pos: int, guard: list, key: int
+) -> int:
+  """Return where the not-yet-archived part of ``payload`` starts.
+
+  Starting at the first header, a header already recorded with span ``s``
+  means ``payload[pos:pos+s]`` was archived before (a redelivered or
+  re-sent message, or a merged re-send that begins with it); continue at
+  the next header after that span. The first unseen header ends the walk,
+  so the result is a sample boundary. A span that does not end on a
+  header keeps the bytes (never drops an unproven sample).
+
+  Args:
+    payload (bytes): Raw AMQP body.
+    pos (int): Offset of the first sample header line.
+    guard (list): The host's ``[current, previous]`` dicts.
+    key (int): ``_sample_header_key(payload, pos)``.
+
+  Returns:
+    int: 0 when nothing is a duplicate, ``len(payload)`` when everything
+    is, else the offset of the first new byte (a newline or header).
+
+  Examples:
+    >>> body = b"\\n1700000000.5 1 h\\ncpu 1\\n"
+    >>> k = _sample_header_key(body, 1)
+    >>> _dup_guard_new_bytes_offset(body, 1, [{}, {}], k)
+    0
+    >>> newer = b"\\n1700000060.5 1 h\\ncpu 2\\n"
+    >>> seen = [{}, {k: len(body) - 1}]
+    >>> _dup_guard_new_bytes_offset(body + newer, 1, seen, k) == len(body)
+    True
+  """
+  n = len(payload)
+  start = 0
+  current, previous = guard
+  while True:
+    span = current.get(key) or previous.get(key)
+    if not span:
+      return start
+    end = pos + span
+    if end >= n:
+      return n
+    nxt = end
+    while nxt < n and payload[nxt] in b" \t\n\r\v\f":
+      nxt += 1
+    if nxt >= n:
+      return n
+    if not 48 <= payload[nxt] <= 57:
+      return start
+    start, pos = end, nxt
+    key = _sample_header_key(payload, pos)
+
+
+def _note_listend_dup_event(host: str = "", **counts: int) -> None:
+  """Add to the duplicate/requeue diagnosis counters.
+
+  Called only on rare paths (duplicate found, stale ack, nack), never per
+  normal message. ``_emit_listend_dup_summary`` logs and resets the
+  counters once per idle-monitor window.
+
+  Args:
+    host (str): Host to add to the window's duplicate-host set, or empty.
+    **counts (int): Amount to add per ``_LISTEND_DUP_STAT_KEYS`` name.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _note_listend_dup_event(error_nacks=0)
+  """
+  with _listend_dup_stats_lock:
+    for name, count in counts.items():
+      _listend_dup_stats[name] += count
+    if host:
+      _listend_dup_hosts.add(host)
+
+
+def _emit_listend_dup_summary() -> None:
+  """Log and reset the window's duplicate/requeue counters when non-zero.
+
+  One line per idle-monitor window, for example
+  ``listend dup_samples skipped=4 redelivered=4 fresh=0 trimmed_msgs=0
+  skipped_bytes=812 hosts=1 stale_unarchived=2 stale_acks=1
+  backpressure_nacks=0 error_nacks=0``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _emit_listend_dup_summary()
+  """
+  with _listend_dup_stats_lock:
+    stats = dict(_listend_dup_stats)
+    hosts = len(_listend_dup_hosts)
+    for k in _listend_dup_stats:
+      _listend_dup_stats[k] = 0
+    _listend_dup_hosts.clear()
+  if not any(stats.values()):
+    return
+  fields = " ".join(f"{k}={stats[k]}" for k in _LISTEND_DUP_STAT_KEYS[:5])
+  tail = " ".join(f"{k}={stats[k]}" for k in _LISTEND_DUP_STAT_KEYS[5:])
+  log_print(f"listend dup_samples {fields} hosts={hosts} {tail}")
+
+
 def _release_sticky_archive_writer(*, unlink_sidecar: bool = True) -> None:
   """Close this thread's kept ``current`` fd and optional flock sidecar.
 
@@ -1018,11 +1254,18 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
   kept O_APPEND fd and sticky flock sidecar. ``$`` rotate still uses
   ``file_write_lock``.
 
+  Duplicate guard: samples this host already appended (same header line,
+  looked up in the host's ring) are not written again. The common case is
+  one O(1) ring lookup and a single write of the whole body; a body that
+  begins with already-archived samples writes only its new suffix. A ``$``
+  whose sample was already archived is skipped without rotating.
+
   Args:
     message (Any): Monitor payload ``str`` or AMQP ``bytes``.
 
   Returns:
-    ArchiveAppendResult: Host, path, byte offset, and byte length.
+    ArchiveAppendResult: Host, path, byte offset, byte length (``0`` when
+    every sample was a duplicate) and skipped duplicate samples.
 
   Raises:
     RuntimeError: When ``$`` rotate cannot hardlink ``current`` safely.
@@ -1034,21 +1277,54 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
     >>> callable(append_monitor_payload_to_archive)
     True
   """
-  from hpcperfstats.dbload.lib.listend_db_ingest import (
-    parse_host_from_monitor_payload,
-  )
-
   payload_bytes = _coerce_monitor_payload(message)
   if not payload_bytes:
     raise ValueError("Empty message body")
-  host = parse_host_from_monitor_payload(payload_bytes)
   is_dollar = payload_bytes.startswith(b"$")
+  header_pos, header = _first_sample_header(payload_bytes, is_dollar)
+  # A digit payload's host is field 3 of the header line already split here
+  # (same token parse_host_from_monitor_payload returns).
+  fields = () if is_dollar else header.split(None, 3)
+  if len(fields) >= 3:
+    host = fields[2].decode("utf-8", errors="replace")
+  else:
+    from hpcperfstats.dbload.lib.listend_db_ingest import (
+      parse_host_from_monitor_payload,
+    )
+
+    host = parse_host_from_monitor_payload(payload_bytes)
+  key = hash(header) if header_pos >= 0 else None
 
   # A `$` payload is the monitor schema dump sent on every schema rotation
   # (daemon start, config reload, job end, MONITOR_DAEMON_SCHEMA_ROTATE_SEC).
   # A failed send is later resent from the ring buffer or dumpfile.
   host_dir = os.path.join(cfg.get_archive_dir_path(), host)
   current_path = os.path.join(host_dir, "current")
+  guard = _dup_guard_by_host.get(host_dir)
+  dup_samples = 0
+  if guard is not None and (key in guard[0] or key in guard[1]):
+    new_from = _dup_guard_new_bytes_offset(
+      payload_bytes, header_pos, guard, key
+    )
+    if is_dollar and new_from < len(payload_bytes):
+      new_from = 0
+    if new_from:
+      dup_samples = max(
+        1,
+        payload_bytes.count(b" %s\n" % host.encode(), header_pos, new_from),
+      )
+      all_dup = new_from == len(payload_bytes)
+      _note_listend_dup_event(
+        host,
+        skipped=dup_samples,
+        skipped_bytes=new_from,
+        trimmed_msgs=int(not all_dup),
+      )
+      if all_dup:
+        return ArchiveAppendResult(host, current_path, 0, 0, dup_samples)
+      payload_bytes = payload_bytes[new_from:]
+      header_pos, header = _first_sample_header(payload_bytes, False)
+      key = hash(header)
   payload_len = len(payload_bytes)
   write_offset = 0
   unlinked_current = False
@@ -1109,6 +1385,13 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
       current_path,
       payload_bytes,
     )
+  if key is not None:
+    if guard is None:
+      guard = _dup_guard_for_new_host(host_dir)
+    current = guard[0]
+    current[key] = payload_len - header_pos
+    if len(current) >= _DUP_GUARD_SLOTS:
+      guard[0], guard[1] = {}, current
   _enqueue_recent_host_update(host)
   if is_dollar:
     try:
@@ -1141,6 +1424,7 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
     path=current_path,
     offset=int(write_offset),
     length=int(payload_len),
+    dup_samples=dup_samples,
   )
 
 
@@ -1868,6 +2152,7 @@ def _request_db_backpressure_pause(channel: Any, delivery_tag: Any) -> None:
     # Pause duration is reported on the 10-minute idle-monitor line
     # (pause_s / paused) - no per-flap INFO here.
   _db_backpressure_pause = True
+  _note_listend_dup_event(backpressure_nacks=1)
   try:
     if hasattr(channel, "basic_nack") and delivery_tag is not None:
       channel.basic_nack(delivery_tag=delivery_tag, requeue=True)
@@ -2098,6 +2383,7 @@ def _threadsafe_basic_ack(
     session, ack_generation=ack_generation
   )
   if snapshot is None:
+    _note_listend_dup_event(stale_acks=1)
     return
   conn, ch, gen = snapshot
 
@@ -2113,6 +2399,7 @@ def _threadsafe_basic_ack(
       True
     """
     if _consume_amqp_callback_stale(conn, gen, session):
+      _note_listend_dup_event(stale_acks=1)
       return
     try:
       ch.basic_ack(delivery_tag=delivery_tag)
@@ -2204,12 +2491,53 @@ def _threadsafe_basic_nack(
       log_print(f"add_callback_threadsafe nack failed: {exc}")
 
 
+def _after_archive_ack(result: ArchiveAppendResult, redelivered: bool) -> None:
+  """Attribute skipped duplicates, then best-effort live-DB submit.
+
+  Runs after the archive append and its ack. Duplicates count as
+  ``redelivered`` (broker redelivery) or ``fresh`` (a re-published copy).
+  Nothing is submitted when every sample was a duplicate. Errors are
+  swallowed (logged under ``DEBUG``): the message is already acked.
+
+  Args:
+    result (ArchiveAppendResult): Outcome of the archive append.
+    redelivered (bool): AMQP ``redelivered`` flag of the delivery.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _after_archive_ack(ArchiveAppendResult("h", "/x", 0, 0), False)
+  """
+  try:
+    if result.dup_samples:
+      key = "redelivered" if redelivered else "fresh"
+      _note_listend_dup_event(**{key: result.dup_samples})
+    if not result.length:
+      return
+    from hpcperfstats.dbload.lib.listend_db_ingest import (
+      submit_listend_db_ingest,
+    )
+
+    submit_listend_db_ingest(
+      result.host,
+      "",
+      archive_path=result.path,
+      offset=result.offset,
+      length=result.length,
+    )
+  except Exception as submit_err:
+    if DEBUG:
+      log_print(f"listend db ingest submit error: {submit_err}")
+
+
 def _archive_and_submit_then_ack(
   delivery_tag: Any,
   message: Any,
   *,
   session: _AmqpConsumeSession | None = None,
   ack_generation: int = 0,
+  redelivered: bool = False,
 ) -> None:
   """
   Archive payload, threadsafe ack, then best-effort live-DB submit.
@@ -2218,6 +2546,11 @@ def _archive_and_submit_then_ack(
   a successful archive append. Live-DB enqueue after ack holds an archive
   fd plus byte range; this path must not decode the full sample.
 
+  An item whose consume session was rebound or asked to reconnect after
+  enqueue is not archived: its ack would be dropped and the broker
+  redelivers the message once that channel closes, so archiving it here
+  would write it twice.
+
   Args:
     delivery_tag (Any): AMQP delivery tag.
     message (Any): Monitor payload ``str`` or AMQP ``bytes``.
@@ -2225,6 +2558,7 @@ def _archive_and_submit_then_ack(
       ``None`` to ack on the process-global connection.
     ack_generation (int): Generation captured when the message was
       enqueued. ``0`` keeps the schedule-time stale check only.
+    redelivered (bool): AMQP ``redelivered`` flag of the delivery.
 
   Returns:
     None
@@ -2234,31 +2568,25 @@ def _archive_and_submit_then_ack(
     True
   """
   ack_channel = session.channel if session is not None else _amqp_channel
+  if session is not None:
+    live_gen, reconnect = session.generation, session.reconnect_requested
+  else:
+    live_gen, reconnect = _amqp_connection_generation, _amqp_reconnect_requested
+  if ack_generation and (live_gen != ack_generation or reconnect):
+    _note_listend_dup_event(stale_unarchived=1)
+    return
   try:
     result = append_monitor_payload_to_archive(message)
     _threadsafe_basic_ack(
       delivery_tag, session=session, ack_generation=ack_generation
     )
-    try:
-      from hpcperfstats.dbload.lib.listend_db_ingest import (
-        submit_listend_db_ingest,
-      )
-
-      submit_listend_db_ingest(
-        result.host,
-        "",
-        archive_path=result.path,
-        offset=result.offset,
-        length=result.length,
-      )
-    except Exception as submit_err:
-      if DEBUG:
-        log_print(f"listend db ingest submit error: {submit_err}")
+    _after_archive_ack(result, redelivered)
   except Exception as e:
     if _is_amqp_channel_or_connection_dead(e, ack_channel):
       _request_amqp_full_reconnect(ack_channel, str(e), session=session)
       return
     log_print(f"Error processing message; leaving on server: {e}")
+    _note_listend_dup_event(error_nacks=1)
     _threadsafe_basic_nack(
       delivery_tag,
       requeue=True,
@@ -2342,6 +2670,7 @@ def _archive_worker_main(worker_idx: int, work_queue: queue.Queue) -> None:
         work.message,
         session=work.session,
         ack_generation=work.ack_generation,
+        redelivered=work.redelivered,
       )
     finally:
       _archive_inflight_add(-1)
@@ -2535,6 +2864,7 @@ def _dispatch_to_archive_pool(
   session: _AmqpConsumeSession | None = None,
   unix_second: int | None = None,
   is_dollar: bool = False,
+  redelivered: bool = False,
 ) -> None:
   """
   Put an ``_ArchiveWorkItem`` on the host-affine archive queue.
@@ -2546,6 +2876,7 @@ def _dispatch_to_archive_pool(
     session (_AmqpConsumeSession | None): Originating consume session.
     unix_second (int | None): Peeked sample unix second, or None.
     is_dollar (bool): True when the payload is a ``$`` rotation.
+    redelivered (bool): AMQP ``redelivered`` flag of the delivery.
 
   Returns:
     None
@@ -2574,6 +2905,7 @@ def _dispatch_to_archive_pool(
       session=session,
       recv_monotonic=time.monotonic(),
       ack_generation=ack_generation,
+      redelivered=redelivered,
     )
   )
 
@@ -2611,6 +2943,7 @@ def on_message(
     True
   """
   delivery_tag = getattr(method_frame, "delivery_tag", None)
+  redelivered = bool(getattr(method_frame, "redelivered", False))
   try:
     payload = (
       body
@@ -2646,33 +2979,21 @@ def on_message(
         session=_current_amqp_session(),
         unix_second=unix_second,
         is_dollar=is_dollar,
+        redelivered=redelivered,
       )
       return
 
     # Sync path (tests / pool not started): archive -> ack -> submit.
     result = append_monitor_payload_to_archive(payload)
     channel.basic_ack(delivery_tag=delivery_tag)
-    try:
-      from hpcperfstats.dbload.lib.listend_db_ingest import (
-        submit_listend_db_ingest,
-      )
-
-      submit_listend_db_ingest(
-        result.host,
-        "",
-        archive_path=result.path,
-        offset=result.offset,
-        length=result.length,
-      )
-    except Exception as submit_err:
-      if DEBUG:
-        log_print(f"listend db ingest submit error: {submit_err}")
+    _after_archive_ack(result, redelivered)
   except Exception as e:
     # Never ack on failure. A dead channel cannot nack; reconnect instead.
     if _is_amqp_channel_or_connection_dead(e, channel):
       _request_amqp_full_reconnect(channel, str(e))
       return
     log_print(f"Error processing message; leaving on server: {e}")
+    _note_listend_dup_event(error_nacks=1)
     try:
       if hasattr(channel, "basic_nack") and delivery_tag is not None:
         channel.basic_nack(delivery_tag=delivery_tag, requeue=True)
@@ -2717,6 +3038,9 @@ def _consume_window_totals(now: float) -> tuple[int, int, int]:
 def _emit_idle_monitor_report(now: float) -> None:
   """
   Log one 10-minute consume/queue/unlink status line when the window elapsed.
+
+  Also emits the ``listend dup_samples`` summary for the same window when
+  any duplicate or requeue counter is non-zero.
 
   Args:
     now (float): Unix time of this idle-monitor sample.
@@ -2765,6 +3089,7 @@ def _emit_idle_monitor_report(now: float) -> None:
   log_print(
     f"Messages consumed in the last 10 minutes: {count_last_10}; messages waiting to be consumed: {queue_depth}; current file unlinks (last 10 minutes): {unlink_count_last_10}; unlink_bytes_last_10={unlink_bytes_last_10}; average unlink file size: {avg_unlink_bytes} bytes{db_suffix}{archive_suffix}"
   )
+  _emit_listend_dup_summary()
 
   _last_idle_report_time = now
 
