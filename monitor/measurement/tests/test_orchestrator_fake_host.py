@@ -34,7 +34,7 @@ case "$1" in
   is-active) alive ;;
   is-enabled) exit 1 ;;
   stop)
-    if grep -q hpcperfstatsd-profiler "$FAKE_DROPIN" 2>/dev/null && alive; then
+    if grep -q profiler/hpcperfstatsd "$FAKE_DROPIN" 2>/dev/null && alive; then
       now="$(date +%s.%N)"
       printf '%s c1 hpcperfstatsd[1]: metric-profiler: cycles=4 tracked_metrics=1 tracked_types=1 overflow=0\n' "$now" >> "$S/journal"
       printf '%s c1 hpcperfstatsd[1]: metric-profiler:type=host_cpu calls=4 wall_ns=4000000 cpu_ns=2000000 wait_ns=2000000 avg_wall_ns=1000000\n' "$now" >> "$S/journal"
@@ -116,7 +116,7 @@ def fake_host(tmp_path, monkeypatch):
              "DROPIN_PATH": str(tmp_path / "dropin" / "90-measure.conf"),
              "MEASURE_DIR": str(tmp_path / "measure"),
              "MEASURE_CONF": str(tmp_path / "measure" / "hpcperfstats.conf"),
-             "PROFILER_BINARY": str(tmp_path / "measure" / "hpcperfstatsd-profiler"),
+             "PROFILER_BINARY": str(tmp_path / "measure" / "profiler" / "hpcperfstatsd"),
              "DISCOVERY_SECONDS": 1, "TYPES_WAIT_SECONDS": 10,
              "SYSFS_CPU": str(fake_cpufreq(tmp_path / "sys_cpu")),
              "PROC_ROOT": str(tmp_path / "proc"), "BUSY_PROBE_SECONDS": 0.05,
@@ -318,3 +318,25 @@ def test_daemon_binary_swapped_mid_run_aborts(fake_host, monkeypatch):
     assert len(ran) == 2, ran
     assert f"changed during leg {ran[1]}" in str(err.value) and "rpm -qa --last" in str(err.value)
     assert fake_host["site"].read_text() == SITE  # restore still ran
+
+
+def test_full_profile_is_built_once_not_after_every_leg(fake_host, monkeypatch):
+    """Rebuilding profile.json after each leg reloads every FWQ file; on a ~400-CPU node that
+    grew to minutes per leg late in the run and could push a 24 h allocation over."""
+    calls = []
+    real = orchestrator.profile_report.write_outputs
+
+    def counting(run_dir):
+        calls.append(run_dir)
+        return real(run_dir)
+    monkeypatch.setattr(orchestrator.profile_report, "write_outputs", counting)
+    args = orchestrator.build_parser().parse_args([
+        "--rpm", str(fake_host["rpm"]), "--out", str(fake_host["run"]), "--leg-seconds", "2",
+        "--settle-seconds", "1", "--fwq-seconds", "1", "--blocks", "1", "--seed", "5",
+        "--fwq-quantum-us", "200", "--force", "--rmq-mgmt-port", "1", "--fwq-cpus", "0",
+        "--governors", "performance"])
+    assert orchestrator.Run(args).execute() == 0
+    assert len(calls) == 1
+    legs = sorted((fake_host["run"] / "raw" / "legs").iterdir())
+    assert legs and all((leg / "summary.json").is_file() for leg in legs)
+    assert json.loads((fake_host["run"] / "profile.json").read_text())["run_complete"] is True

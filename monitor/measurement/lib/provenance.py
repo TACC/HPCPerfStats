@@ -21,6 +21,9 @@ from .cadence import parse_monitor_conf
 
 _SECRET_RE = re.compile(r"^(\s*(?:password|user)\s*[:= \t]\s*)(\S.*)$", re.I | re.M)
 GPU_LSPCI_RE = re.compile(r"(VGA compatible|3D controller|Display controller)", re.I)
+# Services that hold PMU counters beside the daemon. 3.1 core and SCF reads are multiplexed and
+# scaled by time_running, so an active sharer changes what each read costs and must be recorded.
+PMU_SHARER_UNITS = ("nvidia-powerd",)
 
 
 def run(cmd: list[str], timeout: float = 20.0) -> dict[str, Any]:
@@ -99,8 +102,17 @@ def host_info() -> dict[str, Any]:
         "os_release": _read("/etc/os-release"),
         "cpufreq_governor": gov.strip() if gov else None,
         "perf_event_paranoid": (_read("/proc/sys/kernel/perf_event_paranoid") or "").strip() or None,
-        "gpus": gpus, "nvidia_smi": smi,
+        "gpus": gpus, "nvidia_smi": smi, "pmu_sharers": pmu_sharers(),
     }
+
+
+def pmu_sharers() -> dict[str, str | None]:
+    """``systemctl is-active`` state of each known PMU-sharing service (None: no systemctl)."""
+    out: dict[str, str | None] = {}
+    for unit in PMU_SHARER_UNITS:
+        res = run(["systemctl", "is-active", unit])
+        out[unit] = (res.get("stdout") or "").strip() or None
+    return out
 
 
 def git_info(checkout: Path) -> dict[str, Any]:

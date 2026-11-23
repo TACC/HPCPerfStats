@@ -84,3 +84,23 @@ def test_daemon_binary_check_refuses_swapped_or_missing_binary(tmp_path):
     with pytest.raises(orchestrator.PreflightError) as err:
         orchestrator.check_daemon_binary(str(binary), sha, "b3-CADENCE-60.0", "before")
     assert "missing" in str(err.value)
+
+
+def test_pmu_sharers_records_systemctl_state(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, timeout=20.0):
+        calls.append(cmd)
+        return {"ok": False, "rc": 3, "stdout": "inactive\n"}
+    monkeypatch.setattr(orchestrator.provenance, "run", fake_run)
+    assert orchestrator.provenance.pmu_sharers() == {"nvidia-powerd": "inactive"}
+    assert calls == [["systemctl", "is-active", "nvidia-powerd"]]
+    monkeypatch.setattr(orchestrator.provenance, "run",
+                        lambda cmd, timeout=20.0: {"ok": False, "error": "not found"})
+    assert orchestrator.provenance.pmu_sharers() == {"nvidia-powerd": None}
+
+
+def test_profiler_binary_keeps_the_daemon_comm():
+    """The kernel comm is the basename cut to 15 chars; `hpcperfstatsd-profiler` became
+    `hpcperfstatsd-p`, so the sampler never found the PROFILE leg's daemon."""
+    assert orchestrator.Path(orchestrator.PROFILER_BINARY).name[:15] == orchestrator.DAEMON_COMM

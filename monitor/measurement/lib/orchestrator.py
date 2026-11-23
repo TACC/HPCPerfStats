@@ -27,8 +27,9 @@ Why a conf copy and not ``-q``: the daemon parses the CLI first and the conf fil
 (monitor.c main), so the conf ``queue`` key would override ``-q`` and partial payloads would
 reach the production queue. A test pins that ordering.
 
-The site conf is never edited in place: it is saved before ``rpm -Uvh`` (the spec lists it
-without %config, so the RPM overwrites it), written back right after, and restored on exit.
+The site conf is never edited in place: it is saved before ``rpm -Uvh`` (3.1 lists it as
+%config(noreplace), so rpm may keep it and leave ``.rpmnew``; RPMs built from older specs
+overwrite it), written back right after, and restored on exit.
 ``restore.sh`` with the same steps is written into the result dir before any change.
 """
 
@@ -54,6 +55,7 @@ from . import (
     driver_map,
     fwq,
     journal_types,
+    leg_summary,
     profile_report,
     provenance,
     rmq_cleanup,
@@ -84,7 +86,9 @@ UNIT_PROPS = ("ExecStart", "Nice", "IOSchedulingClass", "IOSchedulingPriority", 
 # --profile-collectors: an --enable-metric-profiler build of the same sources, run for one
 # ALL-configuration leg; its metric-profiler: report (cumulative, emitted at shutdown) ranks
 # collector types. Instrumented build: never a headline number.
-PROFILER_BINARY = MEASURE_DIR + "/hpcperfstatsd-profiler"
+# Basename stays hpcperfstatsd: the sampler finds the daemon by comm (DAEMON_COMM).
+PROFILER_BINARY = MEASURE_DIR + "/profiler/hpcperfstatsd"
+DAEMON_COMM = "hpcperfstatsd"
 DISCOVERY_SECONDS = 120
 TYPES_WAIT_SECONDS = 120
 SYSFS_CPU = cpufreq.SYSFS_CPU
@@ -706,7 +710,7 @@ class Run:
     def start_sampler(self, path: Path, seconds: int) -> subprocess.Popen:
         cmd = ["taskset", "-c", str(self.harness_cpu), sys.executable,
                str(MEASUREMENT_ROOT / "bin" / "sample_proc.py"), "--out", str(path),
-               "--duration", str(seconds), "--comm", "hpcperfstatsd", "--amqp-port",
+               "--duration", str(seconds), "--comm", DAEMON_COMM, "--amqp-port",
                str(self.amqp_port), "--cpufreq-root", str(SYSFS_CPU)]
         if shutil.which("taskset") is None:
             cmd = cmd[3:]
@@ -795,7 +799,7 @@ class Run:
         else:
             binary = DAEMON
             if leg["kind"] == "PROFILE":
-                Path(MEASURE_DIR).mkdir(parents=True, exist_ok=True)
+                Path(PROFILER_BINARY).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(self.profiler_src, PROFILER_BINARY)
                 os.chmod(PROFILER_BINARY, 0o755)
                 binary = PROFILER_BINARY
@@ -918,6 +922,22 @@ class Run:
                "started": self.started}
         (self.raw / "run.json").write_text(json.dumps(doc, indent=2, default=str) + "\n")
 
+    def summarize_leg(self, leg_id: str) -> dict[str, Any] | None:
+        """Summarize one finished leg for the per-leg checks.
+
+        The full profile (every leg, every FWQ file) is built once, after cleanup: rebuilding it
+        after each leg grew with the leg count and the CPU count and could add hours on a large
+        node.
+        """
+        leg_dir = self.raw / "legs" / leg_id
+        try:
+            summary = leg_summary.summarize_leg(leg_dir)
+        except Exception as err:  # a report bug must not stop the measurement
+            print(f"WARN: summary of leg {leg_id} failed: {err}", file=sys.stderr)
+            return None
+        (leg_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+        return summary
+
     def summarize(self) -> None:
         try:
             profile_report.write_outputs(self.out)
@@ -964,9 +984,8 @@ class Run:
                 print(f"[{time.strftime('%H:%M:%S')}] leg {leg['leg_id']}", flush=True)
                 check_daemon_binary(DAEMON, self.daemon_sha256, leg["leg_id"], "before")
                 self.run_leg(leg, self.plan)
-                self.summarize()
+                summary = self.summarize_leg(leg["leg_id"]) or {}
                 check_daemon_binary(DAEMON, self.daemon_sha256, leg["leg_id"], "during")
-                summary = json.loads((self.raw / "legs" / leg["leg_id"] / "summary.json").read_text())
                 if summary.get("extra_types"):
                     raise PreflightError(f"leg {leg['leg_id']}: the daemon kept types it was told to "
                                          f"disable: {','.join(summary['extra_types'])}; aborting")
@@ -980,7 +999,6 @@ class Run:
                     self.flags.setdefault("not_idle_reasons", []).append(
                         f"leg {leg['leg_id']} contaminated by outside load")
                     self.write_run_json()
-                    self.summarize()
             self.state["completed"] = True
         finally:
             self.cleanup()

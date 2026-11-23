@@ -16,7 +16,8 @@ CONF = ("server stats.{site}.tacc.utexas.edu\nqueue {site}\nport 5672\nuser REDA
 
 
 def _run(tmp: Path, name: str, site: str, leg_seconds: int = 1800, buf: int = 6,
-         fit: list | None = None, shared: bool = False, groups=("arm_cpu", "filesystem")) -> Path:
+         fit: list | None = None, shared: bool = False, groups=("arm_cpu", "filesystem"),
+         version: str = "3.1", powerd: str = "inactive") -> Path:
     raw = tmp / name / "raw"
     raw.mkdir(parents=True)
     legs = [{"kind": k, "leg_id": f"b1-{k}-"} for k in ("OFF", "NONE", "ALL")]
@@ -29,8 +30,11 @@ def _run(tmp: Path, name: str, site: str, leg_seconds: int = 1800, buf: int = 6,
         "flags": {}}))
     (raw / "provenance.json").write_text(json.dumps({
         "host": {"short": name, "kernel": "k", "os_release": 'PRETTY_NAME="Rocky Linux 9.7"\n',
-                 "nproc_online": 144, "numa_nodes": 2, "mem_total_kib": 2 ** 28, "gpus": []},
+                 "nproc_online": 144, "numa_nodes": 2, "mem_total_kib": 2 ** 28, "gpus": [],
+                 "pmu_sharers": {"nvidia-powerd": powerd}},
         "build": {"conf_redacted": CONF.format(site=site, buf=buf),
+                  "rpm_qip": {"stdout": f"Name        : hpcperfstatsd\nVersion     : {version}\n"
+                                        "Release     : 1.el9\n"},
                   "build_capabilities": {"capability_slug": "s", "configure": {
                       "shared_node_multi_jid": shared}},
                   "git": {"commit": "dabedea0fc986cb5", "dirty": False}}}))
@@ -83,3 +87,20 @@ def test_cli_exit_codes_and_out_file(tmp_path):
 def test_parse_conf_drops_comments_and_keeps_last_value():
     conf = run_compare.parse_conf("# c\nsample_freq 60\n\nsample_freq 30\nflag\n")
     assert conf == {"sample_freq": "30", "flag": ""}
+
+
+def test_mixed_monitor_versions_are_not_comparable(tmp_path):
+    """Nov 9-10 ran 3.0 (LIKWID, double-collect timer); 3.1 reruns must not be mixed in."""
+    runs = [run_compare.load_run(_run(tmp_path, "a", "vista", version="3.0")),
+            run_compare.load_run(_run(tmp_path, "b", "vista", version="3.1"))]
+    result = run_compare.compare(runs)
+    assert [r["key"] for r in result["must"] if not r["same"]] == ["build.version"]
+
+
+def test_pmu_sharers_are_an_intended_difference(tmp_path):
+    runs = [run_compare.load_run(_run(tmp_path, "c122-018", "horizon", powerd="active")),
+            run_compare.load_run(_run(tmp_path, "i618-141", "vista"))]
+    result = run_compare.compare(runs)
+    assert result["ok"]
+    intended = {r["key"]: r["values"] for r in result["intended"]}
+    assert intended["host.pmu_sharers"] == ["nvidia-powerd=active", "nvidia-powerd=inactive"]

@@ -112,9 +112,16 @@ Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
    (2026-11-09: c122-018's legs were auto-cut to 1200 s while Vista ran 1800 s). Each node gets
    a harness-built `--conf`, identical except `server`/`queue`/`user`/`password`
    (`buffer_hours 6`, `sample_freq 30`, `sample_freq_slow 600`, `send_freq 300`,
-   `enable_slow_tier 1`, no `jobid_file`); never a site conf (buffer 48 h / 4096 / 6 h and
-   different `jobid_file` made the 2026-11-09 runs incomparable). Each cluster keeps its own
-   fleet build; that difference is intended and recorded.
+   `enable_slow_tier 1`, `emit_value_sentinels 1`, no `jobid_file`); never a site conf (buffer
+   48 h / 4096 / 6 h and different `jobid_file` made the 2026-11-09 runs incomparable). Each
+   cluster keeps its own fleet build; that difference is intended and recorded. Every run in a
+   campaign uses the **same monitor Version** (`compare_runs.py` must-match `build.version`):
+   3.0 measured LIKWID and a timer that could collect twice per period, 3.1 is direct perf with
+   one collect per period, so 3.0 numbers never mix with 3.1. Fleet builds (Horizon,
+   Stampede3, LS6) refuse the repo-default localhost broker at prepare time; a measured RPM
+   sets `HPCS_ALLOW_DEFAULT_BROKER=1`, since the harness replaces the conf. Record PMU
+   sharers (`provenance.host.pmu_sharers`, e.g. `nvidia-powerd` on GB200): a sharer changes the
+   cost of every multiplexed 3.1 counter read.
 17. **Every Grace node has bound CoreSight PMUs before a run.** Preflight refuses an
    `arm-cs-arch-pmu.*` device without a `driver` link (c642-041 2026-11-09: firmware APMT gave
    `No cpu associated with the PMU`, no `nvidia_scf_pmu_*`, so `arm_aarch64_imc` disabled

@@ -22,7 +22,7 @@ SCHEDULE_KEYS = ("leg_seconds", "settle_seconds", "fwq_seconds", "blocks", "gove
                  "off_legs")
 INTENDED_BUILD = ("rpm_nvra", "capability_slug", "fleet", "shared_node_multi_jid",
                   "ib_mad_dlopen", "git_commit", "git_dirty")
-INTENDED_HOST = ("kernel", "os", "nproc_online", "numa_nodes", "mem_gib", "gpus")
+INTENDED_HOST = ("kernel", "os", "nproc_online", "numa_nodes", "mem_gib", "gpus", "pmu_sharers")
 
 
 def parse_conf(text: str | None) -> dict[str, str]:
@@ -59,6 +59,7 @@ def load_run(run_dir: Path) -> dict[str, Any]:
     nvr = {k.strip(): v.strip() for k, _, v in (ln.partition(":") for ln in qip.splitlines())}
     return {
         "name": host.get("short") or Path(run_dir).name,
+        "version": nvr.get("Version"),
         "schedule": {k: sched.get(k) for k in SCHEDULE_KEYS},
         "fit_steps": sched.get("fit_steps") or [],
         "conf": {k: v for k, v in conf.items() if k not in CONF_PER_SITE},
@@ -74,7 +75,9 @@ def load_run(run_dir: Path) -> dict[str, Any]:
                  "nproc_online": host.get("nproc_online"), "numa_nodes": host.get("numa_nodes"),
                  "mem_gib": round(host["mem_total_kib"] / 2 ** 20) if host.get(
                      "mem_total_kib") else None,
-                 "gpus": len([g for g in host.get("gpus") or [] if "3D controller" in g])},
+                 "gpus": len([g for g in host.get("gpus") or [] if "3D controller" in g]),
+                 "pmu_sharers": ",".join(f"{u}={st}" for u, st in sorted(
+                     (host.get("pmu_sharers") or {}).items())) or None},
         "groups": sorted(sched.get("groups") or []),
         "variants": sorted(sched.get("variants") or []),
         "legs": legs,
@@ -89,7 +92,10 @@ def _rows(runs: list[dict[str, Any]], section: str, keys: list[str]) -> list[tup
 def compare(runs: list[dict[str, Any]]) -> dict[str, Any]:
     """Split facts into must-match rows (with ``same``) and intended rows."""
     conf_keys = sorted(set().union(*(r["conf"] for r in runs)))
-    must = [(f"schedule.{k}", v) for k, v in _rows(runs, "schedule", list(SCHEDULE_KEYS))]
+    # One monitor version per campaign: 3.0 (LIKWID, double-collect timer) and 3.1 (direct perf)
+    # differ in what a sample costs, so mixing them is never a per-leg comparison.
+    must = [("build.version", [r["version"] for r in runs])]
+    must += [(f"schedule.{k}", v) for k, v in _rows(runs, "schedule", list(SCHEDULE_KEYS))]
     must += [(f"conf.{k}", v) for k, v in _rows(runs, "conf", conf_keys)]
     must.append(("fit_steps", [[s.get("step") for s in r["fit_steps"]] for r in runs]))
     must_rows = []
