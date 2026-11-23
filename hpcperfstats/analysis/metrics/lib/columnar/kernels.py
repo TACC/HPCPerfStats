@@ -57,6 +57,7 @@ from hpcperfstats.analysis.metrics.lib.sentinel_profile import (
   fill_sample_gaps,
   sentinel_sample_mask,
 )
+from hpcperfstats.dbload.lib.monitor_naming.canonical import GPU_STATS_TYPES
 from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK
 
 MODE_SQL = "sql"
@@ -438,6 +439,31 @@ class FrameIndex:
       keys, self.gpu_allowed_keys
     )
 
+  def _gpu_usable(self, rows: np.ndarray) -> np.ndarray:
+    """
+    Mask of GPU rows a GPU reader may use: ``value`` below the DCGM blank
+    family (NULL kept; the reader decides) on a device of the GPU affinity.
+
+    Args:
+      rows (np.ndarray): Row indices.
+
+    Returns:
+      np.ndarray: Boolean mask aligned with ``rows``.
+
+    Examples:
+      >>> f = JobFrame.from_records(
+      ...   "1",
+      ...   [
+      ...     (1, "h", "gpu", "util", "0", 1, 2.0**47, None, None),
+      ...     (1, "h", "gpu", "util", "1", 1, 50.0, None, None),
+      ...   ],
+      ... )
+      >>> FrameIndex(f)._gpu_usable(np.array([0, 1])).tolist()
+      [False, True]
+    """
+    vals = self.values_at("value", rows)
+    return ~(vals >= DCGM_FP64_BLANK) & self._dev_allowed_mask(rows)
+
   def values_at(self, name: str, rows: np.ndarray) -> np.ndarray:
     """
     Float column ``name`` at ``rows`` (``jobframe.VALUE_DTYPE``, float64).
@@ -727,7 +753,9 @@ class FrameIndex:
   ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Scoped raw samples ``(host_id, time_us, value)`` with NaN for NULL
-    (``_host_data_metric_rows_batched`` without ``sum_per_sample``).
+    (``_host_data_metric_rows_batched`` without ``sum_per_sample``). GPU
+    types keep only :meth:`_gpu_usable` rows (no DCGM blank, affinity
+    devices only).
 
     Args:
       typ (str): Type name.
@@ -747,6 +775,8 @@ class FrameIndex:
     rows = self.scoped_rows(
       typ, self.rows_for_series(self._select(typ, events))
     )
+    if typ in GPU_STATS_TYPES:
+      rows = rows[self._gpu_usable(rows)]
     return (
       self.frame.host_id[rows].astype(np.int64),
       self.frame.time_us[rows].astype(np.int64),
@@ -825,7 +855,9 @@ class FrameIndex:
     Count / Max / Avg of ``value`` per group (``_collect_gpu_annotate_rows``).
 
     Rows are job-owned, carry ``value < DCGM_FP64_BLANK`` (NULL excluded)
-    and pass the GPU affinity dev filter.
+    and pass the GPU affinity dev filter. A host with per-device rows drops
+    its legacy empty-``dev`` node-aggregate rows, which would otherwise
+    count as one more device.
 
     Args:
       typ (str): GPU type name.
@@ -854,9 +886,11 @@ class FrameIndex:
     )
     if rows.size:
       vals = self.values_at("value", rows)
-      keep = ~np.isnan(vals) & (vals < DCGM_FP64_BLANK)
-      keep &= self._dev_allowed_mask(rows)
-      rows = rows[keep]
+      rows = rows[self._gpu_usable(rows) & ~np.isnan(vals)]
+      # A legacy node-aggregate row (dev '') is no extra GPU on a host that
+      # also carries per-device rows.
+      hw_hosts = f.host_id[rows][f.dev_id[rows] > 0]
+      rows = rows[(f.dev_id[rows] != 0) | ~np.isin(f.host_id[rows], hw_hosts)]
     if rows.size == 0:
       e_i = np.empty(0, dtype=np.int64)
       e_f = np.empty(0, dtype=np.float64)
@@ -895,8 +929,9 @@ class FrameIndex:
     """
     True when ``typ`` has a job-owned row of one of ``events``.
 
-    Exactly the types for which :meth:`metrics_pivot` returns hosts, found
-    from the series bounds without pivoting. The series are recorded as
+    The types for which :meth:`metrics_pivot` returns hosts (a GPU type
+    whose owned rows are all outside the GPU affinity pivots to no host),
+    found from the series bounds without pivoting. The series are recorded as
     consumed like a pivot records them, so a lazily pivoted view leaves the
     same ``consumed_series`` record as pivoting every type.
 
@@ -924,7 +959,9 @@ class FrameIndex:
   ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Job-owned rows of ``typ`` with their event column and ``(host, time)``
-    pair, shared by :meth:`metrics_pivot` and :meth:`metrics_binned`.
+    pair, shared by :meth:`metrics_pivot` and :meth:`metrics_binned`. GPU
+    types keep only rows on a device of the GPU affinity, and their
+    ``value`` is read through :meth:`_pivot_values`.
 
     A pair is keyed by one int64, ``host << _PAIR_TIME_BITS | (t - t0)``
     with ``t0`` the type's first scoped sample (an earlier origin could
@@ -958,6 +995,8 @@ class FrameIndex:
     ev_pos = {e: i for i, e in enumerate(events)}
     sids = self._select(typ, list(ev_pos))
     rows = self.scoped_rows(typ, self.rows_for_series(sids), job_only=True)
+    if typ in GPU_STATS_TYPES:
+      rows = rows[self._dev_allowed_mask(rows)]
     empty = np.empty(0, dtype=np.int64)
     if rows.size == 0:
       return rows, empty, empty, empty, 0
@@ -974,6 +1013,31 @@ class FrameIndex:
     pairs, pair_of_row = np.unique(key, return_inverse=True)
     eix = event_of_series[f.series_id[rows]]
     return rows, eix, pairs, pair_of_row.astype(np.int64), t0
+
+  def _pivot_values(self, typ: str, rows: np.ndarray) -> np.ndarray:
+    """
+    ``value`` of pivot rows; a GPU type's DCGM blanks read as NaN (missing),
+    so a blank device never enters a device mean. The row and its ``arc``
+    stay (a blank counter reading can carry a sane ingest rate).
+
+    Args:
+      typ (str): Type name.
+      rows (np.ndarray): Pivot rows.
+
+    Returns:
+      np.ndarray: float64 values aligned with ``rows``.
+
+    Examples:
+      >>> f = JobFrame.from_records(
+      ...   "1", [(1, "h", "nvidia_gpu", "u", "0", 1, 2.0**47, None, None)]
+      ... )
+      >>> FrameIndex(f)._pivot_values("nvidia_gpu", np.array([0])).tolist()
+      [nan]
+    """
+    vals = self.values_at("value", rows)
+    if typ in GPU_STATS_TYPES:
+      vals[vals >= DCGM_FP64_BLANK] = np.nan
+    return vals
 
   def metrics_pivot(
     self,
@@ -1025,7 +1089,7 @@ class FrameIndex:
       "host_offsets": np.append(starts, pairs.size).astype(np.int64),
       "times_us": times_us,
       "times_s": np.floor_divide(times_us, 1_000_000).astype(np.float64),
-      "value": sg.grid_mean(cells, self.values_at("value", rows), size).reshape(
+      "value": sg.grid_mean(cells, self._pivot_values(typ, rows), size).reshape(
         pairs.size, n_e
       ),
       "arc": sg.grid_mean(cells, self.values_at("arc", rows), size).reshape(
@@ -1049,7 +1113,13 @@ class FrameIndex:
     grid is the same bit for bit. The ``arc`` of each host's first pair is
     left out: the ingest rate there covers the interval before the job's
     first sample, which can hold the previous job's traffic, so it must
-    never become a cluster peak.
+    never become a cluster peak. A ``(host, device)`` with several rates in
+    one bin (an extra sample a fraction of a second after a tick) enters
+    the bin once, as the mean of its rates weighted by their intervals: a
+    rate over a sub-second interval reads 0 or a multiple of the real rate
+    when the counter advances in steps, and must not count like a full
+    interval. With one rate per ``(host, device)`` and bin the arc grid is
+    the plain row mean, bit for bit.
 
     Args:
       typ (str): Type name.
@@ -1077,6 +1147,18 @@ class FrameIndex:
       ... )
       >>> v.tolist(), a.tolist()
       ([[3.0], [5.0]], [[nan], [2.0]])
+      >>> g = JobFrame.from_records(
+      ...   "1",
+      ...   [
+      ...     (0, "a", "cpu", "user", None, 1, 0.0, None, None),
+      ...     (60, "a", "cpu", "user", None, 1, 1.0, 1.0, None),
+      ...     (90, "a", "cpu", "user", None, 1, 2.0, 4.0, None),
+      ...   ],
+      ... )
+      >>> FrameIndex(g).metrics_binned("cpu", ["user"], np.array([0, 1, 1]), 2)[
+      ...   1
+      ... ].tolist()
+      [[nan], [2.0]]
     """
     rows, eix, pairs, pair_of_row, _t0 = self._pivot_rows(typ, events)
     n_e = len(events)
@@ -1085,9 +1167,27 @@ class FrameIndex:
     arc = self.values_at("arc", rows)
     host = pairs >> _PAIR_TIME_BITS
     arc[np.diff(host, prepend=-1)[pair_of_row] != 0] = np.nan
+    # One group per (cell, host, signed device), ordered as the frame sorts
+    # rows, so the groups of a cell enter grid_mean in frame order.
+    f = self.frame
+    dev_span = 2 * len(f.devs) + 1
+    n_hd = len(f.hosts) * dev_span
+    hd = (
+      f.host_id[rows].astype(np.int64) * dev_span + f.dev_id[rows] + len(f.devs)
+    )
+    dt = np.diff(pairs & ((1 << _PAIR_TIME_BITS) - 1), prepend=0)[pair_of_row]
+    fin = ~np.isnan(arc)
+    keys, grp = np.unique(cells[fin] * n_hd + hd[fin], return_inverse=True)
+    one = np.bincount(grp, minlength=keys.size) == 1
+    num = np.bincount(grp, weights=arc[fin] * dt[fin], minlength=keys.size)
+    den = np.bincount(grp, weights=dt[fin].astype(np.float64))
+    rate = np.where(one, np.bincount(grp, weights=arc[fin]), num / den)
     return tuple(
-      sg.grid_mean(cells, col, size).reshape(int(n_bins), n_e)
-      for col in (self.values_at("value", rows), arc)
+      sg.grid_mean(c, col, size).reshape(int(n_bins), n_e)
+      for c, col in (
+        (cells, self._pivot_values(typ, rows)),
+        (keys // n_hd, rate),
+      )
     )
 
 

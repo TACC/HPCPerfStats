@@ -27,6 +27,9 @@ from typing import Any
 
 import numpy as np
 
+from hpcperfstats.analysis.metrics.lib.columnar.detail_series import (
+  _GPU_UTIL_EVENTS,
+)
 from hpcperfstats.analysis.metrics.lib.columnar.jobframe import JobFrame
 from hpcperfstats.analysis.metrics.lib.columnar.kernels import (
   MODE_ORM,
@@ -696,8 +699,9 @@ class ColumnarJobTable:
     ``delta`` samples at or above the sane ceiling) do not contribute, and a
     group without a contribution sums to ``0``. ``value`` is never ceiling-filtered (peak FLOP/s and
     cumulative byte counters exceed 1e13). GPU types drop ``val_col >=
-    DCGM_FP64_BLANK`` rows and never apply the ceiling; ``group_by_dev``
-    keeps devices and applies the GPU affinity filter. Shared-node residual
+    DCGM_FP64_BLANK`` rows, keep only the GPU affinity devices (per host,
+    at both grains) and never apply the ceiling; ``group_by_dev`` keeps
+    devices. Shared-node residual
     types collapse hardware / ``j:`` copies per event. A sample with an
     unreadable summed event is a gap, never a partial sum; series readers
     (``fill``) get interior gaps interpolated within the fold's
@@ -765,7 +769,7 @@ class ColumnarJobTable:
           conv=conv,
           reject_dcgm_blank=reject_blank,
           by_dev=group_by_dev,
-          dev_filter=group_by_dev,
+          dev_filter=reject_blank,
           limit=limit,
           coalesce_zero=self.coalesce_zero,
           fill=self.sentinel_settings() if fill else None,
@@ -1205,17 +1209,66 @@ class ColumnarJobTable:
       for h, d, mx in zip(st.host_id, st.dev_id, st.vmax, strict=True)
     ]
 
-  def gpu_count_total(self, precedence: Sequence[str]) -> int | None:
+  def gpu_count_by_host(self, precedence: Sequence[str]) -> dict[str, int]:
     """
-    ``gpu_count_total_for_job_window``: each host scoped by an affinity row
-    counts its ``gpu_list``; every other host adds its ``max(gpu_count)``
-    by vendor precedence (a single list, from golden fixtures, counts once).
+    GPUs per host under one rule: a host scoped by an affinity row counts
+    its ``gpu_list``; every other host counts its ``max(gpu_count)``, never
+    fewer than its devices with util rows (``gpu_count`` is a slow-tier key
+    a window can miss, and can read 0 or low), for the first vendor with
+    util rows, the one the util sum reads; with no util rows, the first
+    vendor with a positive count. A single list (golden fixtures) applies
+    to every accounting host.
 
     Args:
       precedence (Sequence[str]): GPU type precedence.
 
     Returns:
-      int | None: Total GPUs or None.
+      dict[str, int]: Host name to GPU count (hosts without a count are
+      absent).
+
+    Examples:
+      >>> ColumnarJobTable(
+      ...   "1",
+      ...   JobFrame.from_records("1", []),
+      ...   host_list=[],
+      ...   acct_host_list=[],
+      ...   schema={},
+      ...   start_time=None,
+      ...   end_time=None,
+      ... ).gpu_count_by_host(("nvidia_gpu",))
+      {}
+    """
+    aff = self.gpu_affinity_devs
+    if isinstance(aff, list):
+      return {str(h): len(aff) for h in self.acct_host_list}
+    scoped = {h: len(devs) for h, devs in (aff or {}).items()}
+    fallback: dict[str, int] = {}
+    for gpu_typ in precedence if self.acct_host_list else ():
+      devs: dict[str, set[str]] = {}
+      for r in self.gpu_util_rows(gpu_typ, _GPU_UTIL_EVENTS):
+        devs.setdefault(r["host"], set()).add(r["dev"])
+      counts = {h: len(d) for h, d in devs.items()}
+      for r in self.gpu_max_per_host(gpu_typ, "gpu_count"):
+        if not is_dcgm_numeric_blank(r["mv"]):
+          counts[r["host"]] = max(counts.get(r["host"], 0), round(r["mv"]))
+      inventory = {h: n for h, n in counts.items() if h not in scoped}
+      if devs:
+        return scoped | inventory
+      if not sum(fallback.values()):
+        fallback = inventory
+    return scoped | fallback
+
+  def gpu_count_total(self, precedence: Sequence[str]) -> int | None:
+    """
+    ``gpu_count_total_for_job_window``: the sum of :meth:`gpu_count_by_host`
+    (a single list, from golden fixtures, counts once). The util sum then
+    never covers a GPU the count left out.
+
+    Args:
+      precedence (Sequence[str]): GPU type precedence.
+
+    Returns:
+      int | None: Total GPUs, or None with no count and no affinity rows.
 
     Examples:
       >>> ColumnarJobTable(
@@ -1232,19 +1285,8 @@ class ColumnarJobTable:
     aff = self.gpu_affinity_devs
     if isinstance(aff, list):
       return len(aff)
-    scoped = aff or {}
-    total = sum(len(devs) for devs in scoped.values())
-    for gpu_typ in precedence if self.acct_host_list else ():
-      inventory = sum(
-        round(float(r["mv"]))
-        for r in self.gpu_max_per_host(gpu_typ, "gpu_count")
-        if r["host"] not in scoped
-        and r.get("mv") is not None
-        and not is_dcgm_numeric_blank(r["mv"])
-      )
-      if inventory > 0:
-        return total + inventory
-    return total if scoped else None
+    total = sum(self.gpu_count_by_host(precedence).values())
+    return total if total or aff else None
 
   def metrics_view(self) -> Any:
     """

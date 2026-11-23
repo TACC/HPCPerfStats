@@ -30,6 +30,7 @@ def test_persist_stamps_metrics_version_and_coverage():
   job_row = SimpleNamespace(jid="j1")
   with (
     patch.object(metrics_module.metrics_data.objects, "bulk_create"),
+    patch.object(metrics_module.metrics_data.objects, "filter"),
     patch.object(
       metrics_module.job_data.objects, "filter", return_value=[job_row]
     ),
@@ -55,6 +56,7 @@ def test_persist_without_coverage_leaves_stored_coverage_alone():
   job_row = SimpleNamespace(jid="j1", metrics_coverage=0.25)
   with (
     patch.object(metrics_module.metrics_data.objects, "bulk_create"),
+    patch.object(metrics_module.metrics_data.objects, "filter"),
     patch.object(
       metrics_module.job_data.objects, "filter", return_value=[job_row]
     ),
@@ -159,6 +161,7 @@ def test_persist_metrics_failed_final_fills_missing_rows_and_stamps_version():
       metrics_module.job_data.objects, "filter", return_value=exists_qs
     ) as flt,
     patch.object(metrics_module.metrics_data.objects, "bulk_create") as bc,
+    patch.object(metrics_module.metrics_data.objects, "filter"),
     patch.object(
       metrics_module,
       "job_metrics_catalog_entries",
@@ -199,3 +202,90 @@ def test_persist_metrics_failed_final_unknown_job_is_a_noop():
   ):
     assert metrics_module.persist_metrics_failed_final("nope") is False
   bc.assert_not_called()
+
+
+class _MetricsDataRows:
+  """Stand-in for ``metrics_data.objects.filter``: answers the stored
+  ``(pk, jid, type, metric)`` rows and records ``pk__in`` deletes."""
+
+  def __init__(self, rows: list[tuple]) -> None:
+    self.rows, self.deleted = rows, []
+
+  def __call__(self, **kw: object) -> MagicMock:
+    qs = MagicMock()
+    if "pk__in" in kw:
+      qs.delete.side_effect = lambda: self.deleted.extend(kw["pk__in"])
+    else:
+      qs.values_list.side_effect = lambda *f, flat=False: (
+        [r[3] for r in self.rows] if flat else self.rows
+      )
+    return qs
+
+
+def _persist_with_rows(stored: list[tuple], rows: list[dict]) -> list:
+  fake = _MetricsDataRows(stored)
+  with (
+    patch.object(metrics_module.metrics_data.objects, "bulk_create"),
+    patch.object(metrics_module.metrics_data.objects, "filter", fake),
+    patch.object(metrics_module.job_data.objects, "filter", return_value=[]),
+    patch.object(
+      metrics_module.transaction,
+      "atomic",
+      MagicMock(return_value=nullcontext()),
+    ),
+  ):
+    metrics_module._persist_metrics_batch(rows, None)
+  return fake.deleted
+
+
+@pytest.mark.django_db(databases=[])
+def test_persist_deletes_only_the_old_type_row_of_a_written_metric():
+  """One row per (jid, metric): a written metric's row under another type
+  is deleted; same-type rows, unwritten metrics and other jobs stay."""
+  dram = "dram_bw_node_imbalance"
+  stored = [
+    (1, "j1", "imc", dram),
+    (2, "j1", "cpu", "avg_cpuusage"),
+    (3, "j2", "imc", dram),
+    (4, "j1", "imc", "avg_mbw"),
+  ]
+  rows = [
+    {**_row(), "type": "host_cpu_hw", "metric": dram, "value": 41.7},
+    _row(),
+  ]
+  assert _persist_with_rows(stored, rows) == [1]
+  assert _persist_with_rows([(2, "j1", "cpu", "avg_cpuusage")], rows) == []
+
+
+@pytest.mark.django_db(databases=[])
+def test_persist_metrics_failed_final_skips_metrics_the_job_has():
+  """A metric stored under a non-catalog type gets no NULL catalog row."""
+  exists_qs = MagicMock()
+  exists_qs.exists.return_value = True
+  dram = "dram_bw_node_imbalance"
+  with (
+    patch.object(
+      metrics_module.job_data.objects, "filter", return_value=exists_qs
+    ),
+    patch.object(metrics_module.metrics_data.objects, "bulk_create") as bc,
+    patch.object(
+      metrics_module.metrics_data.objects,
+      "filter",
+      _MetricsDataRows([(1, "j9", "host_cpu_hw", dram)]),
+    ),
+    patch.object(
+      metrics_module,
+      "job_metrics_catalog_entries",
+      lambda: [
+        {"type": "imc", "metric": dram, "units": "%"},
+        {"type": "cpu", "metric": "avg_cpuusage", "units": "#cores"},
+      ],
+    ),
+    patch.object(
+      metrics_module.transaction,
+      "atomic",
+      MagicMock(return_value=nullcontext()),
+    ),
+  ):
+    assert metrics_module.persist_metrics_failed_final("j9", "boom") is True
+  assert [r.metric for r in bc.call_args.args[0]] == ["avg_cpuusage"]

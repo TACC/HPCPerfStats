@@ -551,6 +551,25 @@ Pipeline logs mix **listend** hardlink floods with **update_metrics** scheduler 
 |----|-------|
 | `logs pipeline 2>&1 \| grep -E 'Date Range\|candidate_jids\|window_rollover\|empty_pass' \| tail -80` | Mix `hardlink` + metrics tokens then `tail -80` |
 
+### Anti-pattern — grepping retired update_metrics heartbeat lines (hpcperfstats04 2026-11-23)
+
+`grep -E 'metrics (scheduler: admit paused|admission:)'` and `grep -E 'metrics progress'` printed **nothing** after the d9 rebuild: the hourly `metrics progress:` line and the per-minute `metrics admission:` line no longer exist. One `metrics census` line every `CENSUS_LOG_INTERVAL_S` (`update_metrics._format_metrics_census`, stdout, so `logs pipeline`) carries them as `group=key:value,...` tokens: memory and admission are `mem_gib=handoff:,rss:,est:,meas:,budget:` and `admit=inflight:,rows_hmin:,grid_b_hmin:` (only while a sliding session reported in-flight work recently), finished jobs `jobs=done_1h:,...`. `metrics scheduler: admit paused` still exists but prints only while the headroom gate refuses a job, so empty is normal with memory fine. Grep the code (`log_print(` in `update_metrics.py`) for the current text before writing a log grep.
+
+| Do | Don't |
+|----|-------|
+| `grep -E "$P"` with `P` = `metrics (census\|progress:\|admission:` + `\|scheduler: admit paused)` (matches images before and after the census) | `grep -E 'metrics (scheduler: admit paused\|admission:)'` / `grep 'metrics progress'` alone |
+| `grep -F 'metrics census' \| grep -oE '(jobs\|mem_gib\|admit\|fail)=[^ ]+'` for the memory picture | `rss_gib=` / `est_gib=` tokens (retired with the admission line) |
+
+```bash
+P='metrics (census|progress:|admission:'
+P="$P|scheduler: admit paused)"
+podman-compose -p hpcperfstats logs pipeline 2>&1 \
+  | grep -E "$P" | tail -n 3 | cut -c1-700
+podman-compose -p hpcperfstats logs pipeline 2>&1 \
+  | grep -F 'metrics census' \
+  | grep -oE '(jobs|mem_gib|admit|fail)=[^ ]+' | tail -n 12
+```
+
 ### Metrics thread titles contain brackets
 
 `ps` / thread titles like `update_metrics.py [thread:metrics-pool]` contain **`[`**. Passing that string to BRE `grep -c '…[thread:metrics-pool]…'` opens a character class and can fail. Use **`grep -F`** / `fgrep`, or escape brackets.

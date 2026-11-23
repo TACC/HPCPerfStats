@@ -490,3 +490,29 @@ class MockJobTable:
       )
     order = np.lexsort((time_us, host_id))
     return AggTable(host_id[order], time_us[order], vals[order])
+
+  def gpu_count_by_host(self, precedence: Sequence[str]) -> dict[str, int]:
+    """
+    GPUs per host from the mocked ``gpu_count`` aggregate: each host's
+    maximum of the first vendor in ``precedence`` with rows.
+
+    Args:
+      precedence (Sequence[str]): GPU type precedence.
+
+    Returns:
+      dict[str, int]: Host name to GPU count.
+
+    Examples:
+      >>> MockJobTable().gpu_count_by_host(("nvidia_gpu",))
+      {}
+    """
+    for typ in precedence:
+      agg = self.get_aggregate(typ, "value", ["gpu_count"])
+      if agg.empty:
+        continue
+      out: dict[str, int] = {}
+      for h, v in zip(agg.host_id.tolist(), agg.sum_val.tolist(), strict=True):
+        name = self.frame.hosts[int(h)]
+        out[name] = max(out.get(name, 0), round(v))
+      return out
+    return {}

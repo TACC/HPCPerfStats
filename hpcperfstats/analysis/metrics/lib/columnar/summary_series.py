@@ -698,30 +698,32 @@ def _nv_mem_used_y_top(frame: SeriesFrame) -> float | None:
 
 
 def _nv_gpu_util_y_top(
-  frame: SeriesFrame, shared_gpu_count: int | None
+  frame: SeriesFrame, gpu_count_by_host: dict[str, int]
 ) -> float | None:
   """
-  ``_summary_nv_gpu_util_y_range_end``.
+  Top of the per-host Summary GPU util plot: the largest host's GPU count
+  x 100 (``ColumnarJobTable.gpu_count_by_host``, the per-host rule behind
+  ``detail_gpu_count``), so no host's util sum is clipped.
 
   Args:
     frame (SeriesFrame): Summary frame.
-    shared_gpu_count (int | None): Affinity GPU count on shared jobs.
+    gpu_count_by_host (dict[str, int]): GPUs per host.
 
   Returns:
-    float | None: Upper bound or None.
+    float | None: Upper bound, or None without the util column or a
+    positive count.
 
   Examples:
     >>> import numpy as np
     >>> f = SeriesFrame.from_base(np.array([0]), np.array([1]), ["h"])
-    >>> _nv_gpu_util_y_top(f, 2)
-    200.0
+    >>> f.set("nv_gpu_util", np.array([150.0]))
+    >>> _nv_gpu_util_y_top(f, {"h": 2, "g": 4})
+    400.0
   """
-  if shared_gpu_count is not None:
-    return float(shared_gpu_count) * 100.0
-  if "nv_gpu_util" not in frame.columns or "nv_gpu_count" not in frame.columns:
+  if "nv_gpu_util" not in frame.columns:
     return None
-  mx = _nanmax(frame.columns["nv_gpu_count"])
-  return None if mx is None else mx * 100.0
+  top = max(gpu_count_by_host.values(), default=0)
+  return float(top) * 100.0 if top > 0 else None
 
 
 def build_summary_series(jt: Any) -> SummarySeries:
@@ -803,11 +805,11 @@ def build_summary_series(jt: Any) -> SummarySeries:
     n in frame.columns and frame.any_finite(n)
     for n in sp._SUMMARY_TENSOR_SPLIT_METRICS
   )
-  shared_gpu_count = None
-  if getattr(jt, "_shared_node", False):
-    # Per-host affinity counts each host's list (hosts without a row add
-    # their inventory); len() of the per-host map would count hosts.
-    shared_gpu_count = jt.gpu_count_total(GPU_TYPE_PRECEDENCE) or 0
+  gpu_counts = (
+    jt.gpu_count_by_host(GPU_TYPE_PRECEDENCE)
+    if "nv_gpu_util" in frame.columns
+    else {}
+  )
   for _typ, _val, _events, name, _conv, label in metrics:
     if name not in frame.columns:
       continue
@@ -825,7 +827,7 @@ def build_summary_series(jt: Any) -> SummarySeries:
     if name == "nv_mem_used_mb":
       y_top = _nv_mem_used_y_top(frame)
     elif name == "nv_gpu_util":
-      y_top = _nv_gpu_util_y_top(frame, shared_gpu_count)
+      y_top = _nv_gpu_util_y_top(frame, gpu_counts)
     render.append((name, label, y_top))
   render.sort(key=lambda item: sp._summary_plot_order_key(item[0]))
   return SummarySeries(frame, render, metrics)

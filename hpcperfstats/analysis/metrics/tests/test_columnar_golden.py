@@ -106,9 +106,11 @@ GOLDEN_UNITS_UPDATES = {
 # (fp_ops_retired, lowercase FP_ARITH, arm_est_flops; avg_mbw's DRAM try
 # order, ARM IMC and host_cpu_hw arm_dram_bw_bytes). They now resolve the
 # family of the paired avg_* metric: metric -> (paired avg_* metric, jids).
-# Oracle: one host has nothing to be imbalanced against, so exactly 0.0
-# with no reason (as node_imbalance already does); edge_multihost (4
-# hosts) equals the arc-rate oracle on its ``EDGE_IMBALANCE_SPECS`` family.
+# Oracle: ``_imbalance_oracle`` on the resolved family. One host has
+# nothing to be imbalanced against, so exactly 0.0 with no reason (as
+# node_imbalance already does) when a rate is positive; when every rate is
+# 0 the row is None with ``ALL_HOSTS_ZERO_MSG``; without a rate, None with
+# the generic reason.
 # The golden row may carry the old fallback type ("imc"); the new row is
 # keyed by the type the family resolved to.
 GOLDEN_NULL_IMBALANCE_FAMILIES = {
@@ -171,7 +173,8 @@ GOLDEN_NULL_IMBALANCE_FAMILIES = {
 # max_packetrate Ethernet fallback. (row type, metric) ->
 # (events, divisor, per-bin ceiling, peak above which the metric is NULL).
 # Oracle: ``per_host_axis.cluster_arc_peak_oracle`` (mean arc over every
-# (host, device) row per bin, each host's first owned sample left out,
+# (host, device) per bin, several arcs of one (host, device) in a bin
+# weighted by their intervals, each host's first owned sample left out,
 # summed over the events, peak / divisor).
 GOLDEN_CLUSTER_LOOKUP_DEVIATIONS = {
   ("net", "max_fabricbw"): (("tx_bytes", "rx_bytes"), 1024 * 1024, None, 1e6),
@@ -198,25 +201,146 @@ GOLDEN_FIRST_ARC_PEAK_DEVIATIONS = {
     None,
   ),
 }
-# Rate node imbalances on multi-host jobs (edge_multihost): the capture
-# took diff(value) / diff(t) on the union axis; they now compare the ingest
-# arc rates per time bin. Oracle:
-# ``per_host_axis.rate_imbalance_oracle`` on the ``EDGE_IMBALANCE_SPECS``
-# family (fabric_node_imbalance: the capture's 1.38e-5 is noise of near-equal
-# value differences; the per-host arcs are equal, so the oracle is 0.0).
-GOLDEN_MULTIHOST_ARC_IMBALANCES = frozenset(
-  {"node_imbalance", "lnet_node_imbalance", "fabric_node_imbalance"}
+# Single-host cluster arc peaks the capture took at a short extra sample
+# (an interval under ``metrics._SHORT_INTERVAL_FRACTION`` periods): the
+# sample now joins the host's preceding sample's bin, and their arcs enter
+# as one interval-weighted rate (3439147: 12 s after a 120 s tick; 3478520:
+# 0.32 s after 240 s; 5656: 2.1 s after 60 s). Stretches sampled at half the
+# median period keep a bin per sample, so their peaks equal the capture.
+# 3478520's ``net`` peaks moved the same way; they are
+# ``GOLDEN_CLUSTER_LOOKUP_DEVIATIONS`` rows on the same oracle. (jid, row
+# type, metric) -> as ``GOLDEN_FIRST_ARC_PEAK_DEVIATIONS``; same oracle; a
+# listed row that no longer differs fails as stale.
+_IB_PKTS = (("port_xmit_pkts", "port_rcv_pkts"), 1, 1e10, None)
+_NUMA = (("numa_miss", "numa_foreign", "other_node"), 1.0, None, None)
+GOLDEN_SINGLE_HOST_BIN_PEAK_DEVIATIONS = {
+  ("3439147", "host_numa", "max_numa_remote_rate"): _NUMA,
+  ("3439147", "host_ib", "max_packetrate"): _IB_PKTS,
+  ("3478520", "host_numa", "max_numa_remote_rate"): _NUMA,
+  ("5656", "host_ib", "max_packetrate"): _IB_PKTS,
+}
+# Node imbalances that differ from the capture. Multi-host jobs
+# (edge_multihost): the capture took diff(value) / diff(t) on the union
+# axis; they now compare the ingest arc rates per time bin
+# (fabric_node_imbalance: the capture's 1.38e-5 is noise of near-equal value
+# differences; the per-host arcs are equal, so the oracle is 0.0). Any host
+# count: the capture stored 0.0 when every compared host read 0 (0/0); the
+# row is now None with ``ALL_HOSTS_ZERO_MSG``. Oracle:
+# ``per_host_axis.rate_imbalance_oracle`` / ``snapshot_imbalance_oracle`` on
+# the ``EDGE_IMBALANCE_SPECS`` family events of the row's type; the FLOP /
+# DRAM rows take the family their resolver picks (the family choice itself
+# is checked against the paired avg_* metric), the oracle the rates.
+GOLDEN_IMBALANCE_ORACLE_METRICS = frozenset(
+  {
+    "node_imbalance",
+    "flops_node_imbalance",
+    "dram_bw_node_imbalance",
+    "lnet_node_imbalance",
+    "fabric_node_imbalance",
+    "gpu_util_node_imbalance",
+    "tensor_node_imbalance",
+  }
 )
+
+# GPU readers keep only the job's GPU affinity devices (contract 18): the
+# capture summed and averaged every owned GPU row of edge_shared_a /
+# edge_shared_b, whose affinity list is empty (no GPU granted). Their GPU
+# metric rows, the node power estimate and the Summary GPU columns move.
+# Oracle: the same job with the GPU rows outside the affinity removed from
+# the frame and the affinity cleared (``_affinity_filtered_table``), so no
+# reader gate is involved; compared at ``RTOL_EXACT`` on every row / column
+# where it differs from the same job with the affinity cleared and every GPU
+# row kept (the rows the affinity decides). A listed jid with no such row
+# that also differs from the capture fails as stale.
+GOLDEN_GPU_AFFINITY_JIDS = frozenset({"edge_shared_a", "edge_shared_b"})
+# max_gpu_power is the peak of any one GPU (catalog: "across all GPUs and
+# hosts"); the capture took the peak of each host's device mean. (jid, row
+# type, metric); oracle ``_gpu_device_peak_oracle`` (max of the owned
+# non-blank ``power_usage`` rows of the frame); stale check as above.
+GOLDEN_GPU_DEVICE_PEAK_DEVIATIONS = frozenset(
+  (jid, "nvidia_gpu", "max_gpu_power")
+  for jid in ("11877", "23538", "5656", "6270", "6284", "6285", "9189")
+)
+# Summary GPU util y-axis top: the capture used the frame's summed
+# ``gpu_count`` (each of 4 devices carries 4, so 1600 for 4 GPUs); the top
+# is now the largest host's GPU count x 100. Oracle
+# ``_gpu_util_y_top_oracle`` (distinct util devices or max gpu_count per
+# host, from the frame); a listed jid whose capture equals it is stale.
+GOLDEN_GPU_UTIL_Y_TOP_JIDS = frozenset(
+  {"11877", "23538", "5656", "6270", "6284", "6285", "9189"}
+)
+_GPU_TYPES = ("nvidia_gpu", "amd_gpu", "intel_gpu")
+
+
+def _affinity_filtered_table(table, golden, *, drop=True):
+  """Oracle table: GPU rows on devices outside the golden affinity list
+  dropped from the frame (every row kept with ``drop=False``), affinity
+  cleared."""
+  import dataclasses
+
+  f = table.frame
+  allowed = table.gpu_affinity_devs
+  assert isinstance(allowed, list), "golden affinity is one list"
+  gpu = np.array([t in _GPU_TYPES for t, _e in f.series], dtype=bool)
+  dev_names = np.array(f.devs, dtype=object)[np.abs(f.dev_id)]
+  keep = ~gpu[f.series_id] | np.isin(dev_names, allowed) | (not drop)
+  cols = ("time_us", "host_id", "series_id", "dev_id", "owned")
+  cols += ("value", "arc", "delta", "sentinel")
+  frame = dataclasses.replace(
+    f,
+    **{c: getattr(f, c)[keep] for c in cols},
+    _time_axis=None,
+    _time_index=None,
+  )
+  meta = dict(golden["jid_table"], gpu_affinity_devs=None)
+  return ColumnarJobTable.from_golden(table.jid, frame, meta)
+
+
+def _gpu_rows(table, typ, event):
+  """Owned frame rows of one GPU series with a finite non-blank value."""
+  f = table.frame
+  sid = f.series_id_for(typ, event)
+  if sid is None:
+    return np.empty(0, dtype=np.int64)
+  v = f.value
+  rows = np.flatnonzero(
+    (f.series_id == sid) & (f.owned == 1) & np.isfinite(v) & (v < 2.0**47)
+  )
+  return rows
+
+
+def _gpu_device_peak_oracle(table, typ, event):
+  """Largest owned non-blank sample of ``(typ, event)`` on any device."""
+  assert table.gpu_affinity_devs is None, "oracle has no affinity gate"
+  rows = _gpu_rows(table, typ, event)
+  return float(table.frame.value[rows].max()) if rows.size else None
+
+
+def _gpu_util_y_top_oracle(table):
+  """Largest host GPU count (util devices or max gpu_count) x 100."""
+  f = table.frame
+  util = _gpu_rows(table, "nvidia_gpu", "gpu_util")
+  count = _gpu_rows(table, "nvidia_gpu", "gpu_count")
+  per_host = {}
+  for h in set(f.host_id[util].tolist()):
+    devs = set(f.dev_id[util][f.host_id[util] == h].tolist())
+    gc = f.value[count][f.host_id[count] == h]
+    per_host[h] = max(len(devs), round(gc.max()) if gc.size else 0)
+  return 100.0 * max(per_host.values()) if per_host else None
 
 
 def _per_host_axis_oracle(table, jid, key):
   """``(applies, oracle)`` of one metric row: the oracle of a
-  ``GOLDEN_CLUSTER_LOOKUP_DEVIATIONS`` or ``GOLDEN_FIRST_ARC_PEAK_DEVIATIONS``
-  row or of a ``GOLDEN_MULTIHOST_ARC_IMBALANCES`` row on a multi-host job;
-  ``(False, None)`` for every other row (compared to the golden)."""
-  spec = GOLDEN_CLUSTER_LOOKUP_DEVIATIONS.get(
-    key
-  ) or GOLDEN_FIRST_ARC_PEAK_DEVIATIONS.get((jid, *key))
+  ``GOLDEN_CLUSTER_LOOKUP_DEVIATIONS``, ``GOLDEN_FIRST_ARC_PEAK_DEVIATIONS``
+  or ``GOLDEN_SINGLE_HOST_BIN_PEAK_DEVIATIONS`` row or of a
+  ``GOLDEN_IMBALANCE_ORACLE_METRICS`` row (``ALL_HOSTS_ZERO``
+  when every compared host read 0); ``(False, None)`` for every other row
+  (compared to the golden)."""
+  spec = (
+    GOLDEN_CLUSTER_LOOKUP_DEVIATIONS.get(key)
+    or GOLDEN_FIRST_ARC_PEAK_DEVIATIONS.get((jid, *key))
+    or GOLDEN_SINGLE_HOST_BIN_PEAK_DEVIATIONS.get((jid, *key))
+  )
   if spec is not None:
     events, divisor, max_sane, null_above = spec
     typ = next(t for t in type_probe_names(key[0]) if t in table.schema)
@@ -230,14 +354,56 @@ def _per_host_axis_oracle(table, jid, key):
     if peak is not None and null_above is not None and peak > null_above:
       return True, None
     return True, peak
-  if key[1] in GOLDEN_MULTIHOST_ARC_IMBALANCES:
-    _kind, typ, weighted = per_host_axis.EDGE_IMBALANCE_SPECS[key[1]]
-    events = [e for e, _w in weighted]
-    if typ in table.schema and (
-      len(per_host_axis.host_series(table, typ, events)) > 1
-    ):
-      return True, per_host_axis.rate_imbalance_oracle(table, typ, weighted)
+  if key[1] in GOLDEN_IMBALANCE_ORACLE_METRICS:
+    return _imbalance_oracle(table, *key)
   return False, None
+
+
+def _imbalance_oracle(table, row_type, metric):
+  """``(applies, oracle)`` of a node imbalance row of ``row_type``: the
+  rate / snapshot oracle on its family (FLOP / DRAM: the family the
+  resolver picks), ``(False, None)`` when the family is absent."""
+  from hpcperfstats.analysis.metrics.lib import metrics as metrics_mod
+  from hpcperfstats.analysis.metrics.lib.gen.utils import utils
+
+  kind, _typ, arg = per_host_axis.EDGE_IMBALANCE_SPECS[metric]
+  if metric in ("flops_node_imbalance", "dram_bw_node_imbalance"):
+    u = utils(table.metrics_view())
+    resolver = (
+      metrics_mod._flops_weighted_events_for_imbalance
+      if metric == "flops_node_imbalance"
+      else metrics_mod._dram_bw_weighted_events_for_imbalance
+    )
+    row_type, arg = resolver(u)[:2]
+    if row_type is None:
+      return False, None
+  typ = next((t for t in type_probe_names(row_type) if t in table.schema), None)
+  if typ is None:
+    return False, None
+  if kind == "rate":
+    applies = all(e in table.schema[typ] for e, _w in arg)
+    oracle = per_host_axis.rate_imbalance_oracle(table, typ, arg)
+  else:
+    applies = arg in table.schema[typ]
+    oracle = per_host_axis.snapshot_imbalance_oracle(table, typ, arg)
+  return applies, oracle if applies else None
+
+
+def _assert_imbalance_row(row, oracle, generic_reason, where):
+  """A node imbalance row against its oracle: a number with no reason,
+  None with ``ALL_HOSTS_ZERO_MSG`` (``per_host_axis.ALL_HOSTS_ZERO``), or
+  None with the metric's generic reason (oracle None)."""
+  from hpcperfstats.analysis.metrics.lib import metrics as metrics_mod
+
+  if oracle is None or oracle == per_host_axis.ALL_HOSTS_ZERO:
+    assert row["value"] is None, f"{where}: {row['value']!r} vs {oracle!r}"
+    want = generic_reason if oracle is None else metrics_mod.ALL_HOSTS_ZERO_MSG
+    assert row.get("no_data_reason") == want, f"{where} reason"
+    return
+  assert row.get("no_data_reason") is None, f"{where} reason"
+  assert row["value"] == pytest.approx(oracle, rel=RTOL_EXACT, abs=0), (
+    f"{where}: {row['value']!r} vs oracle {oracle!r}"
+  )
 
 
 def capture_golden_scales(monkeypatch):
@@ -490,6 +656,23 @@ def test_summary_series_matches_golden(jid, golden_jobs, monkeypatch):
     if col in ("instr", "amd_instr") and not any(c in gcols for c in cycles):
       missing.remove(col)
       _record_deviation("summary_missing_columns", col, 1.0)
+  oracle, unscoped = (
+    (
+      ss.build_summary_series(_affinity_filtered_table(table, golden)),
+      ss.build_summary_series(
+        _affinity_filtered_table(table, golden, drop=False)
+      ),
+    )
+    if jid in GOLDEN_GPU_AFFINITY_JIDS
+    else (None, None)
+  )
+  moved = 0
+  for col in list(missing):
+    if oracle is not None and col not in oracle.frame.columns:
+      assert col in unscoped.frame.columns, f"jid={jid} {col}"
+      missing.remove(col)
+      moved += 1
+      _record_deviation("summary_gpu_affinity_columns", col, 1.0)
   assert not missing, f"jid={jid} columns missing in columnar build: {missing}"
   # Rows keyed by (host, time): same key set.
   built_keys = list(
@@ -530,6 +713,15 @@ def test_summary_series_matches_golden(jid, golden_jobs, monkeypatch):
       g = g[~coalesce_rows]
       b = b[~coalesce_rows]
     rel = _rel_dev(b, g)
+    if oracle is not None and (
+      _rel_dev(oracle.frame.columns[col], unscoped.frame.columns[col])
+      > RTOL_EXACT
+    ):
+      o = oracle.frame.columns[col][~coalesce_rows]
+      assert _rel_dev(b, o) <= RTOL_EXACT, f"jid={jid} {col} vs oracle"
+      moved += rel > SQL_SUM_RTOL
+      _record_deviation("summary_gpu_affinity", col, rel)
+      continue
     if col == "ibbw" and rel > SQL_SUM_RTOL:
       # D36 cascade: pandas dropped the InfiniBand column (NaN at an
       # all-NULL sample) and filled ``ibbw`` from Omni-Path instead.
@@ -559,7 +751,15 @@ def test_summary_series_matches_golden(jid, golden_jobs, monkeypatch):
     if n in common
   ]
   assert [s[:2] for s in b_specs] == [s[:2] for s in g_specs]
+  assert (oracle is None) or moved, f"jid={jid}: stale affinity deviation"
   for (n, _l, by), (_n, _gl, gy) in zip(b_specs, g_specs, strict=True):
+    if n == "nv_gpu_util" and jid in GOLDEN_GPU_UTIL_Y_TOP_JIDS:
+      assert by == _gpu_util_y_top_oracle(table), f"jid={jid} y_top {by}"
+      assert not math.isclose(by, gy, rel_tol=SQL_SUM_RTOL), (
+        f"jid={jid}: stale y_top deviation"
+      )
+      _record_deviation("summary_gpu_util_y_top", n, abs(by - gy) / gy)
+      continue
     if by is None or gy is None:
       assert by is gy, f"y_top mismatch for {n}: {by} vs {gy}"
     else:
@@ -637,16 +837,14 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
     assert exp.pop(old_key)["value"] is None, f"jid={jid} {old_key}"
     assert typ in type_probe_names(paired_key[0]), f"jid={jid} {new_key}"
     hosts = per_host_axis.host_series(table, typ, table.schema[typ])
-    if len(hosts) == 1:
-      oracle = 0.0
-    else:
+    if len(hosts) > 1:
       assert jid == "edge_multihost", f"jid={jid} {new_key}: no oracle"
-      _kind, o_typ, o_events = per_host_axis.EDGE_IMBALANCE_SPECS[metric]
-      oracle = per_host_axis.rate_imbalance_oracle(table, o_typ, o_events)
-    row = got.pop(new_key)
-    assert row.get("no_data_reason") is None, f"jid={jid} {new_key} reason"
-    assert row["value"] == pytest.approx(oracle, rel=RTOL_EXACT, abs=0), (
-      f"jid={jid} {new_key}: {row['value']!r} vs oracle {oracle!r}"
+    _applies, oracle = _imbalance_oracle(table, typ, metric)
+    _assert_imbalance_row(
+      got.pop(new_key),
+      oracle,
+      metrics_mod._COMPLEX_NO_DATA_REASONS[metric],
+      f"jid={jid} {new_key}",
     )
     _record_deviation("metrics_null_imbalance_family_resolved", metric, 1.0)
   post_golden = sorted(set(got) - set(exp))
@@ -684,17 +882,82 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
     gm["distinct_time_count"] or 0
   )
   assert payload["host_data_schema"] == gm["host_data_schema"]
+
+  def _rows_of(oracle_table):
+    """Metric rows of the job computed on ``oracle_table``."""
+    monkeypatch.setattr(
+      metrics_mod, "open_job_table", lambda job, **_kw: oracle_table
+    )
+    return _golden_rows_by_key(
+      metrics_mod.Metrics().compute_metrics(job)["rows"]
+    )
+
+  affinity_rows = unscoped_rows = None
+  if jid in GOLDEN_GPU_AFFINITY_JIDS:
+    affinity_rows = _rows_of(_affinity_filtered_table(table, golden))
+    unscoped_rows = _rows_of(
+      _affinity_filtered_table(table, golden, drop=False)
+    )
+  affinity_moved = 0
   for key in sorted(exp):
     g, b = exp[key], got[key]
     want_units = GOLDEN_UNITS_UPDATES.get(
       (key[1], str(g["units"])), str(g["units"])
     )
     assert str(b["units"]) == want_units, f"jid={jid} {key} units"
+    o, n = (affinity_rows or {}).get(key), (unscoped_rows or {}).get(key)
+    pair = (b["value"], b.get("no_data_reason"))
+    # A moved row the affinity decides (the oracle differs from the
+    # unscoped job) must equal the oracle; detail_gpu_count, already scoped
+    # by the Job Detail GPU stats, keeps the capture.
+    if (
+      o is not None
+      and pair != (g["value"], g.get("no_data_reason"))
+      and (o["value"], o.get("no_data_reason"))
+      != (n["value"], n.get("no_data_reason"))
+    ):
+      assert b.get("no_data_reason") == o.get("no_data_reason"), (
+        f"jid={jid} {key} reason vs oracle"
+      )
+      want = o["value"]
+      want = want if want is None else pytest.approx(want, rel=RTOL_EXACT)
+      assert b["value"] == want, f"jid={jid} {key}: {b['value']!r} vs {o!r}"
+      affinity_moved += 1
+      _record_deviation("metrics_gpu_affinity", key[1], 1.0)
+      continue
+    if (jid, *key) in GOLDEN_GPU_DEVICE_PEAK_DEVIATIONS:
+      oracle = _gpu_device_peak_oracle(table, key[0], "power_usage")
+      assert b["value"] == pytest.approx(oracle, rel=RTOL_EXACT, abs=0), (
+        f"jid={jid} {key}: {b['value']!r} vs oracle {oracle!r}"
+      )
+      gv = g["value"]
+      assert gv is None or abs(oracle - gv) > SQL_SUM_RTOL * abs(gv), (
+        f"jid={jid} {key}: stale deviation"
+      )
+      _record_deviation("metrics_gpu_device_peak", key[1], 1.0)
+      continue
     applies, oracle = _per_host_axis_oracle(table, jid, key)
-    if (jid, *key) in GOLDEN_FIRST_ARC_PEAK_DEVIATIONS:
-      # A listed row must still differ from the capture (no stale entry).
-      assert b["value"] != g["value"], f"jid={jid} {key}: stale deviation"
-    if applies and b["value"] != g["value"]:
+    if (jid, *key) in (
+      GOLDEN_FIRST_ARC_PEAK_DEVIATIONS.keys()
+      | GOLDEN_SINGLE_HOST_BIN_PEAK_DEVIATIONS.keys()
+    ):
+      # A listed row must still differ from the capture beyond the float4
+      # capture noise (no stale entry).
+      bv, gv = b["value"], g["value"]
+      assert (bv is None) != (gv is None) or (
+        gv is not None and abs(bv - gv) > SQL_SUM_RTOL * abs(gv)
+      ), f"jid={jid} {key}: stale deviation"
+    if applies and key[1] in GOLDEN_IMBALANCE_ORACLE_METRICS:
+      if b["value"] != g["value"]:
+        _assert_imbalance_row(
+          b,
+          oracle,
+          metrics_mod._COMPLEX_NO_DATA_REASONS[key[1]],
+          f"jid={jid} {key}",
+        )
+        _record_deviation("metrics_per_host_axis_oracle", key[1], 1.0)
+        continue
+    elif applies and b["value"] != g["value"]:
       want = oracle if oracle is None else pytest.approx(oracle, rel=RTOL_EXACT)
       assert b["value"] == want, (
         f"jid={jid} {key}: {b['value']!r} vs {oracle!r}"
@@ -752,6 +1015,9 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
       )
       continue
     _record_deviation("metrics", key[1], rel)
+  assert affinity_rows is None or affinity_moved, (
+    f"jid={jid}: stale affinity deviation"
+  )
 
 
 def _text_rounded_table(

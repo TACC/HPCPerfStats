@@ -551,7 +551,8 @@ def test_flops_node_imbalance_resolves_host_cpu_hw_families(
   """host_cpu_hw resolves like avg_flops: AMD ``fp_ops_retired``, Intel
   lowercase lanes with their FLOP weights, Grace ``arm_est_flops``; a
   positive family beats another family's 0, and with no positive family the
-  first that read 0 wins. One host compares with nothing: 0.0."""
+  first that read 0 wins. One host compares with nothing: 0.0; every host
+  reading 0 has no ratio: ``NoValue.ALL_HOSTS_ZERO``."""
   table = _counter_table(spec)
   u = job_utils(table.metrics_view())
   typename, got, _hosts = metrics._flops_weighted_events_for_imbalance(u)
@@ -559,10 +560,15 @@ def test_flops_node_imbalance_resolves_host_cpu_hw_families(
   assert metrics.Metrics()._job_arc_avg_flops(table)[1] == typename
   val, typename, units = _imbalance(metrics.flops_node_imbalance, table)
   assert (typename, units) == ("host_cpu_hw", "%")
-  assert val == pytest.approx(
-    F.rate_imbalance_oracle(table, typename, weighted), rel=1e-9
-  )
-  assert val == 0.0 if zero else val > 20.0
+  oracle = F.rate_imbalance_oracle(table, typename, weighted)
+  if oracle == F.ALL_HOSTS_ZERO:
+    assert zero
+    assert val is metrics.NoValue.ALL_HOSTS_ZERO
+  elif zero:
+    assert val == 0.0 == oracle
+  else:
+    assert val == pytest.approx(oracle, rel=1e-9)
+    assert val > 20.0
 
 
 _SSE_LEGACY = metrics.INTEL_LEGACY_SSE_FLOP_EVENTS

@@ -7,6 +7,8 @@ DB access is thread-safe: the titled worker pool closes stale thread-local
 connections around each task; writes are done by the draining parent thread.
 
 Attributes:
+  ALL_HOSTS_ZERO_MSG: no_data_reason of a node imbalance whose compared
+    hosts all read 0 (no positive peak in any bin, so 0/0).
   INSUFFICIENT_DATA_FOR_METRICS_PROCESSING: Attribute.
   METRICS_CONTRACT_VERSION: Metrics contract version stamped on job_data;
     bump on any metric semantics change (backfill lane recomputes).
@@ -42,6 +44,8 @@ Attributes:
   _MAX_SANE_PACKETRATE: Attribute.
   _NV_AMD_GPU_TYPES: Vendor order of the NVIDIA / AMD GPU gauge metrics.
   _PARENT_PERSIST_TIMEOUT_MARKERS: Attribute.
+  _SHORT_INTERVAL_FRACTION: Fraction of the bin period below which an
+    interval marks an extra sample that merges on the peak path.
   _TIME_IMBALANCE_MAX_SLICE_RATIO: Attribute.
   _US_PER_S: Microseconds per second (frame times are int64 us).
   _VECTOR_WIDTHS_32B: Single-precision PMC FP event to FLOP lanes per
@@ -53,6 +57,7 @@ Attributes:
 from __future__ import annotations
 
 import contextlib
+import enum
 import itertools
 import json
 import math
@@ -428,7 +433,9 @@ def _sanitize_metrics_compute_rows(rows: Any) -> Any:
   Central non-finite guard: a real ``value`` (``float`` / NumPy floating;
   integers are always finite) that is NaN or infinite is stored as None with
   ``NON_FINITE_RESULT_MSG`` and ``{"codes": {}, "non_finite": True}``, so no
-  metric can persist NaN or inf.
+  metric can persist NaN or inf. A ``NoValue`` result is stored as None with
+  its reason (``NoValue.ALL_HOSTS_ZERO``: ``ALL_HOSTS_ZERO_MSG`` and
+  ``{"codes": {}, "all_hosts_zero": True}``); both are staff-only codes.
 
   Args:
     rows (Any): Iterable of row dicts (others and rows without ``jid`` are
@@ -442,6 +449,10 @@ def _sanitize_metrics_compute_rows(rows: Any) -> Any:
     ...   [{"jid": "1", "metric": "m", "value": float("nan")}]
     ... )[0]["no_data_codes"]
     {'codes': {}, 'non_finite': True}
+    >>> _sanitize_metrics_compute_rows(
+    ...   [{"jid": "1", "metric": "m", "value": NoValue.ALL_HOSTS_ZERO}]
+    ... )[0]["no_data_reason"]
+    'all hosts read zero'
   """
   out = []
   for row in rows:
@@ -451,21 +462,24 @@ def _sanitize_metrics_compute_rows(rows: Any) -> Any:
     if jid is None:
       continue
     value = row.get("value")
-    non_finite = isinstance(value, (float, np.floating)) and not np.isfinite(
-      value
-    )
+    if isinstance(value, NoValue):
+      no_value = (value.value, value.name.lower())
+    elif isinstance(value, (float, np.floating)) and not np.isfinite(value):
+      no_value = (NON_FINITE_RESULT_MSG, "non_finite")
+    else:
+      no_value = None
     out.append(
       {
         "jid": jid,
         "type": _coerce_metrics_identity_str(row.get("type")),
         "metric": _coerce_metrics_identity_str(row.get("metric")),
         "units": _coerce_metrics_identity_str(row.get("units")),
-        "value": None if non_finite else value,
-        "no_data_reason": NON_FINITE_RESULT_MSG
-        if non_finite
+        "value": None if no_value else value,
+        "no_data_reason": no_value[0]
+        if no_value
         else row.get("no_data_reason"),
-        "no_data_codes": {"codes": {}, "non_finite": True}
-        if non_finite
+        "no_data_codes": {"codes": {}, no_value[1]: True}
+        if no_value
         else row.get("no_data_codes"),
       }
     )
@@ -685,6 +699,23 @@ _COMPLEX_NO_DATA_REASONS = {
 NO_TIME_SERIES_MSG = "No time-series telemetry for this job"
 NO_SIMPLE_SAMPLES_MSG = "No host_data samples for this metric in the job window"
 NON_FINITE_RESULT_MSG = "non-finite result"
+ALL_HOSTS_ZERO_MSG = "all hosts read zero"
+
+
+class NoValue(enum.Enum):
+  """
+  Result a ``compute_metric`` returns in place of a number when the metric
+  has no value for a known reason; ``_sanitize_metrics_compute_rows`` stores
+  it as None with that reason.
+
+  Examples:
+    >>> NoValue.ALL_HOSTS_ZERO.value
+    'all hosts read zero'
+  """
+
+  ALL_HOSTS_ZERO = ALL_HOSTS_ZERO_MSG
+
+
 METRIC_NOT_COMPUTED_YET = "Metric not computed"
 INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
   "Insufficient Data For Metrics Processing"
@@ -766,7 +797,31 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # avg_packetsize also scales the raw port_*_data value from 4-byte words to
 # bytes (_IB_DATA_BYTES_PER_WORD); IB packet sizes read 4x higher, and so does
 # max_fabricbw on host_ib jobs that fall back from arc to value.
-METRICS_CONTRACT_VERSION = 17
+# 18 (2026-11-23): a persist deletes the job's row of a metric stored under
+# another type, so each metric keeps one row; the failed-final fill skips
+# metrics the job already has. Contract 17 left a NULL "imc"
+# dram_bw_node_imbalance row beside the resolved family's value on every
+# recomputed job; the recompute removes such rows. A node imbalance whose
+# compared hosts all read 0 (no positive peak in any bin) is None with
+# ALL_HOSTS_ZERO_MSG, not 0.0. The cluster arc grid behind the peak metrics
+# averages a (host, device)'s several rates in one bin by their intervals,
+# so a sub-second interval after a tick no longer counts like a full one
+# (multi-host max_fabricbw read up to about 36x the IB line rate on hs04);
+# only an extra sample (a short interval) merges, one host included, while a
+# faster-cadence stretch keeps its readings; the per-host value-difference
+# fallback peaks bin the same way.
+# detail_gpu_count counts a host's util devices when its window holds no
+# slow-tier gpu_count sample (e.g. a thinned large job), so
+# detail_gpu_util_max no longer sums GPUs the count left out (hs04:
+# 65,200 % out of 64,800). Every GPU reader (metrics pivot, gauge means,
+# Summary sums, node power estimate) drops DCGM blanks and devices outside
+# the per-host GPU affinity before a device mean or sum, so a blank no longer
+# reaches avg_gpuutil / the GPU node imbalances and a co-tenant's GPU no
+# longer counts for a shared job; avg_tensor_active and the other GPU percent
+# gauges reject blanks. max_gpu_power is the peak of one GPU (the catalog
+# definition), not the peak of a host's device mean. A legacy empty-dev GPU
+# row beside per-device rows on one host no longer counts as another GPU.
+METRICS_CONTRACT_VERSION = 18
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.
@@ -972,6 +1027,12 @@ _US_PER_S = 1_000_000
 # Below this mean resultant length the sample phases are spread over the
 # period and their circular mean says nothing; the bin phase is then 0.
 _BIN_PHASE_MIN_RESULTANT = 0.5
+# On the peak path an interval shorter than this fraction of the bin period
+# is an extra sample and merges into its host's preceding sample; a longer
+# one keeps its own bin. Golden corpus: extra samples sit at most 0.19
+# periods after the previous sample, cadence changes at 0.45 or more, and 2
+# of about 35000 intervals fall between 0.2 and 0.3.
+_SHORT_INTERVAL_FRACTION = 0.25
 
 
 class _BinGrid(NamedTuple):
@@ -1008,6 +1069,58 @@ class _BinGrid(NamedTuple):
       [0, 0, 1]
     """
     return np.searchsorted(self.raw_bins, self._raw(t_us)).astype(np.int64)
+
+  def peak_bins(
+    self, t_us: np.ndarray, offsets: np.ndarray
+  ) -> tuple[np.ndarray, int]:
+    """
+    Bins of the peak path (cluster grids and per-host fallback peaks).
+
+    A sample less than ``_SHORT_INTERVAL_FRACTION`` periods after its
+    host's previous sample is an extra sample and takes the bin of the
+    host's preceding sample with a longer interval (its anchor; a host's
+    first sample is one). Each anchor takes its :meth:`bin_of` bin; a
+    host's second or later anchor in one grid bin (a stretch sampled faster
+    than the period) gets a bin of its own, shared with the other hosts'
+    anchors of the same rank there. With one anchor per host and grid bin
+    these are the :meth:`bin_of` bins.
+
+    Args:
+      t_us (np.ndarray): int64 epoch-us times, each host's distinct times
+        ascending, hosts concatenated.
+      offsets (np.ndarray): int64 host boundaries in ``t_us``
+        (``n_hosts + 1``, every host non-empty).
+
+    Returns:
+      tuple[np.ndarray, int]: int64 bin of each sample (ascending in time
+      within a host) and the bin count.
+
+    Examples:
+      >>> t = np.array([0, 60, 61, 120, 180, 210, 240, 300])
+      >>> g = _bin_grid([t])
+      >>> g.bin_of(t).tolist()
+      [0, 1, 1, 2, 3, 4, 4, 5]
+      >>> b, n = g.peak_bins(t, np.array([0, 8]))
+      >>> b.tolist(), n
+      ([0, 1, 1, 2, 3, 4, 5, 6], 7)
+    """
+    idx = np.arange(t_us.size)
+    step = np.diff(t_us, prepend=t_us[:1])
+    is_anchor = step >= _SHORT_INTERVAL_FRACTION * self.period_us
+    is_anchor[offsets[:-1]] = True
+    a = np.flatnonzero(is_anchor)
+    grid_bin = self.bin_of(t_us[a])
+    host = np.searchsorted(offsets, a, side="right") - 1
+    host_bin = host * self.raw_bins.size + grid_bin
+    pos = np.arange(a.size)
+    new_run = np.r_[True, host_bin[1:] != host_bin[:-1]]
+    rank = pos - np.maximum.accumulate(np.where(new_run, pos, 0))
+    keys, sub = np.unique(
+      grid_bin * (int(rank.max()) + 1) + rank, return_inverse=True
+    )
+    bins = np.empty(t_us.size, dtype=np.int64)
+    bins[a] = sub
+    return bins[np.maximum.accumulate(np.where(is_anchor, idx, 0))], keys.size
 
   def _raw(self, t_us: np.ndarray) -> np.ndarray:
     """
@@ -1075,12 +1188,49 @@ def _bin_grid(times_by_host: Sequence[np.ndarray]) -> _BinGrid | None:
   return grid._replace(raw_bins=np.unique(grid._raw(all_t)))
 
 
+def _bin_ratio(
+  bins: np.ndarray, num: np.ndarray, den: np.ndarray, n_bins: int
+) -> np.ndarray:
+  """
+  Per-bin ``sum(num) / sum(den)`` over the entries with a finite ``num``.
+
+  With ``num`` a rate times its interval (or a counter delta) and ``den``
+  the interval, several intervals in one bin give their time-weighted mean
+  rate, so a sub-second interval counts by its length. A bin with one
+  entry gives ``num / den`` of that entry exactly.
+
+  Args:
+    bins (np.ndarray): int64 bin id in ``[0, n_bins)`` of each entry.
+    num (np.ndarray): float64 numerators (NaN entries are skipped).
+    den (np.ndarray): float64 positive weights, same shape.
+    n_bins (int): Bin count.
+
+  Returns:
+    np.ndarray: float64 ``(n_bins,)`` ratios, NaN where a bin has no entry.
+
+  Examples:
+    >>> _bin_ratio(
+    ...   np.array([0, 0, 2]),
+    ...   np.array([60.0, 1.0, np.nan]),
+    ...   np.array([60.0, 0.1, 1.0]),
+    ...   3,
+    ... ).round(4).tolist()
+    [1.015, nan, nan]
+  """
+  fin = np.isfinite(num)
+  s_num = np.bincount(bins[fin], weights=num[fin], minlength=n_bins)
+  s_den = np.bincount(bins[fin], weights=den[fin], minlength=n_bins)
+  out = np.full(n_bins, np.nan)
+  np.divide(s_num, s_den, out=out, where=s_den > 0)
+  return out
+
+
 def _binned_imbalance_percent(
   sample_times: Sequence[np.ndarray],
   value_times: Sequence[np.ndarray],
   values: Sequence[np.ndarray],
   weights: Sequence[np.ndarray],
-) -> float | None:
+) -> float | NoValue | None:
   """
   Relative node imbalance (%) of per-host values compared per time bin.
 
@@ -1090,7 +1240,10 @@ def _binned_imbalance_percent(
   and a host's values in one bin are averaged with ``weights``. Per bin the
   peak is the max over the hosts present (and 0); per host the mean of
   ``(peak - v) / peak`` over its bins with a positive peak; the result is
-  100 x the largest host mean (a host without such bins counts 0).
+  100 x the largest host mean (a host without such bins counts 0). With no
+  positive peak in any bin every compared host read 0 and there is no
+  ratio: ``NoValue.ALL_HOSTS_ZERO`` (one host included); with no finite
+  value at all, None.
 
   Args:
     sample_times (Sequence[np.ndarray]): Each host's int64 us sample times
@@ -1102,8 +1255,9 @@ def _binned_imbalance_percent(
       in a bin's mean.
 
   Returns:
-    float | None: Imbalance percent; None without hosts or, with several
-    hosts, when no host has two distinct samples.
+    float | NoValue | None: Imbalance percent; ``NoValue.ALL_HOSTS_ZERO``
+    when every finite value is 0; None without hosts or finite values or,
+    with several hosts, when no host has two distinct samples.
 
   Examples:
     >>> t = [np.array([0, 60]), np.array([1, 61])]
@@ -1111,6 +1265,8 @@ def _binned_imbalance_percent(
     >>> w = [np.ones(2), np.ones(2)]
     >>> _binned_imbalance_percent(t, t, v, w)
     25.0
+    >>> _binned_imbalance_percent(t, t, [np.zeros(2)] * 2, w)
+    <NoValue.ALL_HOSTS_ZERO: 'all hosts read zero'>
   """
   if not values:
     return None
@@ -1123,13 +1279,15 @@ def _binned_imbalance_percent(
       return None
     bins = [grid.bin_of(t) for t in value_times]
     n_bins = grid.raw_bins.size
-  means = np.full((len(values), n_bins), np.nan)
-  for k, (b, v, w) in enumerate(zip(bins, values, weights, strict=True)):
-    fin = np.isfinite(v)
-    num = np.bincount(b[fin], weights=v[fin] * w[fin], minlength=n_bins)
-    den = np.bincount(b[fin], weights=w[fin], minlength=n_bins)
-    np.divide(num, den, out=means[k], where=den > 0)
+  means = np.array(
+    [
+      _bin_ratio(b, np.where(np.isfinite(v), v, np.nan) * w, w, n_bins)
+      for b, v, w in zip(bins, values, weights, strict=True)
+    ]
+  )
   peak = np.fmax(np.fmax.reduce(means, axis=0), 0.0)
+  if not (peak > 0).any():
+    return None if np.isnan(means).all() else NoValue.ALL_HOSTS_ZERO
   worst = 0.0
   for row in means:
     valid = np.isfinite(row) & (peak > 0)
@@ -1162,10 +1320,14 @@ def _cluster_grids(u: Any, typename: Any) -> _ClusterGrids | None:
   """
   Cluster grids of ``typename`` binned from the job's ragged pivot.
 
-  The name resolves like ``get_type`` (``"lnet"`` reads ``host_lnet``). A
-  type with rows on one host keeps that host's own samples as bins; several
-  hosts share :func:`_bin_grid`. On hosts that sample on the same ticks the
-  bins are the ticks and the grids equal the old union-axis cluster grids.
+  The name resolves like ``get_type`` (``"lnet"`` reads ``host_lnet``).
+  Every host of the type, one host included, is binned by
+  :meth:`_BinGrid.peak_bins` on one :func:`_bin_grid`, so an extra sample
+  a fraction of a period after a tick joins that tick's bin while a
+  stretch sampled faster than the period keeps a bin per sample. On hosts
+  that sample on the same ticks, one sample per tick, the bins are the
+  ticks and the grids equal the old union-axis cluster grids, or for one
+  host its per-sample grids.
 
   Args:
     u (Any): ``utils`` over a columnar metrics view (``u.job.pivots``).
@@ -1187,13 +1349,10 @@ def _cluster_grids(u: Any, typename: Any) -> _ClusterGrids | None:
   piv = hit[0]
   off, t_us = piv["host_offsets"], piv["times_us"]
   n_h = off.size - 1
-  if n_h == 1:
-    bins, n_bins = np.arange(t_us.size, dtype=np.int64), t_us.size
-  else:
-    grid = _bin_grid([t_us[a:b] for a, b in itertools.pairwise(off)])
-    if grid is None:
-      return None
-    bins, n_bins = grid.bin_of(t_us), grid.raw_bins.size
+  grid = _bin_grid([t_us[a:b] for a, b in itertools.pairwise(off)])
+  if grid is None:
+    return None
+  bins, n_bins = grid.peak_bins(t_us, off)
   value, arc = pivots.binned(typ, bins, n_bins)
   first = np.full(n_bins, np.iinfo(np.int64).max)
   np.minimum.at(first, bins, t_us)
@@ -1275,7 +1434,11 @@ def _max_host_rate(
 
   Each host's rate is ``diff(sum of columns) / diff(t_s)`` on that host's
   own sample times (the per-host fallback of the peak metrics when the
-  cluster grids give no peak).
+  cluster grids give no peak), binned like the cluster grids: the host's
+  own :meth:`_BinGrid.peak_bins`, each interval in the bin of its end
+  sample, and several intervals in one bin as their summed delta over
+  their summed seconds (:func:`_bin_ratio`), so a short extra sample's
+  interval cannot be a peak on its own.
 
   Args:
     stats (Any): ``{host: HostSeries}`` from ``get_type``.
@@ -1299,12 +1462,18 @@ def _max_host_rate(
   """
   peaks = []
   for series in stats.values():
+    grid = _bin_grid([series.t_us])
+    if grid is None:
+      continue
     total = np.zeros(series.shape[0], dtype=np.float64)
     for j in column_indices:
       total = total + series[:, j]
-    peak = _sane_peak_from_rates(
-      _per_interval_rate(total, series.t_s), divisor=divisor, max_sane=max_sane
+    bins, n_bins = grid.peak_bins(series.t_us, np.array([0, total.size]))
+    dt = np.diff(series.t_s)
+    rate = _bin_ratio(
+      bins[1:], np.where(dt > 0, np.diff(total), np.nan), dt, n_bins
     )
+    peak = _sane_peak_from_rates(rate, divisor=divisor, max_sane=max_sane)
     if peak is not None:
       peaks.append(peak)
   return max(peaks, default=None)
@@ -1995,6 +2164,9 @@ def persist_metrics_failed_final(jid: Any, error_text: Any = "") -> bool:
   if not jid or not job_data.objects.filter(pk=jid).exists():
     return False
   now = django_timezone.now()
+  have = set(
+    metrics_data.objects.filter(jid_id=jid).values_list("metric", flat=True)
+  )
   rows = [
     metrics_data(
       jid_id=jid,
@@ -2005,6 +2177,7 @@ def persist_metrics_failed_final(jid: Any, error_text: Any = "") -> bool:
       no_data_reason=METRICS_FAILED_FINAL_REASON,
     )
     for entry in job_metrics_catalog_entries()
+    if entry["metric"] not in have
   ]
   with transaction.atomic():
     if rows:
@@ -2120,6 +2293,18 @@ def _persist_metrics_batch(
       for item in by_key.values()
     ]
     wrote_metrics = bool(rows)
+    # A metric's type can change between computes (its family resolves
+    # differently); the row under the old type goes, one row per metric.
+    new_type = {(j, m): t for j, t, m in by_key}
+    stale = [
+      pk
+      for pk, j, t, m in metrics_data.objects.filter(
+        jid_id__in=jids, metric__in={m for _j, m in new_type}
+      ).values_list("pk", "jid_id", "type", "metric")
+      if new_type.get((j, m), t) != t
+    ]
+    if stale:
+      metrics_data.objects.filter(pk__in=stale).delete()
     if rows:
       metrics_data.objects.bulk_create(
         rows,
@@ -4235,6 +4420,7 @@ class Metrics:
               conv=1.0,
               cache=simple_metric_cache,
               rows_cache=host_data_rows_cache,
+              reject_dcgm_blank=True,
             )
             # Accept mean 0 when samples exist (idle ≠ missing telemetry).
             if v is not None:
@@ -4273,6 +4459,7 @@ class Metrics:
             conv=1.0,
             cache=simple_metric_cache,
             rows_cache=host_data_rows_cache,
+            reject_dcgm_blank=True,
           )
           if ts is None:
             ts = self.job_value_mean(
@@ -4282,6 +4469,7 @@ class Metrics:
               conv=1.0,
               cache=simple_metric_cache,
               rows_cache=host_data_rows_cache,
+              reject_dcgm_blank=True,
             )
           if (
             fb is not None
@@ -5539,7 +5727,8 @@ def _node_imbalance_percent_weighted(
       out, e.g. a host with the PMU off); None compares every host.
 
   Returns:
-    Any: float percent, or None when the type or an event is missing, no
+    Any: float percent, ``NoValue.ALL_HOSTS_ZERO`` when every compared
+    host read 0, or None when the type or an event is missing, no
     host is compared, or several hosts give no bin period.
 
   Examples:
@@ -5725,7 +5914,8 @@ def _node_imbalance_instantaneous_percent(
     event_name (Any): Snapshot event.
 
   Returns:
-    Any: float percent, or None when the type or event is missing or
+    Any: float percent, ``NoValue.ALL_HOSTS_ZERO`` when every host read
+    0, or None when the type or event is missing or
     several hosts give no bin period.
 
   Examples:
@@ -5751,7 +5941,10 @@ def _node_imbalance_instantaneous_percent(
 
 class max_gpu_power:
   """
-  Peak GPU power draw (W) from ``nvidia_gpu`` / ``amd_gpu`` / ``intel_gpu``.
+  Peak GPU power draw (W) of any one GPU from ``nvidia_gpu`` / ``amd_gpu``
+  / ``intel_gpu``: the per-device peak (``FrameIndex.gpu_group_stats``, no
+  DCGM blank, affinity devices only) on a columnar view, not the peak of a
+  host's device mean.
   """
 
   def compute_metric(self, u: Any) -> Any:
@@ -5767,20 +5960,21 @@ class max_gpu_power:
     Examples:
       >>> max_gpu_power().compute_metric(None)  # doctest: +SKIP
     """
+    pivots = getattr(getattr(u, "job", None), "pivots", None)
     for typename in ("nvidia_gpu", "amd_gpu", "intel_gpu"):
       schema, _stats = u.get_type(typename)
       if schema is None or "power_usage" not in schema or not _stats:
         continue
       j = schema["power_usage"].index
-      mx = 0.0
-      used = False
-      for _hostname, stats in _stats.items():
-        col = stats[:, j].astype(float)
-        peak = _finite_amax(col, reject_dcgm_blank=True)
-        if peak is not None:
-          mx = max(mx, peak)
-          used = True
-      if used and mx > 0:
+      peaks = (
+        np.concatenate([stats[:, j] for stats in _stats.values()])
+        if pivots is None
+        else pivots.index.gpu_group_stats(
+          u.resolve_type(typename), ["power_usage"], group_event=False
+        ).vmax
+      )
+      mx = _finite_amax(peaks, reject_dcgm_blank=True)
+      if mx is not None and mx > 0:
         return mx, typename, "W"
     return None, "nvidia_gpu", "W"
 

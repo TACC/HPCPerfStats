@@ -228,3 +228,80 @@ def test_per_host_gpu_lists_add_up_and_restrict_each_host():
   )
   # Host a: its one GPU; host b (no affinity row): all four.
   assert gpu_count_total_for_job_window(table_mixed) == 5
+
+
+def test_host_without_gpu_count_sample_counts_its_util_devices():
+  """A host whose window holds no gpu_count sample still counts its GPUs.
+
+  ``gpu_count`` is a slow-tier key (full collects and job boundaries only);
+  ``gpu_util`` is fast-tier. A large-job window thinned to time slots, or a
+  missed boundary sample, can keep a host's util rows but none of its
+  gpu_count rows. The count dropped that host while the util sum kept it
+  (hs04: 65,200 % "out of" 64,800, one 4-GPU host short).
+  """
+  from datetime import datetime
+
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
+
+  ts = [datetime(2024, 1, 1, 1, m, tzinfo=UTC) for m in range(4)]
+  recs = [
+    (t, h, "nvidia_gpu", "gpu_util", dev, 100.0, None, None)
+    for t in ts
+    for h in ("a", "b")
+    for dev in ("0", "1", "2", "3")
+  ]
+  recs += [
+    (ts[0], "a", "nvidia_gpu", "gpu_count", dev, 4.0, None, None)
+    for dev in ("0", "1", "2", "3")
+  ]
+  table = table_from_records(recs)
+  active, mx, _mean = reduce_gpu_agg_to_util_stats(
+    gpu_agg_rows_for_job_window(table)
+  )
+  count = gpu_count_total_for_job_window(table)
+  assert (active, mx, count) == (8, 800.0, 8)
+  assert mx <= 100.0 * count
+  # Without any gpu_count row the util devices alone are the count.
+  no_count = table_from_records([r for r in recs if r[3] == "gpu_util"])
+  assert gpu_count_total_for_job_window(no_count) == 8
+  # A gpu_count sample below the host's util devices (a 0 from a failed
+  # device query) never shrinks the count under the devices the util sum
+  # covers: 800 % stays out of 800, not 600.
+  recs += [(ts[0], "b", "nvidia_gpu", "gpu_count", "0", 2.0, None, None)]
+  assert gpu_count_total_for_job_window(table_from_records(recs)) == 8
+  # A larger gpu_count (GPUs without util rows) still raises the count.
+  recs += [(ts[0], "a", "nvidia_gpu", "gpu_count", "0", 6.0, None, None)]
+  assert gpu_count_total_for_job_window(table_from_records(recs)) == 10
+
+
+def test_gpu_count_uses_the_vendor_the_util_sum_used():
+  """The count comes from the vendor whose util rows fed the util sum.
+
+  nvidia ``gpu_count`` without usable nvidia util (blanks, or a stale type)
+  plus AMD util rows: the util sum is AMD, so the count must be too (it was
+  nvidia's 1 against 180 % of AMD util).
+  """
+  from datetime import datetime
+
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
+
+  ts = [datetime(2024, 1, 1, 1, m, tzinfo=UTC) for m in range(4)]
+  recs = [
+    (t, "a", "amd_gpu", "gpu_util", dev, 90.0, None, None)
+    for t in ts
+    for dev in ("0", "1")
+  ]
+  recs += [(ts[0], "a", "nvidia_gpu", "gpu_count", "0", 1.0, None, None)]
+  table = table_from_records(recs)
+  _active, mx, _mean = reduce_gpu_agg_to_util_stats(
+    gpu_agg_rows_for_job_window(table)
+  )
+  count = gpu_count_total_for_job_window(table)
+  assert (mx, count) == (180.0, 2)
+  # With no util rows at all, gpu_count alone still reports the inventory.
+  only_count = table_from_records(recs[-1:])
+  assert gpu_count_total_for_job_window(only_count) == 1

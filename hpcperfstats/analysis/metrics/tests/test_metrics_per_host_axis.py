@@ -146,8 +146,9 @@ def test_aligned_multi_host_cluster_grids_unchanged(name, baseline):
 @pytest.mark.parametrize("name", MULTI_ALIGNED)
 def test_aligned_multi_host_metrics_match_baseline(name, baseline):
   """Every complex metric equals the pinned union-axis value exactly, except
-  the node imbalances (arc oracle; their rate source is the ingest arc) and
-  the listed cluster arc peaks (cluster lookup now resolves the type)."""
+  the node imbalances (arc oracle; their rate source is the ingest arc), the
+  listed cluster arc peaks (cluster lookup now resolves the type) and the
+  two-device max_gpu_power (one GPU's peak)."""
   table = _build(name)
   pinned = baseline["fixtures"][name]["metrics"]
   got = _metrics(table)
@@ -159,6 +160,14 @@ def test_aligned_multi_host_metrics_match_baseline(name, baseline):
       oracle = F.cluster_arc_peak_oracle(table, *CLUSTER_ARC_PEAK_SPECS[metric])
       assert oracle is not None and oracle != exp
       assert _close(got[metric], oracle, 1e-12), (metric, got[metric], oracle)
+    elif metric == "max_gpu_power" and name == "aligned_2dev":
+      # One GPU's peak (contract 18), not the pinned peak of the 2-device
+      # mean: the largest owned power_usage sample of the frame.
+      f = table.frame
+      rows = f.series_id == f.series_id_for("nvidia_gpu", "power_usage")
+      oracle = float(f.value[rows & (f.owned == 1)].max())
+      assert oracle != exp
+      assert got[metric] == oracle, (metric, got[metric], oracle)
     else:
       assert got[metric] == exp, (metric, got[metric], exp)
 
@@ -599,3 +608,249 @@ def test_oracles_give_real_values_where_head_gives_nan_or_false_zero(
   assert head["metrics"]["avg_ethbw"] is None
   assert head["metrics"]["time_imbalance"] in (None, 0.0)
   assert head["metrics"]["node_imbalance"] == 0.0
+
+
+# hs04 2026-11-23: multi-host max_fabricbw up to 907255 MiB/s
+# (p99 133981), far above any InfiniBand line rate. Hosts take extra samples
+# a fraction of a second after a tick; a port counter that advances in
+# steps reads a delta of 0 or of a whole step there, so the ingest arc of
+# that short interval is 0 or a multiple of the real rate.
+_COARSE_RATE_B = 20e9  # bytes/s per direction on every host
+_COARSE_OFFSETS_S = (0.12, 0.47, 0.81, 0.95)
+_COARSE_EXTRA_TICKS = (5, 17, 29)
+
+
+def _coarse_counter_ib_table(extra_delay_s, offsets_s=_COARSE_OFFSETS_S):
+  """One host per offset (4 by default), host_ib every 60 s at sub-second
+  offsets; every host takes an extra sample ``extra_delay_s`` after three
+  ticks; the counter advances once per whole second, and ``arc`` is the
+  ingest ``delta / dt``."""
+  from datetime import UTC, datetime
+
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
+
+  rows = []
+  for h, off in enumerate(offsets_s):
+    t0 = F.BASE_EPOCH_S + off
+    ts = sorted(
+      [t0 + 60.0 * k for k in range(40)]
+      + [t0 + 60.0 * k + extra_delay_s for k in _COARSE_EXTRA_TICKS]
+    )
+    prev = None
+    for t in ts:
+      words = math.floor(t) * _COARSE_RATE_B / F.IB_BYTES_PER_WORD
+      delta = arc = None
+      if prev is not None:
+        delta = (words - prev[1]) * F.IB_BYTES_PER_WORD
+        arc = delta / (t - prev[0])
+      when = datetime.fromtimestamp(t, tz=UTC)
+      for ev in ("port_xmit_data", "port_rcv_data"):
+        rows.append((when, f"c{h:03d}", "host_ib", ev, "", words, arc, delta))
+      prev = (t, words)
+  return table_from_records(
+    rows, schema={"host_ib": ["port_xmit_data", "port_rcv_data"]}
+  )
+
+
+def test_cluster_arc_peak_weights_subsecond_intervals_by_length():
+  """Regression (hs04 2026-11-23, multi-host ``max_fabricbw`` above line
+  rate): a host's rates in one bin enter the cluster arc grid once, as
+  their interval-weighted mean, so the 0.1 s extra-sample rate (10x the
+  real rate on the hosts whose counter stepped in that 0.1 s) no longer
+  counts like a 60 s interval. Unweighted, the peak read 1.75x the real
+  tx+rx rate here (10x on the union axis)."""
+  from hpcperfstats.analysis.metrics.lib import metrics
+  from hpcperfstats.analysis.metrics.lib.gen.utils import utils
+
+  true_peak = 2 * _COARSE_RATE_B / F.MIB
+  table = _coarse_counter_ib_table(0.1)
+  arc = table.frame.arc[np.isfinite(table.frame.arc)]
+  assert arc.max() >= 9.9 * _COARSE_RATE_B  # the 0.1 s spike is present
+  value, typ, _units = metrics.max_fabricbw().compute_metric(
+    utils(table.metrics_view())
+  )
+  assert typ == "host_ib"
+  assert value == pytest.approx(true_peak, rel=0.01)
+  oracle = F.cluster_arc_peak_oracle(
+    table, "host_ib", ("port_xmit_data", "port_rcv_data"), F.MIB
+  )
+  assert value == pytest.approx(oracle, rel=1e-12)
+
+
+def test_single_host_cluster_arc_peak_merges_subsecond_extra_sample():
+  """Regression: one host's 0.1 s extra sample straddles a
+  counter step, so its ingest arc reads 10x the real rate. A single-host
+  type is binned on the host's own grid like several hosts, so that rate
+  joins its tick's bin by interval weight and the peak is the real rate
+  (one step of 61 counted seconds over the 60.1 s bin: 61 / 60.1), not 10x
+  (per-sample bins before)."""
+  from hpcperfstats.analysis.metrics.lib import metrics
+  from hpcperfstats.analysis.metrics.lib.gen.utils import utils
+
+  true_peak = 2 * _COARSE_RATE_B / F.MIB
+  table = _coarse_counter_ib_table(0.1, offsets_s=(0.95,))
+  arc = table.frame.arc[np.isfinite(table.frame.arc)]
+  assert arc.max() >= 9.9 * _COARSE_RATE_B  # the 0.1 s spike is present
+  value, typ, _units = metrics.max_fabricbw().compute_metric(
+    utils(table.metrics_view())
+  )
+  assert typ == "host_ib"
+  assert value == pytest.approx(true_peak, rel=0.02)
+  # Counter words near 9e18 carry about 1e-7 float64 rounding.
+  assert value == pytest.approx(true_peak * 61 / 60.1, rel=1e-6)
+  oracle = F.cluster_arc_peak_oracle(
+    table, "host_ib", ("port_xmit_data", "port_rcv_data"), F.MIB
+  )
+  assert value == pytest.approx(oracle, rel=1e-12)
+
+
+def test_single_host_regular_cluster_grids_keep_one_bin_per_sample():
+  """Parity: a single host with one sample per period gets one
+  bin per sample, so its cluster grids equal the per-sample grids bit for
+  bit; one sample only (no period) gives no grid, and no peak, as
+  before."""
+  from hpcperfstats.analysis.metrics.lib import metrics
+  from hpcperfstats.analysis.metrics.lib.gen.utils import utils
+
+  table = F.build_table(
+    "single_regular",
+    {"c000": F._ticks(30, offset_s=0.37)},
+    seed=11,
+    types=("host_ib",),
+  )
+  u = utils(table.metrics_view())
+  grids = metrics._cluster_grids(u, "host_ib")
+  piv = u.job.pivots
+  n = piv.get("host_ib")[0]["times_us"].size
+  value, arc = piv.binned("host_ib", np.arange(n, dtype=np.int64), n)
+  np.testing.assert_array_equal(grids.value, value)
+  np.testing.assert_array_equal(grids.arc, arc)
+  one = F.build_table(
+    "single_one", {"c000": F._ticks(1)}, seed=11, types=("host_ib",)
+  )
+  u1 = utils(one.metrics_view())
+  assert metrics._cluster_grids(u1, "host_ib") is None
+  assert metrics.max_fabricbw().compute_metric(u1)[0] is None
+
+
+def test_max_host_rate_merges_short_interval_into_its_tick():
+  """Regression (per-host fallback): the value difference over
+  floored seconds has the same short-interval spike. A counter that steps
+  every 10 s, sampled every 60 s with one extra sample 1 s after a tick
+  that straddles a step: that 1 s interval reads 10x the rate. On the
+  host's own bin grid it joins its tick's interval, so the peak is the
+  merged interval's counted traffic, 70 units over 61 s, not 10."""
+  from hpcperfstats.analysis.metrics.lib import metrics
+  from hpcperfstats.analysis.metrics.lib.columnar.kernels import HostSeries
+
+  t_s = np.sort(np.append(9.5 + 60.0 * np.arange(10), 310.5))
+  values = (np.floor(t_s / 10) * 10).reshape(-1, 1)
+  t_us = np.round(t_s * US).astype(np.int64)
+  series = HostSeries(np.floor(t_s), t_us, values, values)
+  spike = metrics._per_interval_rate(values[:, 0], np.floor(t_s))
+  assert np.nanmax(spike) == 10.0
+  assert metrics._max_host_rate({"h": series}, [0]) == 70 / 61
+  regular = HostSeries(
+    np.floor(t_s[t_s != 310.5]),
+    t_us[t_s != 310.5],
+    values[t_s != 310.5],
+    values[t_s != 310.5],
+  )
+  assert metrics._max_host_rate({"h": regular}, [0]) == 1.0
+
+
+@pytest.mark.parametrize("n_hosts", [1, 2])
+def test_half_period_cadence_keeps_its_peak(n_hosts):
+  """Regression: a stretch sampled at half the median period (30 s on 60 s)
+  is a cadence change, not an extra sample, so each of its readings keeps
+  its own peak bin, one host or several. Host 0 runs 3x the base rate over
+  one 30 s interval; merging it with the neighbouring 30 s interval (the
+  P/2 bin) halved the excess."""
+  from datetime import UTC, datetime
+
+  from hpcperfstats.analysis.metrics.lib import metrics
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
+  from hpcperfstats.analysis.metrics.lib.gen.utils import utils
+
+  rate_b = 1e9
+  ticks = np.union1d(60.0 * np.arange(20), [630.0, 690.0, 750.0, 810.0])
+  rows = []
+  for h in range(n_hosts):
+    words = 0.0
+    for k, t in enumerate(ticks + 0.13 * h):
+      arc = None
+      if k:
+        arc = rate_b * (3 if (h, ticks[k]) == (0, 750.0) else 1)
+        words += arc * (ticks[k] - ticks[k - 1]) / F.IB_BYTES_PER_WORD
+      when = datetime.fromtimestamp(F.BASE_EPOCH_S + t, tz=UTC)
+      for ev in ("port_xmit_data", "port_rcv_data"):
+        rows.append((when, f"c{h:03d}", "host_ib", ev, "", words, arc, None))
+  table = table_from_records(
+    rows, schema={"host_ib": ["port_xmit_data", "port_rcv_data"]}
+  )
+  value, _typ, _units = metrics.max_fabricbw().compute_metric(
+    utils(table.metrics_view())
+  )
+  want = 2 * rate_b * (3 + (n_hosts - 1)) / n_hosts / F.MIB
+  assert value == pytest.approx(want, rel=1e-12)
+  oracle = F.cluster_arc_peak_oracle(
+    table, "host_ib", ("port_xmit_data", "port_rcv_data"), F.MIB
+  )
+  assert value == pytest.approx(oracle, rel=1e-12)
+
+
+def test_node_imbalance_all_hosts_zero_is_no_value():
+  """With every compared host at 0 no bin has a positive
+  peak, so there is no ratio (0/0): ``NoValue.ALL_HOSTS_ZERO``, one host
+  included; with no finite value at all, None; one host with data, 0.0."""
+  from hpcperfstats.analysis.metrics.lib import metrics
+
+  t = [F._ticks(4), F._ticks(4, offset_s=0.3)]
+  w = [np.ones(3), np.ones(3)]
+  zeros = [np.zeros(3), np.zeros(3)]
+  ends = [x[1:] for x in t]
+  imb = metrics._binned_imbalance_percent
+  assert imb(t, ends, zeros, w) is metrics.NoValue.ALL_HOSTS_ZERO
+  assert imb(t[:1], ends[:1], zeros[:1], w[:1]) is (
+    metrics.NoValue.ALL_HOSTS_ZERO
+  )
+  nan = [np.full(3, np.nan)] * 2
+  assert imb(t, ends, nan, w) is None
+  assert imb(t[:1], [t[0][:0]], [np.empty(0)], [np.empty(0)]) is None
+  assert imb(t[:1], ends[:1], [np.array([0.0, 2.0, 0.0])], w[:1]) == 0.0
+  half = [np.array([0.0, 2.0, 0.0]), np.array([0.0, 1.0, 0.0])]
+  assert imb(t, ends, half, w) == pytest.approx(50.0)
+
+
+@pytest.mark.parametrize("n_hosts", [1, 3])
+def test_node_imbalance_metrics_store_none_when_all_hosts_read_zero(n_hosts):
+  """All-zero node imbalances end to end on the rate and snapshot helpers:
+  idle CPU and
+  GPU on every host give ``NoValue.ALL_HOSTS_ZERO``, which the persist
+  sanitizer stores as None with ``ALL_HOSTS_ZERO_MSG``."""
+  from hpcperfstats.analysis.metrics.lib import metrics
+  from hpcperfstats.analysis.metrics.lib.gen.utils import utils
+
+  table = F.build_table(
+    "all_zero",
+    {f"c{h:03d}": F._ticks(12, offset_s=0.2 * h) for h in range(n_hosts)},
+    seed=3,
+    types=("host_cpu", "nvidia_gpu"),
+  )
+  f = table.frame
+  f.arc[:] = np.where(np.isnan(f.arc), np.nan, 0.0)
+  f.value[:] = 0.0
+  u = utils(table.metrics_view())
+  for cls in (metrics.node_imbalance, metrics.gpu_util_node_imbalance):
+    value, typ, _units = cls().compute_metric(u)
+    assert value is metrics.NoValue.ALL_HOSTS_ZERO, cls.__name__
+    (row,) = metrics._sanitize_metrics_compute_rows(
+      [{"jid": "1", "type": typ, "metric": cls.__name__, "value": value}]
+    )
+    assert row["value"] is None
+    assert row["no_data_reason"] == metrics.ALL_HOSTS_ZERO_MSG
+    assert row["no_data_codes"] == {"codes": {}, "all_hosts_zero": True}

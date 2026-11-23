@@ -120,7 +120,11 @@ _GPU_MULTIPRECISION_MIX_IDLE_REASON = (
 # states (no partial sums; Type Detail fills short interior gaps).
 # 17 (2026-11-18): GPU pie drops the DFMA wedge (it duplicated FP64), adds
 # Integer pipe, Tensor DMMA (FP64) and the unattributed tensor remainder.
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 17
+# 18 (2026-11-23): GPU count adds a host's util devices when its window holds
+# no gpu_count sample (slow-tier key), so the util sum no longer covers a host
+# the count left out; cached GPU Information rebuilds from recomputed metrics.
+# A legacy empty-dev GPU row beside per-device rows is no extra GPU.
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 18
 
 _FSIO_FINGERPRINT_METRIC_NAMES = tuple(
   sorted(name for name, _t, _u in fsio_job_detail_catalog())

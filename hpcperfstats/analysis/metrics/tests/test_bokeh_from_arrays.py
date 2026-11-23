@@ -38,6 +38,10 @@ from hpcperfstats.analysis.metrics.lib.plot.job_detail_bokeh_plot_descriptions i
   SENTINEL_GAP_HELP,
 )
 from hpcperfstats.analysis.metrics.tests.test_columnar_golden import (
+  GOLDEN_GPU_AFFINITY_JIDS,
+  GOLDEN_GPU_UTIL_Y_TOP_JIDS,
+  _affinity_filtered_table,
+  _gpu_util_y_top_oracle,
   capture_golden_scales,
 )
 from hpcperfstats.site.lib.machine.job_plot_artifacts import (
@@ -701,6 +705,28 @@ def strip_data(node: Any) -> Any:
   return node
 
 
+def _drop_y_scale(node: Any) -> Any:
+  """Panel without its y_range, help Label ``y`` and hit-source ``hy``:
+  the parts that follow the y-axis top."""
+  if isinstance(node, list):
+    return [_drop_y_scale(v) for v in node]
+  if not isinstance(node, dict):
+    return node
+  out = {
+    k: _drop_y_scale(v) for k, v in node.items() if k not in ("y_range", "hy")
+  }
+  if out.get("name") == "Label":
+    out["attributes"] = {k: v for k, v in out["attributes"].items() if k != "y"}
+  return out
+
+
+def _y_range_end(fig_norm: Any) -> Any:
+  """``y_range.end`` of a normalised Figure."""
+  return _unwrap(_unwrap(fig_norm)["attributes"]["y_range"])["attributes"][
+    "end"
+  ]
+
+
 def compare_summary_grid(
   jt: ColumnarJobTable, golden: dict[str, Any], got: Any, want: Any
 ) -> list[str]:
@@ -711,9 +737,25 @@ def compare_summary_grid(
   D36-explained extra column (plan decision D36, same rule as the series
   test); a panel only in the golden must be the D36 ``instr`` case. The
   GridPlot's own toolbar merges the children's tools and is not compared
-  separately; the remaining root attributes are.
+  separately; the remaining root attributes are. GPU reader gate
+  deviations (``test_columnar_golden``): on ``GOLDEN_GPU_AFFINITY_JIDS`` a
+  panel the affinity oracle build lacks may be missing, and a panel that
+  differs from the capture must equal the oracle's; on
+  ``GOLDEN_GPU_UTIL_Y_TOP_JIDS`` the GPU util y-axis top must equal
+  ``_gpu_util_y_top_oracle`` and differ from the capture, the rest of the
+  panel equal the capture.
   """
   summary = build_summary_series(jt)
+  oracle_panels: dict[str, Any] = {}
+  if jt.jid in GOLDEN_GPU_AFFINITY_JIDS:
+    oracle_jt = _affinity_filtered_table(jt, golden)
+    item, _reason, _bw = compute_plot_item_for_kind(
+      oracle_jt, "summary_plot", False
+    )
+    oracle_panels = grid_panels(
+      apply_golden_prose_updates(normalize_bokeh_doc(item)),
+      [n for n, _l, _t in build_summary_series(oracle_jt).render_specs],
+    )
   golden_summary = golden["series"]["summary"]
   golden_cols = {
     c
@@ -733,11 +775,23 @@ def compare_summary_grid(
       metric, summary.frame.columns, golden_cols
     ):
       problems.append(f"unexplained extra panel {metric}")
+  affinity_moved = 0
   for metric in sorted(set(want_panels) - set(got_panels)):
+    if oracle_panels and metric not in oracle_panels:
+      affinity_moved += 1
+      continue
     if not d36_missing_panel_explained(metric, golden_cols):
       problems.append(f"panel missing in columnar build: {metric}")
   for metric in sorted(set(got_panels) & set(want_panels)):
     a, b = got_panels[metric], want_panels[metric]
+    if metric in oracle_panels and diff_normalized(a, b):
+      b = oracle_panels[metric]
+      affinity_moved += 1
+    if metric == "nv_gpu_util" and jt.jid in GOLDEN_GPU_UTIL_Y_TOP_JIDS:
+      top = _y_range_end(a)
+      if top != _gpu_util_y_top_oracle(jt) or top == _y_range_end(b):
+        problems.append(f"/panel[{metric}] y top {top} vs oracle")
+      a, b = _drop_y_scale(a), _drop_y_scale(b)
     if metric in coalesce:
       a, b = strip_data(a), strip_data(b)
       # y_range and the help-marker Label position follow the data.
@@ -761,6 +815,8 @@ def compare_summary_grid(
     if k not in ("children", "toolbar")
   }
   problems.extend(diff_normalized(root_got, root_want, "/root"))
+  if oracle_panels and not affinity_moved:
+    problems.append("stale GPU affinity deviation")
   return problems
 
 

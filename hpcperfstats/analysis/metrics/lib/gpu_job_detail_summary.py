@@ -114,10 +114,13 @@ def reduce_gpu_agg_to_util_stats(
     slot = per_device.setdefault(device_key, {})
     slot[event] = r
 
+  # A legacy node-aggregate row (dev '') is no extra GPU on a host that also
+  # reports per-device rows.
+  hw_hosts = {h for h, d in per_device if d and not d.startswith("j:")}
   selected_rows = []
-  for slot in per_device.values():
+  for (host, dev), slot in per_device.items():
     row = slot.get("gpu_util") or slot.get("utilization")
-    if row:
+    if row and (dev or host not in hw_hosts):
       selected_rows.append(row)
 
   valid_rows = []

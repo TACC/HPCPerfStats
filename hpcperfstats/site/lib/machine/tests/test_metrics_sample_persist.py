@@ -38,6 +38,7 @@ def test_persist_metrics_batch_sets_metrics_distinct_time_count(
       metrics_module.metrics_data.objects,
       "bulk_create",
     ) as mock_bulk_create,
+    patch.object(metrics_module.metrics_data.objects, "filter"),
     patch.object(
       metrics_module.metrics_data.objects,
       "bulk_update",
@@ -94,6 +95,7 @@ def test_persist_metrics_batch_skips_job_update_when_distinct_none(
       metrics_module.metrics_data.objects,
       "bulk_create",
     ),
+    patch.object(metrics_module.metrics_data.objects, "filter"),
     patch.object(
       metrics_module.metrics_data.objects,
       "bulk_update",
@@ -132,6 +134,7 @@ def test_persist_metrics_batch_coerces_list_metric_fields(
       metrics_module.metrics_data.objects,
       "bulk_create",
     ) as mock_bulk_create,
+    patch.object(metrics_module.metrics_data.objects, "filter"),
     patch.object(
       metrics_module.job_data.objects,
       "filter",
@@ -166,6 +169,7 @@ def test_persist_metrics_batch_coerces_list_like_jid(
       metrics_module.metrics_data.objects,
       "bulk_create",
     ) as mock_bulk_create,
+    patch.object(metrics_module.metrics_data.objects, "filter"),
     patch.object(
       metrics_module.job_data.objects,
       "filter",
@@ -260,12 +264,88 @@ def test_persist_metrics_batch_dedupes_duplicate_keys_in_one_batch():
   )
 
 
+def _job(jid):
+  from hpcperfstats.site.lib.machine.models import job_data
+
+  now = timezone.now()
+  return job_data.objects.create(
+    jid=jid,
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["h1"],
+  )
+
+
+def _metric_row(job, typ, metric, value, reason=None):
+  return {
+    "jid": job,
+    "type": typ,
+    "metric": metric,
+    "units": "%",
+    "value": value,
+    "no_data_reason": reason,
+  }
+
+
+def _rows_of(job, metric):
+  from hpcperfstats.site.lib.machine.models import metrics_data
+
+  return sorted(
+    metrics_data.objects.filter(jid_id=job.jid, metric=metric).values_list(
+      "type", "value"
+    )
+  )
+
+
+@pytest.mark.django_db
+def test_persist_metrics_batch_drops_row_of_metric_under_another_type():
+  """A recompute whose metric resolves to another type keeps one row per
+  (jid, metric): the row under the old type goes (every recomputed job on
+  hpcperfstats04 kept a NULL ``imc`` dram_bw_node_imbalance row beside the
+  resolved ``host_cpu_hw`` value); other jobs' rows stay."""
+  j, k = _job("retype_a"), _job("retype_b")
+  dram = "dram_bw_node_imbalance"
+  _persist_metrics_batch(
+    [
+      _metric_row(j, "imc", dram, None, "No usable DRAM telemetry"),
+      _metric_row(j, "cpu", "avg_cpuusage", 1.0),
+      _metric_row(k, "imc", dram, None, "No usable DRAM telemetry"),
+    ],
+    None,
+  )
+  _persist_metrics_batch(
+    [
+      _metric_row(j, "host_cpu_hw", dram, 41.7),
+      _metric_row(j, "cpu", "avg_cpuusage", 2.0),
+    ],
+    None,
+  )
+  assert _rows_of(j, dram) == [("host_cpu_hw", 41.7)]
+  assert _rows_of(j, "avg_cpuusage") == [("cpu", 2.0)]
+  assert _rows_of(k, dram) == [("imc", None)]
+
+
+@pytest.mark.django_db
+def test_persist_metrics_failed_final_keeps_one_row_per_metric():
+  """The failed-final fill skips a metric the job already has under a type
+  other than the catalog's, so no NULL catalog row sits beside it."""
+  j = _job("retype_failed_final")
+  dram = "dram_bw_node_imbalance"
+  _persist_metrics_batch([_metric_row(j, "host_cpu_hw", dram, 5.0)], None)
+  assert metrics_module.persist_metrics_failed_final(j.jid, "boom") is True
+  assert _rows_of(j, dram) == [("host_cpu_hw", 5.0)]
+  assert _rows_of(j, "avg_cpuusage")[0][1] is None
+
+
 @pytest.mark.django_db(databases=[])
 def test_persist_metrics_batch_writes_host_data_schema(sample_metric_row):
   """S4: the worker's schema lands on job_data in the persist transaction."""
   qs = MagicMock()
   with (
     patch.object(metrics_module.metrics_data.objects, "bulk_create"),
+    patch.object(metrics_module.metrics_data.objects, "filter"),
     patch.object(metrics_module.job_data.objects, "filter", return_value=qs),
     patch.object(
       metrics_module.transaction,
@@ -315,6 +395,7 @@ def test_persist_metrics_batch_clears_dirty_stamps_set_before_compute(
   started = timezone.now()
   with (
     patch.object(metrics_module.metrics_data.objects, "bulk_create"),
+    patch.object(metrics_module.metrics_data.objects, "filter"),
     patch.object(
       metrics_module.job_data.objects, "filter", return_value=qs
     ) as mock_filter,

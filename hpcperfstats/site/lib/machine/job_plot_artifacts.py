@@ -213,7 +213,10 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 # x86 direct-perf FLOP / RAPL series text), embedded in the json_item.
 # 26 (2026-11-21): Summary and Type Detail host series longer than
 # PLOT_MAX_POINTS_PER_HOST are min/max decimated; columns ship as arrays.
-APP_PLOT_ARTIFACT_SCHEMA_VERSION = 26
+# 27 (2026-11-23): Summary GPU sums keep only the per-host GPU affinity
+# devices (util, power, node power estimate), and the GPU util y-axis top
+# is the largest host's GPU count x 100.
+APP_PLOT_ARTIFACT_SCHEMA_VERSION = 27
 
 JOB_PLOT_JSON_KEYS: dict[str, tuple[str, str]] = {
   kind: (spec.json_item_key, spec.unavailable_reason_key)

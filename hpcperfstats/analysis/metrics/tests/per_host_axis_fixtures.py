@@ -57,6 +57,12 @@ BASELINE_PATH = (
   Path(__file__).parent / "fixtures" / "per_host_axis_baseline.json"
 )
 REPO_ROOT = Path(__file__).resolve().parents[4]
+# Oracle outcome of a node imbalance whose compared hosts all read 0 (no
+# positive peak in any bin): the metric stores None with this reason.
+ALL_HOSTS_ZERO = "all hosts read zero"
+# Peak-path bin rule: an interval shorter than this fraction of the bin
+# period is an extra sample merged into the host's previous anchor sample.
+SHORT_INTERVAL_FRACTION = 0.25
 
 # Counter: cumulative value from a positive per-interval rate (per second).
 # Gauge: snapshot value drawn per sample inside (lo, hi).
@@ -746,17 +752,22 @@ def bin_grid(times_by_host: Mapping[str, np.ndarray]) -> BinGrid | None:
 
 def relative_imbalance_percent(
   per_host: Mapping[str, Mapping[int, float]],
-) -> float | None:
+) -> float | str | None:
   """HEAD's formula on per-host ``{bin: value}`` (finite values only): per
   bin the max over the hosts present (and 0); per host the mean of
   ``(max - v) / max`` over its bins with max > 0 (no such bin counts 0);
-  100 x the largest host mean. None without hosts."""
+  100 x the largest host mean. None without hosts or values;
+  ``ALL_HOSTS_ZERO`` when no bin has max > 0 (every value is 0)."""
   if not per_host:
     return None
   peak: dict[int, float] = {}
   for series in per_host.values():
     for b, v in series.items():
       peak[b] = max(peak.get(b, 0.0), v)
+  if not peak:
+    return None
+  if max(peak.values()) <= 0:
+    return ALL_HOSTS_ZERO
   worst = 0.0
   for series in per_host.values():
     rel = [(peak[b] - v) / peak[b] for b, v in series.items() if peak[b] > 0]
@@ -769,7 +780,7 @@ def rate_imbalance_oracle(
   table: ColumnarJobTable,
   typ: str,
   weighted_events: Sequence[tuple[str, float]],
-) -> float | None:
+) -> float | str | None:
   """Node imbalance from arc rates (the ingest arc, not diff(value) /
   diff(t)): per host the rate of interval k is the weighted sum of the
   device-mean arcs at sample k+1.
@@ -782,7 +793,7 @@ def rate_imbalance_oracle(
     return None
   rates: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
   for host, s in series.items():
-    total = s.grid @ w if s.grid.size else np.empty(0)
+    total = (s.grid * w).sum(axis=1) if s.grid.size else np.empty(0)
     rates[host] = (s.t_us[1:], np.diff(s.t_us) / US, total[1:])
   if len(series) == 1:
     ((_t_end, _dt, r),) = rates.values()
@@ -810,7 +821,7 @@ def rate_imbalance_oracle(
 
 def snapshot_imbalance_oracle(
   table: ColumnarJobTable, typ: str, event: str
-) -> float | None:
+) -> float | str | None:
   """Node imbalance of a snapshot value (GPU util / tensor): DCGM blanks
   dropped; one host uses its samples directly; several hosts put each sample
   in the bin of its time, a host's samples in one bin are averaged."""
@@ -843,7 +854,7 @@ def snapshot_imbalance_oracle(
 
 def node_imbalance_oracles(
   table: ColumnarJobTable, specs: Mapping[str, tuple[str, str, Any]]
-) -> dict[str, float | None]:
+) -> dict[str, float | str | None]:
   """Every node imbalance of ``specs`` from the oracles above."""
   out = {}
   for metric, (kind, typ, arg) in specs.items():
@@ -1012,12 +1023,17 @@ def cluster_arc_peak_oracle(
   divisor: float,
   max_sane: float | None = None,
 ) -> float | None:
-  """Peak of the cluster arc series: per bin (one host: each distinct sample
-  time; several: ``bin_grid`` of the hosts' times) the mean of each event's
-  finite arcs over every (host, device) row, summed over ``events``; the
+  """Peak of the cluster arc series: per peak bin (``bin_grid`` of the
+  hosts' times, one host included, an extra sample joined to its host's
+  anchor and a host's k-th anchor in a grid bin in sub-bin k; None when no
+  host has two distinct samples, so every arc is a first sample) the mean
+  of each event's finite arcs over every (host, device), summed over
+  ``events``; the
   largest positive sum divided by ``divisor`` that is at most ``max_sane``.
   A host's first owned sample of ``typ`` (any event) is left out of the
-  arc: its ingest rate covers the interval before the job."""
+  arc: its ingest rate covers the interval before the job. A (host, device)
+  with several arcs in one bin counts once, as their mean weighted by each
+  arc's interval (time since the host's previous sample of ``typ``)."""
   f = table.frame
   sid = {s: i for i, s in enumerate(f.series)}
   sids = [sid[(typ, e)] for e in events]
@@ -1032,23 +1048,66 @@ def cluster_arc_peak_oracle(
   }
   pre_job = t == np.array([first_t[h] for h in host.tolist()], dtype=t.dtype)
   by_host = {h: np.unique(t[host == h]) for h in np.unique(host).tolist()}
-  if len(by_host) == 1:
-    keys = np.unique(t)
-    key = np.searchsorted(keys, t)
-    n = keys.size
-  else:
-    grid = bin_grid(by_host)
-    key = grid.bin_of(t)
-    n = grid.raw_bins.size
+  grid = bin_grid(by_host)
+  if grid is None:
+    return None
+  host_t = {
+    h: np.unique(f.time_us[typ_rows & (f.host_id == h)])
+    for h in np.unique(host).tolist()
+  }
+  # Peak bin of every (host, time): an extra sample (less than
+  # SHORT_INTERVAL_FRACTION periods after the host's previous sample)
+  # joins its host's last anchor; the k-th anchor of a host in one grid
+  # bin goes to sub-bin (bin, k), shared across hosts.
+  peak_bin: dict[tuple[int, int], tuple[int, int]] = {}
+  for h, times in host_t.items():
+    seen: dict[int, int] = {}
+    cur = None
+    for k, ti in enumerate(times.tolist()):
+      if k == 0 or ti - times[k - 1] >= SHORT_INTERVAL_FRACTION * (
+        grid.period_us
+      ):
+        b = int(grid.bin_of(np.array([ti]))[0])
+        cur = (b, seen.get(b, 0))
+        seen[b] = cur[1] + 1
+      peak_bin[(h, ti)] = cur
+  order = sorted(set(peak_bin.values()))
+  index = {b: i for i, b in enumerate(order)}
+  key = np.array(
+    [
+      index[peak_bin[(h, ti)]]
+      for h, ti in zip(host.tolist(), t.tolist(), strict=True)
+    ]
+  )
+  n = len(order)
+  dt = np.array(
+    [
+      ti - host_t[h][np.searchsorted(host_t[h], ti) - 1]
+      for h, ti in zip(host.tolist(), t.tolist(), strict=True)
+    ],
+    dtype=np.float64,
+  )
+  dev, arc = f.dev_id[rows], f.arc[rows]
   total = np.zeros(n)
   for s in sids:
-    r = f.series_id[rows] == s
-    a = np.where(pre_job[r], np.nan, f.arc[rows][r])
-    fin = np.isfinite(a)
-    cnt = np.bincount(key[r][fin], minlength=n)
-    sums = np.bincount(key[r][fin], weights=a[fin], minlength=n)
-    with np.errstate(invalid="ignore", divide="ignore"):
-      total = total + np.where(cnt > 0, sums / np.maximum(cnt, 1), np.nan)
+    r = np.flatnonzero(f.series_id[rows] == s)
+    groups: dict[tuple[int, int, int], list[tuple[float, float]]] = {}
+    for i in r.tolist():
+      a = np.nan if pre_job[i] else float(arc[i])
+      if np.isfinite(a):
+        g = (int(key[i]), int(host[i]), int(dev[i]))
+        groups.setdefault(g, []).append((a, float(dt[i])))
+    per_bin: dict[int, list[float]] = {}
+    for (b, _h, _d), pairs in groups.items():
+      rate = (
+        pairs[0][0]
+        if len(pairs) == 1
+        else sum(a * w for a, w in pairs) / sum(w for _a, w in pairs)
+      )
+      per_bin.setdefault(b, []).append(rate)
+    total = total + np.array(
+      [float(np.mean(per_bin[b])) if b in per_bin else np.nan for b in range(n)]
+    )
   pos = total[np.isfinite(total) & (total > 0)] / divisor
   if max_sane is not None:
     pos = pos[pos <= max_sane]
