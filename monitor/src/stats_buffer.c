@@ -303,33 +303,28 @@ out:
   return rc;
 }
 
-static void ring_buffer_drop_first(struct sf_ring_buffer *w)
+static void ring_buffer_drop_node(struct sf_ring_buffer *w, struct sf_queue *node)
 {
-  struct sf_queue *sf = w->q_first;
-
-  if (sf == NULL || w->q_count <= 0)
-    return;
-
   if (w->q_count == 1) {
-    stats_buffer_close(sf->sf);
-    free(sf->sf);
-    remque(sf);
-    free(sf);
     w->q = NULL;
     w->q_first = NULL;
-    w->q_count = 0;
-    return;
+  } else {
+    if (w->q_first == node)
+      w->q_first = node->forward;
+    if (w->q == node)
+      w->q = node->backward;
   }
-
-  w->q_first = sf->forward;
-  if (w->q == sf)
-    w->q = sf->backward;
-
-  stats_buffer_close(sf->sf);
-  free(sf->sf);
-  remque(sf);
-  free(sf);
+  stats_buffer_close(node->sf);
+  free(node->sf);
+  remque(node);
+  free(node);
   w->q_count -= 1;
+}
+
+void ring_buffer_truncate(struct sf_ring_buffer *w, int keep)
+{
+  while (w->q_count > 0 && w->q_count > keep)
+    ring_buffer_drop_node(w, w->q);
 }
 
 static size_t g_rmq_soft_max_override; /* 0 = use STATS_BUFFER_RMQ_SOFT_MAX_BYTES */
@@ -394,7 +389,7 @@ void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long 
       w->r_count++;
       if (processed_entries != NULL)
         (*processed_entries)++;
-      ring_buffer_drop_first(w);
+      ring_buffer_drop_node(w, w->q_first);
       batches++;
       goto maybe_budget_break;
     }
@@ -454,7 +449,7 @@ void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long 
     if (processed_entries != NULL)
       *processed_entries += batch_count;
     for (int i = 0; i < batch_count; i++)
-      ring_buffer_drop_first(w);
+      ring_buffer_drop_node(w, w->q_first);
     batches++;
 
   maybe_budget_break:
@@ -495,76 +490,63 @@ out:
   return rc;
 }
 
+static struct stats_buffer *stats_buffer_new(const char *host, const char *port, const char *queue,
+                                             const char *user, const char *password)
+{
+  struct stats_buffer *sf = malloc(sizeof(*sf));
+
+  if (sf != NULL && stats_buffer_open(sf, host, port, queue, user, password) < 0) {
+    free(sf);
+    sf = NULL;
+  }
+  return sf;
+}
+
 int ring_buffer_load_file(FILE *sf_file, struct sf_ring_buffer *w, const char *host,
                           const char *port, const char *queue, const char *user,
                           const char *password, int max_buffer_size,
                           int allow_ring_buffer_overwrite)
 {
-  int n_stats = 0;
+  int q_before = w->q_count;
   int stats_start = 0;
-  int rc = 0;
   char *line_buf = NULL;
   size_t line_buf_size = 0;
-
   struct stats_buffer *sf;
 
   /* Replay inserts with no cap (ring_buffer_insert(..., -1, ...)); the limit is unused. */
   (void)max_buffer_size;
-  sf = (struct stats_buffer *)malloc(sizeof(*sf));
-  if (sf == NULL) {
-    rc = -1;
-    goto out;
-  }
-  if (sf_file == NULL) {
-    rc = -1;
-    free(sf);
-    goto out;
-  }
-  if (stats_buffer_open(sf, host, port, queue, user, password) < 0) {
-    TRACE("Failed opening data buffer : %m\n");
-    rc = -1;
-    free(sf);
-    goto out;
-  }
+  if (sf_file == NULL || (sf = stats_buffer_new(host, port, queue, user, password)) == NULL)
+    return -1;
   while (getline(&line_buf, &line_buf_size, sf_file) != -1) {
-    if (line_buf[0] == '\n' && stats_start == 0)
-      continue;
     if (line_buf[0] != '\n') {
       if (stats_buffer_data_append_fmt(&sf->sf_data, &sf->sf_data_len, &sf->sf_data_cap, "%s",
                                        line_buf) < 0) {
         /* Best-effort on OOM. */
       }
-      if (stats_start == 0)
-        stats_start = 1;
-    } else {
-      n_stats++;
-      rc = ring_buffer_insert(sf, w, -1, allow_ring_buffer_overwrite);
-      sf = (struct stats_buffer *)malloc(sizeof(struct stats_buffer));
-      if (sf == NULL) {
-        TRACE("Failed allocating data buffer : %m\n");
-        rc = -1;
-        goto out;
-      }
-      if (stats_buffer_open(sf, host, port, queue, user, password) < 0 || rc < 0) {
-        TRACE("Failed inserting data to buffer : %m\n");
-        stats_buffer_close(sf);
-        free(sf);
-        rc = -1;
-        goto out;
-      }
+      stats_start = 1;
+      continue;
     }
+    if (stats_start == 0)
+      continue;
+    if (ring_buffer_insert(sf, w, -1, allow_ring_buffer_overwrite) < 0)
+      goto fail;
+    if ((sf = stats_buffer_new(host, port, queue, user, password)) == NULL)
+      goto fail;
   }
-  rc = ring_buffer_insert(sf, w, -1, allow_ring_buffer_overwrite);
-  if (rc < 0) {
+  if (ring_buffer_insert(sf, w, -1, allow_ring_buffer_overwrite) < 0)
+    goto fail;
+  w->l_count += w->q_count - q_before;
+  TRACE("Loaded %d stats from dumpfile\n", w->q_count - q_before);
+  free(line_buf);
+  return 0;
+
+fail:
+  /* The dumpfile stays on disk, so a queued prefix would be sent now and again on its next replay. */
+  if (sf != NULL) {
     stats_buffer_close(sf);
     free(sf);
-    goto out;
   }
-  n_stats++;
-  w->l_count += n_stats;
-  TRACE("Loaded %d stats from dumpfile\n", n_stats);
-
-out:
+  ring_buffer_truncate(w, q_before);
   free(line_buf);
-  return rc;
+  return -1;
 }

@@ -62,6 +62,10 @@ void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long 
 int ring_buffer_insert(struct stats_buffer *sf, struct sf_ring_buffer *w, int max_buffer_size,
                        int allow_ring_buffer_overwrite);
 
+/*! Free the newest entries until at most keep (<= 0: none) remain; older entries keep their order. */
+void ring_buffer_truncate(struct sf_ring_buffer *w, int keep);
+
+/*! Append every dumpfile record to the ring. On failure (-1) nothing from the file stays queued. */
 int ring_buffer_load_file(FILE *sf_file, struct sf_ring_buffer *w, const char *host,
                           const char *port, const char *queue, const char *user,
                           const char *password, int max_buffer_size,

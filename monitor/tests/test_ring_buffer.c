@@ -1,6 +1,7 @@
 /*
  * Ring buffer / stats_buffer integration tests (STATS_BUFFER_TEST_SEND_HOOK in stats_buffer_rmq.c).
- * Exercises ring_buffer_insert, ring_buffer_resend, ring_buffer_load_file without a live broker.
+ * Exercises ring_buffer_insert, ring_buffer_resend, ring_buffer_load_file, ring_buffer_truncate
+ * without a live broker.
  */
 #include <assert.h>
 #include <stdio.h>
@@ -35,6 +36,20 @@ int stats_buffer_test_send_hook(struct stats_buffer *sf)
   if (g_fail_after_n >= 0 && (int)g_send_hook_calls > g_fail_after_n)
     return -1;
   return 0;
+}
+
+/* With -Wl,--wrap=calloc, a positive count makes the Nth calloc from now return NULL. Ring node
+ * allocation is the only calloc on the load path. */
+static int g_calloc_fail_at;
+
+void *__real_calloc(size_t n, size_t size);
+void *__wrap_calloc(size_t n, size_t size);
+
+void *__wrap_calloc(size_t n, size_t size)
+{
+  if (g_calloc_fail_at > 0 && --g_calloc_fail_at == 0)
+    return NULL;
+  return __real_calloc(n, size);
 }
 
 static void reset_hook(void)
@@ -323,6 +338,56 @@ static void test_load_file_open_fails(void)
   fclose(f);
 }
 
+/* Entries queued before a failed load stay; nothing from the file does. */
+static void test_load_file_partial_failure_rolls_back(void)
+{
+  struct sf_ring_buffer w;
+  FILE *f = tmpfile();
+  assert(f != NULL);
+  assert(fputs("r1\n\nr2\n\nr3\n", f) >= 0);
+  rewind(f);
+  memset(&w, 0, sizeof(w));
+  reset_hook();
+  assert(ring_buffer_insert(make_payload_buf("$ old\n"), &w, -1, 1) == 0);
+  /* r1 links a ring node; the node calloc for r2 fails. */
+  g_calloc_fail_at = 2;
+  assert(ring_buffer_load_file(f, &w, "127.0.0.1", "5672", "q", "u", "p", -1, 1) == -1);
+  g_calloc_fail_at = 0;
+  fclose(f);
+  assert(w.q_count == 1);
+  assert(w.l_count == 0);
+  ring_buffer_resend(&w);
+  assert(g_send_hook_calls == 1u);
+  assert(strcmp(g_last_payload, "$ old\n") == 0);
+}
+
+static void test_truncate_drops_newest(void)
+{
+  struct sf_ring_buffer w;
+
+  memset(&w, 0, sizeof(w));
+  reset_hook();
+  assert(ring_buffer_insert(make_payload_buf("a\n"), &w, -1, 1) == 0);
+  assert(ring_buffer_insert(make_payload_buf("b\n"), &w, -1, 1) == 0);
+  assert(ring_buffer_insert(make_payload_buf("c\n"), &w, -1, 1) == 0);
+  ring_buffer_truncate(&w, 5);
+  assert(w.q_count == 3);
+  ring_buffer_truncate(&w, 1);
+  assert(w.q_count == 1);
+  assert(w.q == w.q_first);
+  assert(ring_buffer_insert(make_payload_buf("d\n"), &w, -1, 1) == 0);
+  ring_buffer_resend(&w);
+  assert(w.q_count == 0);
+  assert(strcmp(g_last_payload, "a\nd\n") == 0);
+
+  assert(ring_buffer_insert(make_payload_buf("e\n"), &w, -1, 1) == 0);
+  ring_buffer_truncate(&w, 0);
+  assert(w.q_count == 0);
+  assert(w.q == NULL && w.q_first == NULL);
+  ring_buffer_truncate(&w, 0);
+  assert(w.q_count == 0);
+}
+
 /* The `$`-always-full invariant and tier selection (stats_buffer_row_tier_decide). */
 static void test_collect_assembles_tier_rows(void)
 {
@@ -383,6 +448,8 @@ int main(void)
   test_load_file_two_records();
   test_load_file_leading_blank_skipped();
   test_load_file_open_fails();
+  test_load_file_partial_failure_rolls_back();
+  test_truncate_drops_newest();
   reset_hook();
   printf("test_ring_buffer passed\n");
   return 0;

@@ -136,7 +136,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_nfs_mountstats_parse.c` | `host_nfs` parse of `fixtures/nfs/mountstats_v3_v4.txt`: one row per `nfs` and `nfs4` mount, other fstypes skipped; `delay` = events field 24, `xprt_bad_xids` / `req_u` / `bklog_u` after sends and recvs (tcp, udp, rdma), `*_ops` = per-op field 0; truncated lines set nothing |
 | `test_metric_profiler.c` | Metric profiler aggregation/report smoke test (enabled and disabled builds); `metric_profiler_report` flushes a short run (daemon shutdown report) |
 | `test_monitor_cli.c` | RabbitMQ daemon CLI (`monitor_cli_*`), usage sentinel strings, `-h` via subprocess |
-| `test_ring_buffer.c` | Ring buffer / `stats_buffer_collect` tier-row assembly (`STATS_BUFFER_TEST_SEND_HOOK`; RabbitMQ build) |
+| `test_ring_buffer.c` | Ring buffer / `stats_buffer_collect` tier-row assembly (`STATS_BUFFER_TEST_SEND_HOOK`; RabbitMQ build); dumpfile load rollback and `ring_buffer_truncate`, with a ring-node allocation failure injected through `-Wl,--wrap=calloc` |
 | `test_monitor_timing.c` | Sample boundary math and the sample-timer re-anchor: early fire arms the next boundary, a stale `ev_now()` loop clock is compensated, a boundary already served by the last collect is skipped, a late tick keeps the next boundary |
 | `test_monitor_cli_globals.c` | Stub globals for `test_monitor_cli` |
 | `test_rabbitmq_integration.sh` | Rootless end-to-end monitor -> RabbitMQ publish validation |

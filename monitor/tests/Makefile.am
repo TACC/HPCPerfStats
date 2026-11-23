@@ -1150,6 +1150,8 @@ test_ring_buffer_SOURCES = \
 	test_stats_buffer_collect_stubs.c \
 	$(stats_buffer_test_core_sources)
 test_ring_buffer_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
+# Load-failure tests fail a ring-node calloc (__wrap_calloc in test_ring_buffer.c).
+test_ring_buffer_LDFLAGS = $(AM_LDFLAGS) -Wl,--wrap=calloc
 
 test_stats_buffer_collect_SOURCES = \
 	test_stats_buffer_collect.c \

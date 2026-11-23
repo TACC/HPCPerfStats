@@ -605,11 +605,13 @@ static void monitor_daemon_free_dumpfile_paths(char **file_list, int n_files)
 /*
  * Load one dumpfile into the ring and drain over RMQ.
  * Returns 0 when replay finished with an empty ring, 1 when the ring still has
- * samples, -1 on open/load failure.
+ * samples, -1 on open/load failure, -2 when the file could not be deleted (nothing queued).
  */
 static int monitor_daemon_replay_one_dumpfile(const char *path, struct sf_ring_buffer *w)
 {
+  static int remove_fail_logged;
   int rc;
+  int q_before;
   FILE *f;
 
   if (path == NULL || w == NULL)
@@ -617,12 +619,23 @@ static int monitor_daemon_replay_one_dumpfile(const char *path, struct sf_ring_b
   f = file_fopen_read(path);
   if (f == NULL)
     return -1;
+  q_before = w->q_count;
   rc = ring_buffer_load_file(f, w, server, port, queue, rmq_user, rmq_password, max_buffer_size,
                              allow_ring_buffer_overwrite);
   fclose(f);
   if (rc != 0)
     return -1;
-  remove(path);
+  if (remove(path) != 0) {
+    /* A file left on disk is replayed again later, so none of it may be sent now. */
+    int err = errno;
+
+    w->l_count -= w->q_count - q_before;
+    ring_buffer_truncate(w, q_before);
+    if (monitor_release_log_should_emit(&remove_fail_logged, monitor_release_log_first_only()))
+      ERROR("Cannot delete dumpfile %s (%s); leaving it unsent\n", path, strerror(err));
+    return -2;
+  }
+  monitor_release_log_clear_latch(&remove_fail_logged);
   monitor_daemon_log_ring_resend_line();
   ring_buffer_resend_limited(w, MONITOR_DUMPFILE_REPLAY_MAX_BATCHES_PER_FILE,
                              MONITOR_DUMPFILE_REPLAY_MAX_RUNTIME_US, NULL);
@@ -661,7 +674,8 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
       break;
     replay_rc = monitor_daemon_replay_one_dumpfile(file_list[i], w);
     if (replay_rc < 0) {
-      monitor_log_info("Error opening or loading stats file %s\n", file_list[i]);
+      if (replay_rc == -1)
+        monitor_log_info("Error opening or loading stats file %s\n", file_list[i]);
       send_success_count = 0;
       break;
     }

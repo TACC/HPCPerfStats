@@ -754,6 +754,12 @@ via `ensure_private_dir` — not world-writable `/tmp`). Append creates use
 **`0600`** (broker credentials) as `%config(noreplace)`; site values come from
 `site/hpcperfstats.site.conf` (*Site conf (broker, credentials) and RPM Release*).
 
+Replay loads a dumpfile into the ring and deletes it before anything from it is
+sent. If the delete fails, the loaded samples are dropped from the ring again
+and the file stays on disk unsent (one `Cannot delete dumpfile` error until a
+delete succeeds), so a later replay cannot send them twice. A load that fails
+partway leaves nothing from that file in the ring (`ring_buffer_load_file`).
+
 ### Privilege model
 
 `hpcperfstatsd` runs as **root** (euid 0) for the life of the process: perf_event (core, uncore, power PMUs),
