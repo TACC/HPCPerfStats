@@ -62,8 +62,9 @@ const struct x86_uncore_profile x86_uncore_profile_imc_gnr = {imc_keys, ARRAY_LE
  * cpumask CPUs. Zen2 / Zen3: event 0x07 + 0x40 x N, umask 0x38 (perf
  * dram_channel_data_controller_N), one combined read + write count (dram_data_beats); Milan
  * channels 0-7 verified, Rome channels 0-1 only. Zen4 / Zen5: read beats event 0x1f + 0x40 x N
- * umask 0xffe and write beats umask 0xfff (dram_read_beats / dram_write_beats); channels 0-3
- * verified, the other rows emit NOT_BUILT. */
+ * umask 0xffe and write beats umask 0xfff (dram_read_beats / dram_write_beats). Turin channels
+ * 0-11 verified (c573-002: the 12 channels sum to 0.986 of a read load's bytes); Genoa takes only
+ * the channel 0-3 entries until its own check, so its other rows emit NOT_BUILT. */
 static const char *const df_keys[] = {"dram_data_beats", "dram_read_beats", "dram_write_beats"};
 
 static const struct x86_uncore_event df_zen3_beats[] = {
@@ -75,7 +76,7 @@ static const struct x86_uncore_event df_zen3_beats[] = {
     {0, "dram_channel_data_controller_5", 0x147, 0x38, 5},
     {0, "dram_channel_data_controller_6", 0x187, 0x38, 6},
     {0, "dram_channel_data_controller_7", 0x1c7, 0x38, 7}};
-static const struct x86_uncore_event df_zen4_beats[] = {
+static const struct x86_uncore_event df_zen5_beats[] = {
     {1, "local_or_remote_socket_read_data_beats_dram_0", 0x1f, 0xffe, 0},
     {2, "local_or_remote_socket_write_data_beats_dram_0", 0x1f, 0xfff, 0},
     {1, "local_or_remote_socket_read_data_beats_dram_1", 0x5f, 0xffe, 1},
@@ -83,14 +84,32 @@ static const struct x86_uncore_event df_zen4_beats[] = {
     {1, "local_or_remote_socket_read_data_beats_dram_2", 0x9f, 0xffe, 2},
     {2, "local_or_remote_socket_write_data_beats_dram_2", 0x9f, 0xfff, 2},
     {1, "local_or_remote_socket_read_data_beats_dram_3", 0xdf, 0xffe, 3},
-    {2, "local_or_remote_socket_write_data_beats_dram_3", 0xdf, 0xfff, 3}};
+    {2, "local_or_remote_socket_write_data_beats_dram_3", 0xdf, 0xfff, 3},
+    {1, "local_or_remote_socket_read_data_beats_dram_4", 0x11f, 0xffe, 4},
+    {2, "local_or_remote_socket_write_data_beats_dram_4", 0x11f, 0xfff, 4},
+    {1, "local_or_remote_socket_read_data_beats_dram_5", 0x15f, 0xffe, 5},
+    {2, "local_or_remote_socket_write_data_beats_dram_5", 0x15f, 0xfff, 5},
+    {1, "local_or_remote_socket_read_data_beats_dram_6", 0x19f, 0xffe, 6},
+    {2, "local_or_remote_socket_write_data_beats_dram_6", 0x19f, 0xfff, 6},
+    {1, "local_or_remote_socket_read_data_beats_dram_7", 0x1df, 0xffe, 7},
+    {2, "local_or_remote_socket_write_data_beats_dram_7", 0x1df, 0xfff, 7},
+    {1, "local_or_remote_socket_read_data_beats_dram_8", 0x21f, 0xffe, 8},
+    {2, "local_or_remote_socket_write_data_beats_dram_8", 0x21f, 0xfff, 8},
+    {1, "local_or_remote_socket_read_data_beats_dram_9", 0x25f, 0xffe, 9},
+    {2, "local_or_remote_socket_write_data_beats_dram_9", 0x25f, 0xfff, 9},
+    {1, "local_or_remote_socket_read_data_beats_dram_10", 0x29f, 0xffe, 10},
+    {2, "local_or_remote_socket_write_data_beats_dram_10", 0x29f, 0xfff, 10},
+    {1, "local_or_remote_socket_read_data_beats_dram_11", 0x2df, 0xffe, 11},
+    {2, "local_or_remote_socket_write_data_beats_dram_11", 0x2df, 0xfff, 11}};
 
 static const struct x86_uncore_class df_zen2_classes[] = {
     {"amd_df", 0, "chan", df_zen3_beats, 2, 8}};
 static const struct x86_uncore_class df_zen3_classes[] = {
     {"amd_df", 0, "chan", df_zen3_beats, ARRAY_LEN(df_zen3_beats), 8}};
 static const struct x86_uncore_class df_zen4_classes[] = {
-    {"amd_df", 0, "chan", df_zen4_beats, ARRAY_LEN(df_zen4_beats), 12}};
+    {"amd_df", 0, "chan", df_zen5_beats, 8, 12}};
+static const struct x86_uncore_class df_zen5_classes[] = {
+    {"amd_df", 0, "chan", df_zen5_beats, ARRAY_LEN(df_zen5_beats), 12}};
 
 const struct x86_uncore_profile x86_uncore_profile_df_zen2 = {
     df_keys, ARRAY_LEN(df_keys), 0, df_zen2_classes, ARRAY_LEN(df_zen2_classes)};
@@ -98,6 +117,8 @@ const struct x86_uncore_profile x86_uncore_profile_df_zen3 = {
     df_keys, ARRAY_LEN(df_keys), 0, df_zen3_classes, ARRAY_LEN(df_zen3_classes)};
 const struct x86_uncore_profile x86_uncore_profile_df_zen4 = {
     df_keys, ARRAY_LEN(df_keys), 0, df_zen4_classes, ARRAY_LEN(df_zen4_classes)};
+const struct x86_uncore_profile x86_uncore_profile_df_zen5 = {
+    df_keys, ARRAY_LEN(df_keys), 0, df_zen5_classes, ARRAY_LEN(df_zen5_classes)};
 
 /* Reads a small sysfs file into @p buf (NUL-terminated); -1 when missing or empty. */
 static int read_small_file(const char *path, char *buf, size_t cap)

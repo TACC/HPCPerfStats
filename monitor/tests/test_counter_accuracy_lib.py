@@ -155,14 +155,14 @@ class Memory(unittest.TestCase):
         self.assertEqual(set(r), {"mem_write"})
 
     def test_amd_df_zen4_rows_split_read_and_write(self):
-        """Genoa / Turin: one chan<N> row per channel with read and write beats, so both kernels
-        have a single-direction counter; rows 4-11 carry NOT_BUILT and are left out."""
+        """Genoa: one chan<N> row per channel with read and write beats, so both kernels have a
+        single-direction counter; rows 4-11 carry NOT_BUILT and are left out."""
         def df(rd, wr):
             rows = {"chan%d" % n: {"dram_data_beats": -2, "dram_read_beats": rd,
                                    "dram_write_beats": wr} for n in range(4)}
             rows.update({"chan%d" % n: {"dram_data_beats": -2, "dram_read_beats": -10,
                                         "dram_write_beats": -10} for n in range(4, 12)})
-            return {"amd_x86_uncore_df_turin": rows}
+            return {"amd_x86_uncore_df_genoa": rows}
         r = by_name(ca.check_memory(snap(df(0, 0)), snap(df(100, 7)), "read", 400 * 64))
         self.assertEqual(r["mem_read"]["status"], "PASS")
         self.assertAlmostEqual(r["mem_read"]["ratio"], 1.0)

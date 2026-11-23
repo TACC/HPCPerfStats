@@ -2754,9 +2754,40 @@ class FaultInjectScheduleTests(unittest.TestCase):
         manifest = {"types": {"host_ib": {"schema_keys": self.IB_SCHEMA},
                               "nvidia_gpu": {"schema_keys": ["gpu_util,"]}}}
         with tempfile.TemporaryDirectory() as td:
-            (Path(td) / "class" / "infiniband" / "mlx5_0").mkdir(parents=True)
+            (Path(td) / "class" / "infiniband" / "mlx5_0" / "ports" / "1").mkdir(parents=True)
             return fic.build_plan({"capability_slug": "x86_64-ver3.1-debug-hw-ib-x86perf"}, manifest,
                                   ticks=ticks, sys_root=Path(td))
+
+    def _ib_specs(self, link_layers: dict[str, str | None]) -> list[str]:
+        """host_ib specs planned for a sysfs tree of `hca/port` -> link_layer text (None: no file)."""
+        import fault_inject_check as fic
+
+        manifest = {"types": {"host_ib": {"schema_keys": self.IB_SCHEMA}}}
+        with tempfile.TemporaryDirectory() as td:
+            for hca_port, link in link_layers.items():
+                hca, port = hca_port.split("/")
+                port_dir = Path(td) / "class" / "infiniband" / hca / "ports" / port
+                port_dir.mkdir(parents=True)
+                if link is not None:
+                    (port_dir / "link_layer").write_text(link, encoding="utf-8")
+            plan = fic.build_plan({"capability_slug": "x86_64-ver3.1-debug-hw-ib-x86perf"}, manifest,
+                                  ticks=3, sys_root=Path(td))
+        return [e["spec"].split("@")[0] for e in plan if e["type"] == "host_ib"]
+
+    def test_ethernet_mlx5_and_opa_plan_no_host_ib_points(self) -> None:
+        # Regression (Stampede3 amd-rtx c573-002): RoCE mlx5 ports and the OPA hfi1 port give no
+        # host_ib rows, yet mad_query / opendir were planned and opendir FAILed with no keys.
+        self.assertEqual(self._ib_specs({"hfi1_0/1": "InfiniBand\n", "mlx5_0/1": "Ethernet\n",
+                                         "mlx5_1/1": "Ethernet\n"}), [])
+
+    def test_infiniband_mlx5_port_plans_both_host_ib_points(self) -> None:
+        self.assertEqual(self._ib_specs({"mlx5_0/1": "Ethernet\n", "mlx5_1/1": " infiniband \n"}),
+                         ["mad_query", "opendir:/sys/class/infiniband"])
+
+    def test_mlx5_port_without_link_layer_plans_host_ib_points(self) -> None:
+        # ib_port_collectible allows a port with no link_layer file (legacy HCAs).
+        self.assertEqual(self._ib_specs({"mlx5_0/1": None}),
+                         ["mad_query", "opendir:/sys/class/infiniband"])
 
     def test_mad_query_plans_only_the_switch_keys(self) -> None:
         # The MAD extended query (port_select ... port_multicast_rcv_pkts) was retired; the

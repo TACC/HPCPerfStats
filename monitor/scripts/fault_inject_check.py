@@ -49,6 +49,7 @@ sys.path.insert(0, str(MONITOR / "scripts"))
 
 from lib.cross_sample_validate import check_sentinel_bridges  # noqa: E402
 from lib.fault_ci_files import CI_COVERED_FILES  # noqa: E402
+from lib.host_live_probes import _hca_is_opa_hfi, _ib_port_link_layer_is_infiniband  # noqa: E402
 from lib.message_parse import parse_schema_counts, schema_key_name  # noqa: E402
 from lib.payload_parse import iter_metric_rows, row_key_names, sample_header_timestamp  # noqa: E402
 from lib.row_validate import token_is_uint, token_sentinel_code  # noqa: E402
@@ -120,8 +121,10 @@ def build_plan(caps: dict, manifest: dict, *, ticks: int, sys_root: Path) -> lis
     schema = _schema(manifest)
     tokens = set(str(caps.get("capability_slug", "")).split("-"))
     backend = (caps.get("configure") or {}).get("cpu_backend")
-    ib_dir = sys_root / "class" / "infiniband"
-    has_ib = ib_dir.is_dir() and any(not d.name.startswith("hfi1") for d in ib_dir.iterdir())
+    # host_ib has rows only for non-OPA ports whose link_layer is InfiniBand or absent (ib_port_collectible).
+    has_ib = any(not _hca_is_opa_hfi(p.parent.parent.name) and (not (p / "link_layer").exists() or
+                 _ib_port_link_layer_is_infiniband((p / "link_layer").read_text(errors="replace")))
+                 for p in (sys_root / "class" / "infiniband").glob("*/ports/*"))
     plan: list[dict] = []
 
     def add(point: str, type_name: str, keys: list[str], codes: list[int], resume: bool, *,

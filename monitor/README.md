@@ -282,8 +282,8 @@ collectors stay removed.
   Zen5 split `dram_read_beats` / `dram_write_beats`. Events come from sysfs names first, else
   verified raw codes; no box count is assumed. Each row sums every CPU of its PMU's `cpumask`
   (one per socket or die), so a row covers **all sockets**. SKX `dram_act_count` /
-  `dram_pre_count_miss` and the DF rows of Rome channels 2–7 and Genoa / Turin channels 4–11
-  emit `NOT_BUILT` (no hardware-verified encoding yet). Each
+  `dram_pre_count_miss` and the DF rows of Rome channels 2–7 and Genoa channels 4–11
+  emit `NOT_BUILT` (no hardware-verified encoding yet; Turin channels 0–11 are verified). Each
   row also carries `pmu_enabled_time` / `pmu_running_time`. On el8 kernels `amd_df` counts
   socket 0 only (LS6 Milan, D13); begin logs that once.
 - **RAPL** (`x86_rapl.c`): see the `intel_x86_rapl` / `amd_x86_rapl` bullet under
@@ -453,9 +453,10 @@ so an emitted `0` always means "read, and the counter was 0". Codes come from th
   print a SKIP line): after validation `rpm_debug_shm_verify.sh` runs
   `scripts/fault_inject_verify.sh`, which restarts the DEBUG daemon with `debug_fault_inject` for
   `FAULT_INJECT_TICKS` (3) cycles after one clean cycle on every injectable point the node has
-  (`perf_open` from begin; the `/sys/class/infiniband` opendir fault last and alone, since it
-  stops the port walk and its directory latch lasts until the restart), captures the samples the
-  plan needs, restores the conf, and checks that the mapped codes land on only the planned keys, values come
+  (the `host_ib` points only when a non-OPA port's `link_layer` is InfiniBand or absent, as the
+  daemon collects, so RoCE-only nodes skip them; `perf_open` from begin; the
+  `/sys/class/infiniband` opendir fault last and alone, since it stops the port walk and its
+  directory latch lasts until the restart), captures the samples the plan needs, restores the conf, and checks that the mapped codes land on only the planned keys, values come
   back after release (where the read path does not latch), bridgeable gaps keep counters
   monotonic, and every site in `sentinel_sites` fired: a never-fired site is a NOTE when make check
   forces its file (`fault_ci_files.py`) or its collector is not active on the node, else FAIL.
@@ -646,7 +647,7 @@ the upgrade. No backfill; older jobs keep the old values. Deploy the analysis re
 | core counters unscaled, core group re-armed every tick (another holder could zero or steal them) | scaled by enabled / running, never re-armed | Under counter contention old values read low; new ones are scaled estimates. No fleet-wide factor is measured. W=48 keys carry the lifetime modulo 2^48 as before. |
 | Intel IMC / HBM rows from the LIKWID uncore group (about one socket's traffic on 2-socket nodes) | each row sums its PMU `cpumask` CPUs (**all sockets**) | **Scale step:** about **2×** on 2-socket nodes for `dram_cas_*` / `hbm_cas_*`. Every `uncore_imc_<N>` PMU is read (no MBOX0–11 limit), SPR / EMR up to 32 `hbm<N>` rows (no channel ladder). |
 | Zen4 / Zen5 `dram_chanN_bytes` = read beats | read **+ write** beats | **Scale step** on Genoa / Turin: channel traffic now includes writes. Zen2 / Zen3 unchanged (one combined event). |
-| one `df` row with `dram_chan0_bytes` .. `dram_chan3_bytes` (channels 0–3 only; the values were 64-byte beats despite the name) | one `chan<N>` row per DRAM channel: `dram_data_beats` (Zen2 / Zen3, read + write) or `dram_read_beats` / `dram_write_beats` (Zen4 / Zen5) | **Breaking rename and scale step.** Milan channels 4–7 were never read, so DF bandwidth read half (c317-016: daemon 0.506 of the load's bytes, all 8 channels 0.997). Genoa / Turin rows 4–11 stay `NOT_BUILT` until verified on hardware. Consumers sum the beat keys over every `chan<N>` row (x 64 B) and dual-read the old keys for history; deploy the consumer change with or before this monitor. |
+| one `df` row with `dram_chan0_bytes` .. `dram_chan3_bytes` (channels 0–3 only; the values were 64-byte beats despite the name) | one `chan<N>` row per DRAM channel: `dram_data_beats` (Zen2 / Zen3, read + write) or `dram_read_beats` / `dram_write_beats` (Zen4 / Zen5) | **Breaking rename and scale step.** Milan channels 4–7 were never read, so DF bandwidth read half (c317-016: daemon 0.506 of the load's bytes, all 8 channels 0.997). Genoa rows 4–11 stay `NOT_BUILT` until verified on hardware. Turin rows 4–11 now carry beats (c573-002: all 12 channels 0.986 of the read load's bytes, channels 0–3 alone 4/12), so Turin DF bandwidth steps up about 3x at that upgrade (no backfill). Consumers sum the beat keys over every `chan<N>` row (x 64 B) and dual-read the old keys for history; deploy the consumer change with or before this monitor. |
 | — | IMC / HBM / DF rows `pmu_enabled_time` / `pmu_running_time` (`E,W=64,U=ns`) | Uncore sharing; no solo key. |
 | `intel_x86_rapl` / `amd_x86_rapl` published each read's energy window | running total in mJ since begin, modulo 2^32 | Keys and `E,W=32,U=mJ` unchanged; Δ / Δt is now watts (fixes finding #48). |
 | capability slug token `likwid` | `x86perf` (`configure.cpu_backend: "x86"`) | Consumers treat x86 `host_cpu_hw` chains as bridgeable only with `x86perf`. |

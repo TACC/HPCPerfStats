@@ -75,7 +75,8 @@ shared `perf_util` helper, the same model as Grace (**`monitor-arm-direct-perf.m
      SRF `0x05/0xcf,0xf0`, GNR / SRF scheduler 0 only); SPR HBM CAS (32-byte accesses, D21);
      AMD DF Zen2 / Zen3 `dram_channel_data_controller_N` (Milan channels 0–7, checked against
      the read load's bytes on c317-016, campaign finding 26; Rome channels 0–1 only), Zen4 / Zen5
-     read and write beats per channel (channels 0–3; 4–11 wait for a Genoa check).
+     read and write beats per channel (Turin channels 0–11, checked against the read load's
+     bytes on c573-002, 0.986; Genoa channels 0–3, 4–11 wait for a Genoa check).
    - **AMD DF is one `chan<N>` row per DRAM channel** (rows-split class, `n_rows` 8 Rome / Milan,
      12 Genoa / Turin), never one key per channel and never channels folded together: Zen2 /
      Zen3 `dram_data_beats` (combined), Zen4 / Zen5 `dram_read_beats` / `dram_write_beats`. A
@@ -101,7 +102,7 @@ shared `perf_util` helper, the same model as Grace (**`monitor-arm-direct-perf.m
    `COUNTER_RESET`. An uncore key summed over several fds emits its sentinel rather than a
    partial sum. A key no event of the row feeds is `NOT_PRESENT`, or `NOT_BUILT` when the
    profile lists it in `not_built` (SKX `dram_act_count` / `dram_pre_count_miss`) or another row
-   of the class feeds it (DF rows of Rome channels 2–7, Genoa / Turin channels 4–11). One log
+   of the class feeds it (DF rows of Rome channels 2–7, Genoa channels 4–11). One log
    line per event (not per CPU). Every failure site goes through
    `stats_set_missing`, so the fault-injection matrix reaches it.
 8. **D6 sharing keys on x86.** `host_cpu_hw` publishes `pmu_enabled_time`, `pmu_running_time`

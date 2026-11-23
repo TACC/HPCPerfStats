@@ -456,7 +456,7 @@ static void test_df_zen4_read_plus_write_beats(void)
   add_cpu(0, 0);
   add_cpu(64, 1);
   u = make_reader(&x86_uncore_profile_df_zen4);
-  /* Genoa / Turin: 12 channel rows; channels 0-3 have verified read and write codes. */
+  /* Genoa: 12 channel rows; channels 0-3 have verified read and write codes. */
   assert(x86_uncore_perf_attach(&u) == 12 && strcmp(u.dev[0].name, "chan0") == 0);
   assert(u.packages == 2 && u.n_open == 16);
   for (i = 0; i < g_fake_perf_n; i++)
@@ -480,6 +480,45 @@ static void test_df_zen4_read_plus_write_beats(void)
   assert(code_of("chan11", "dram_write_beats") == STATS_SENTINEL_NOT_BUILT);
   tree_done(&u);
   printf("test_df_zen4_read_plus_write_beats passed\n");
+}
+
+static void test_df_zen5_twelve_channels(void)
+{
+  /* The Turin chan11 read event 0x2df puts bits 8-9 in config 32-37 and umask 0xffe bits 8-11
+   * in config 24-27 (amd_df format on c573-002). */
+  const uint64_t rd11 = 0xdf | (0xfeULL << 8) | (0xfULL << 24) | (0x2ULL << 32);
+  const uint64_t wr4 = 0x1f | (0xffULL << 8) | (0xfULL << 24) | (0x1ULL << 32);
+  struct x86_uncore_perf u;
+  char dev[8];
+  int i, r, w;
+
+  tree_init();
+  add_pmu("amd_df", "11", "0,64\n");
+  add_file("amd_df", "format/event", "config:0-7,32-37\n");
+  add_file("amd_df", "format/umask", "config:8-15,24-27\n");
+  add_cpu(0, 0);
+  add_cpu(64, 1);
+  u = make_reader(&x86_uncore_profile_df_zen5);
+  assert(x86_uncore_perf_attach(&u) == 12 && u.n_open == 48);
+  for (i = 0; i < g_fake_perf_n; i++)
+    fake_perf_push(i, 0, 0, 0);
+  x86_uncore_perf_read(&u);
+  r = fake_perf_find(11, rd11, 64);
+  w = fake_perf_find(11, wr4, 0);
+  fake_perf_push(r, 1100, 10, 10);
+  fake_perf_push(w, 400, 10, 10);
+  for (i = 0; i < g_fake_perf_n; i++)
+    if (i != r && i != w)
+      fake_perf_push(i, 5, 10, 10);
+  read_and_publish(&u);
+  assert(val_of("chan11", "dram_read_beats") == 1105);
+  assert(val_of("chan4", "dram_write_beats") == 405);
+  for (i = 0; i < 12; i++) {
+    snprintf(dev, sizeof(dev), "chan%d", i);
+    assert(code_of(dev, "dram_read_beats") == 0 && code_of(dev, "dram_write_beats") == 0);
+  }
+  tree_done(&u);
+  printf("test_df_zen5_twelve_channels passed\n");
 }
 
 static void test_df_zen3_single_socket(void)
@@ -635,6 +674,7 @@ static void test_profiles_match_schema(void)
   assert_keys_in_schema(&x86_uncore_profile_df_zen2, df_schema);
   assert_keys_in_schema(&x86_uncore_profile_df_zen3, df_schema);
   assert_keys_in_schema(&x86_uncore_profile_df_zen4, df_schema);
+  assert_keys_in_schema(&x86_uncore_profile_df_zen5, df_schema);
   printf("test_profiles_match_schema passed\n");
 }
 
@@ -651,6 +691,7 @@ int main(void)
   test_one_socket_open_failure_fails_key();
   test_not_built_keys();
   test_df_zen4_read_plus_write_beats();
+  test_df_zen5_twelve_channels();
   test_df_zen3_single_socket();
   test_df_zen3_eight_channels();
   test_reattach_keeps_lifetimes();
