@@ -41,7 +41,8 @@ static void test_null_input_zeroes_outputs(void)
  * datasheets round to two or three significant figures, e.g. GH200 FP64 34 for 33.45).
  * Sources: A100 SXM4 - GA100 whitepaper / Hopper whitepaper Table 3 (108 SMs, 1410 MHz boost);
  * H100 SXM5 and GH200 - H100 / GH200 datasheets (132 SMs; scalar and FP64 tensor peaks at the
- * 1980 MHz max boost clock, FP16 tensor 989.4 TFLOPS dense at 1830 MHz). */
+ * 1980 MHz max boost clock, FP16 tensor 989.4 TFLOPS dense at 1830 MHz); RTX PRO 6000 HMMA is
+ * measured, with no published per-GPU peak behind it (src/nvidia_gpu_estimate.c). */
 static void test_peak_table_per_cc_matches_published_peaks(void)
 {
   static const struct {
@@ -74,6 +75,7 @@ static void test_peak_table_per_cc_matches_published_peaks(void)
       {"RTX PRO 6000", 12, 0, NVIDIA_GPU_PIPE_FP64, 4.0, 188, 0.0, 0.0},
       {"RTX PRO 6000", 12, 0, NVIDIA_GPU_PIPE_FP32, 256.0, 188, 0.0, 0.0},
       {"RTX PRO 6000", 12, 0, NVIDIA_GPU_PIPE_FP16, 512.0, 188, 0.0, 0.0},
+      {"RTX PRO 6000", 12, 0, NVIDIA_GPU_PIPE_HMMA, 1024.0, 188, 0.0, 0.0},
   };
   size_t i;
 
@@ -98,7 +100,6 @@ static void test_peak_table_ungrounded_and_unknown_cc_are_zero(void)
 
   assert(nvidia_gpu_flops_per_sm_clock(10, 0, NVIDIA_GPU_PIPE_HMMA) == 0.0);
   assert(nvidia_gpu_flops_per_sm_clock(10, 0, NVIDIA_GPU_PIPE_DMMA) == 0.0);
-  assert(nvidia_gpu_flops_per_sm_clock(12, 0, NVIDIA_GPU_PIPE_HMMA) == 0.0);
   assert(nvidia_gpu_flops_per_sm_clock(12, 0, NVIDIA_GPU_PIPE_DMMA) == 0.0);
   for (i = 0; i < sizeof(unknown) / sizeof(unknown[0]); i++)
     for (p = 0; p < NVIDIA_GPU_PIPE_NR; p++)
@@ -175,7 +176,7 @@ static void test_flops_rate_per_pipe_formula(void)
   assert(fabs(flops - 311.87e12) < 0.01e12);
 }
 
-/* Blackwell tensor pipes have no grounded peak: their activity adds nothing, scalar pipes do. */
+/* B200 tensor pipes have no grounded peak: their activity adds nothing, scalar pipes do. */
 static void test_flops_rate_blackwell_scalar_only(void)
 {
   dcgm_data_t row;
@@ -190,6 +191,23 @@ static void test_flops_rate_blackwell_scalar_only(void)
   row.tensor_dmma_active = 0.5;
   nvidia_gpu_estimate_rates(&row, &flops, NULL);
   assert(fabs(flops - 256.0 * 148.0 * 1.965e9) < 1.0e6);
+}
+
+/* RTX PRO 6000 (CC 12.0) HMMA counts: the cuBLAS FP16 GEMM calibration point (hmma 0.96,
+ * 2107 MHz, 188 SMs) gives ~3.89e14 FLOP/s; DMMA activity still adds nothing. */
+static void test_flops_rate_rtx_pro_6000_hmma(void)
+{
+  dcgm_data_t row;
+  double flops;
+
+  memset(&row, 0, sizeof(row));
+  row.cc_major = 12;
+  row.sm_count = 188;
+  row.sm_clock = 2107;
+  row.tensor_hmma_active = 0.96;
+  row.tensor_dmma_active = 0.5;
+  nvidia_gpu_estimate_rates(&row, &flops, NULL);
+  assert(fabs(flops - 3.894e14) < 0.001e14);
 }
 
 /* Unknown CC, missing SM count or no clock: never the old constant, and the derived keys are
@@ -271,9 +289,12 @@ static void test_flops_codes_per_pipe(void)
   row.cc_major = 12;
   row.sm_count = 188;
   row.sm_clock = 2400;
-  mark(&row, "tensor_hmma_active", STATS_SENTINEL_READ_FAILED);
+  mark(&row, "tensor_dmma_active", STATS_SENTINEL_READ_FAILED);
   nvidia_gpu_estimate_row_codes(&row, &codes);
   assert(codes.flops == STATS_SENTINEL_OK);
+  mark(&row, "tensor_hmma_active", STATS_SENTINEL_READ_FAILED);
+  nvidia_gpu_estimate_row_codes(&row, &codes);
+  assert(codes.flops == STATS_SENTINEL_READ_FAILED);
 
   h100_row(&row);
   mark(&row, "fp64_active", STATS_SENTINEL_NOT_PRESENT);
@@ -454,6 +475,7 @@ int main(void)
   test_sm_count_from_attributes_or_cores();
   test_flops_rate_per_pipe_formula();
   test_flops_rate_blackwell_scalar_only();
+  test_flops_rate_rtx_pro_6000_hmma();
   test_flops_unknown_cc_or_shape_not_present();
   test_flops_codes_per_pipe();
   test_gpm_back_to_back_integrates_real_delta();

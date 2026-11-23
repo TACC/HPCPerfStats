@@ -34,10 +34,16 @@ static const struct {
  *       deliver 2x the MMA computational rates of the A100 SM on equivalent data types" -> 4096
  *       and 256 (H100 SXM5 datasheet: 989.4 TFLOPS dense FP16 at 1830 MHz, 66.9 TFLOPS FP64
  *       tensor at 1980 MHz, 132 SMs). GH200 carries the same H100 GPU.
- *   10.0 (B200 / GB200) and 12.0 (RTX PRO 6000 Blackwell, GB202): the Blackwell datasheets give
- *       per-GPU tensor peaks but neither a per-SM tensor rate nor the clock behind them, so the
- *       tensor pipes are 0 (not counted) until a grounded value exists.
- * tests/test_nvidia_gpu_estimate.c (peak_table) checks each value against the published peaks.
+ *   Blackwell datasheets give per-GPU tensor peaks but neither a per-SM rate nor the clock behind
+ *   them, so Blackwell tensor values are measured or 0 (not counted):
+ *   12.0 (RTX PRO 6000 Blackwell, GB202) HMMA measured 2026-11-23 on Stampede3 c573-002 (188 SMs,
+ *       driver 615.71.09, cuBLAS 13.2): measurement/bin/gpu_tensor_calibrate.sh FP16 GEMM FLOP/s /
+ *       (tensor_hmma_active x SMs x sm_clock) from the monitor's own rows gave 1022.7 (n=8192)
+ *       and 1030.7 (n=16384) -> 1024. DMMA 0: tensor_dmma_active stays 0 under DGEMM (no FP64
+ *       tensor path).
+ *   10.0 (B200 / GB200) tensor pipes stay 0 until calibrated on Horizon GB200.
+ * tests/test_nvidia_gpu_estimate.c (peak_table) checks each value, and its per-GPU product
+ * against the published peak where one exists.
  */
 static const struct {
   unsigned char major, minor;
@@ -47,7 +53,7 @@ static const struct {
     {8, 0, 64, {64, 128, 512, 2048, 128}},
     {9, 0, 128, {128, 256, 512, 4096, 256}},
     {10, 0, 128, {128, 256, 512, 0, 0}},
-    {12, 0, 128, {4, 256, 512, 0, 0}},
+    {12, 0, 128, {4, 256, 512, 1024, 0}},
 };
 
 static const char *const g_mem_inputs[] = {"gpu_mem_util"};
