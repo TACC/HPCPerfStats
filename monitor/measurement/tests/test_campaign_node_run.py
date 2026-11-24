@@ -132,8 +132,11 @@ def test_each_gate_stops_without_launching(node: Path, env: dict, reason: str) -
 
 
 def test_failed_check_never_builds_the_rpm(node: Path) -> None:
-    _run(node, CF="1")
+    res = _run(node, CF="1")
     assert not (node / "w" / "monitor" / "rpmbuild").exists()
+    # check-local failures print no FAIL: line (c313-031), so the log's end is shown: the
+    # TOTAL line appears once from the summary grep and again in the tail.
+    assert res.stdout.count("# TOTAL: 152") == 2, res.stdout
 
 
 def test_older_installed_package_is_fine(node: Path) -> None:

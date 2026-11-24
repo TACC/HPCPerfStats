@@ -122,7 +122,11 @@ if test "${OK}" = 1; then
   echo "check rc=${CRC}"
   grep -E '^# (TOTAL|PASS|SKIP|FAIL)' "${L}/${N}_31_check.log"
   grep -E '^(FAIL|ERROR):' "${L}/${N}_31_check.log"
-  test "${CRC}" = 0 || stop "make check failed (${L}/${N}_31_check.log)"
+  # check-local scripts fail without a FAIL: line (c313-031), so show the log's end.
+  if test "${CRC}" != 0; then
+    stop "make check failed (${L}/${N}_31_check.log), last lines:"
+    tail -12 "${L}/${N}_31_check.log"
+  fi
   make -C .build-static distclean >/dev/null 2>&1
 fi
 if test "${OK}" = 1; then

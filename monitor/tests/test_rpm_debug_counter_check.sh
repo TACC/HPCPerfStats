@@ -11,6 +11,9 @@
 # the bound, Ctrl-C exits 130 and kills the load, the extra canary checks map exit codes, and the
 # campaign JSON exits non-zero on any FAIL. Also runs the two Python unit tests.
 set -euo pipefail
+# check-local runs this as /bin/sh; EL8 bash 4.4 in posix mode keeps `VAR=x fn` after fn
+# returns, so the FAKE_* / COUNTER_CHECK prefixes below would leak into later calls.
+set +o posix
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERIFY="${ROOT}/scripts/rpm_debug_shm_verify.sh"
 T="$(mktemp -d "${TMPDIR:-/tmp}/hps-rpm-counter-check.XXXXXX")"

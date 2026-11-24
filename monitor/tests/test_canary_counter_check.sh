@@ -7,6 +7,9 @@
 # and stops the load (the "interrupted" line still reaches the output); a perf "<not counted>"
 # event keeps its slot; bad options exit 2.
 set -euo pipefail
+# check-local runs this as /bin/sh; EL8 bash 4.4 in posix mode keeps `VAR=x run` after run
+# returns (c313-031: CANARY_SHM=.../none leaked into every later run).
+set +o posix
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="${ROOT}/scripts/canary_counter_check.sh"
 T="$(mktemp -d "${TMPDIR:-/tmp}/hps-counter-check-test.XXXXXX")"
