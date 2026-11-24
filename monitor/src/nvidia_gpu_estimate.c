@@ -36,12 +36,14 @@ static const struct {
  *       tensor at 1980 MHz, 132 SMs). GH200 carries the same H100 GPU.
  *   Blackwell datasheets give per-GPU tensor peaks but neither a per-SM rate nor the clock behind
  *   them, so Blackwell tensor values are measured or 0 (not counted):
+ *   10.0 (B200 / GB200) HMMA and DMMA measured 2026-11-23 on Horizon c122-018 (152 SMs, driver
+ *       610.57.04) the same way with cuBLAS FP16 GEMM and DGEMM: HMMA 8437.9 (n=8192) and 8072.8
+ *       (n=16384) -> 8192; DMMA 127.8 (n=4096) and 127.3 (n=8192) -> 128.
  *   12.0 (RTX PRO 6000 Blackwell, GB202) HMMA measured 2026-11-23 on Stampede3 c573-002 (188 SMs,
  *       driver 615.71.09, cuBLAS 13.2): measurement/bin/gpu_tensor_calibrate.sh FP16 GEMM FLOP/s /
  *       (tensor_hmma_active x SMs x sm_clock) from the monitor's own rows gave 1022.7 (n=8192)
  *       and 1030.7 (n=16384) -> 1024. DMMA 0: tensor_dmma_active stays 0 under DGEMM (no FP64
  *       tensor path).
- *   10.0 (B200 / GB200) tensor pipes stay 0 until calibrated on Horizon GB200.
  * tests/test_nvidia_gpu_estimate.c (peak_table) checks each value, and its per-GPU product
  * against the published peak where one exists.
  */
@@ -52,7 +54,7 @@ static const struct {
 } g_peaks[] = {
     {8, 0, 64, {64, 128, 512, 2048, 128}},
     {9, 0, 128, {128, 256, 512, 4096, 256}},
-    {10, 0, 128, {128, 256, 512, 0, 0}},
+    {10, 0, 128, {128, 256, 512, 8192, 128}},
     {12, 0, 128, {4, 256, 512, 1024, 0}},
 };
 

@@ -41,8 +41,9 @@ static void test_null_input_zeroes_outputs(void)
  * datasheets round to two or three significant figures, e.g. GH200 FP64 34 for 33.45).
  * Sources: A100 SXM4 - GA100 whitepaper / Hopper whitepaper Table 3 (108 SMs, 1410 MHz boost);
  * H100 SXM5 and GH200 - H100 / GH200 datasheets (132 SMs; scalar and FP64 tensor peaks at the
- * 1980 MHz max boost clock, FP16 tensor 989.4 TFLOPS dense at 1830 MHz); RTX PRO 6000 HMMA is
- * measured, with no published per-GPU peak behind it (src/nvidia_gpu_estimate.c). */
+ * 1980 MHz max boost clock, FP16 tensor 989.4 TFLOPS dense at 1830 MHz); GB200 HMMA / DMMA and
+ * RTX PRO 6000 HMMA are measured, with no published per-GPU peak behind them
+ * (src/nvidia_gpu_estimate.c). */
 static void test_peak_table_per_cc_matches_published_peaks(void)
 {
   static const struct {
@@ -72,6 +73,8 @@ static void test_peak_table_per_cc_matches_published_peaks(void)
       {"B200", 10, 0, NVIDIA_GPU_PIPE_FP64, 128.0, 148, 0.0, 0.0},
       {"B200", 10, 0, NVIDIA_GPU_PIPE_FP32, 256.0, 148, 0.0, 0.0},
       {"B200", 10, 0, NVIDIA_GPU_PIPE_FP16, 512.0, 148, 0.0, 0.0},
+      {"GB200", 10, 0, NVIDIA_GPU_PIPE_HMMA, 8192.0, 152, 0.0, 0.0},
+      {"GB200", 10, 0, NVIDIA_GPU_PIPE_DMMA, 128.0, 152, 0.0, 0.0},
       {"RTX PRO 6000", 12, 0, NVIDIA_GPU_PIPE_FP64, 4.0, 188, 0.0, 0.0},
       {"RTX PRO 6000", 12, 0, NVIDIA_GPU_PIPE_FP32, 256.0, 188, 0.0, 0.0},
       {"RTX PRO 6000", 12, 0, NVIDIA_GPU_PIPE_FP16, 512.0, 188, 0.0, 0.0},
@@ -98,8 +101,6 @@ static void test_peak_table_ungrounded_and_unknown_cc_are_zero(void)
   size_t i;
   int p;
 
-  assert(nvidia_gpu_flops_per_sm_clock(10, 0, NVIDIA_GPU_PIPE_HMMA) == 0.0);
-  assert(nvidia_gpu_flops_per_sm_clock(10, 0, NVIDIA_GPU_PIPE_DMMA) == 0.0);
   assert(nvidia_gpu_flops_per_sm_clock(12, 0, NVIDIA_GPU_PIPE_DMMA) == 0.0);
   for (i = 0; i < sizeof(unknown) / sizeof(unknown[0]); i++)
     for (p = 0; p < NVIDIA_GPU_PIPE_NR; p++)
@@ -176,21 +177,42 @@ static void test_flops_rate_per_pipe_formula(void)
   assert(fabs(flops - 311.87e12) < 0.01e12);
 }
 
-/* B200 tensor pipes have no grounded peak: their activity adds nothing, scalar pipes do. */
-static void test_flops_rate_blackwell_scalar_only(void)
+/* RTX PRO 6000 DMMA has no peak, so its activity adds nothing while scalar pipes still count. */
+static void test_flops_rate_no_peak_pipe_adds_nothing(void)
+{
+  dcgm_data_t row;
+  double flops;
+
+  memset(&row, 0, sizeof(row));
+  row.cc_major = 12;
+  row.sm_count = 188;
+  row.sm_clock = 2107;
+  row.fp32_active = 1.0;
+  row.tensor_dmma_active = 0.5;
+  nvidia_gpu_estimate_rates(&row, &flops, NULL);
+  assert(fabs(flops - 256.0 * 188.0 * 2.107e9) < 1.0e6);
+}
+
+/* GB200 (CC 10.0) HMMA and DMMA activity count at the gpu_tensor_calibrate operating points;
+ * expected = activity x per-SM peak x SMs x SM clock. */
+static void test_flops_rate_gb200_hmma_and_dmma(void)
 {
   dcgm_data_t row;
   double flops;
 
   memset(&row, 0, sizeof(row));
   row.cc_major = 10;
-  row.sm_count = 148;
-  row.sm_clock = 1965;
-  row.fp32_active = 1.0;
-  row.tensor_hmma_active = 0.76;
-  row.tensor_dmma_active = 0.5;
+  row.sm_count = 152;
+  row.sm_clock = 1268;
+  row.tensor_hmma_active = 0.95;
   nvidia_gpu_estimate_rates(&row, &flops, NULL);
-  assert(fabs(flops - 256.0 * 148.0 * 1.965e9) < 1.0e6);
+  assert(fabs(flops - 1.4999e15) < 0.0001e15);
+
+  row.sm_clock = 2062;
+  row.tensor_hmma_active = 0.0;
+  row.tensor_dmma_active = 0.95;
+  nvidia_gpu_estimate_rates(&row, &flops, NULL);
+  assert(fabs(flops - 3.8112e13) < 0.0001e13);
 }
 
 /* RTX PRO 6000 (CC 12.0) HMMA counts: the cuBLAS FP16 GEMM calibration point (hmma 0.96,
@@ -474,7 +496,8 @@ int main(void)
   test_peak_table_ungrounded_and_unknown_cc_are_zero();
   test_sm_count_from_attributes_or_cores();
   test_flops_rate_per_pipe_formula();
-  test_flops_rate_blackwell_scalar_only();
+  test_flops_rate_no_peak_pipe_adds_nothing();
+  test_flops_rate_gb200_hmma_and_dmma();
   test_flops_rate_rtx_pro_6000_hmma();
   test_flops_unknown_cc_or_shape_not_present();
   test_flops_codes_per_pipe();
