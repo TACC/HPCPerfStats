@@ -298,3 +298,35 @@ def test_report_per_governor_sets_and_old_results_unnamed(tmp_path):
     assert [gs["governor"] for gs in oprof["governor_sets"]] == [None]
     omd = (old / "report.md").read_text()
     assert "## Headline metrics\n" in omd and "— governor" not in omd
+
+
+def test_group_node_cost_includes_interrupts_and_helpers():
+    """c573-002: x86_perf cost 0.23 core-s/h in the daemon but 1,396 core-s/h of counter-rotation
+    interrupt time; the per-group table must show the node cost, not daemon CPU alone."""
+    legs = _legs()
+    for leg in legs:
+        irq, helper = 0.0013, 0.0
+        if leg.get("group") == "x86_perf" or leg["kind"] == "ALL":
+            irq = 0.3892
+        if leg.get("group") == "dcgm_gpu":
+            helper = 1.5
+        leg["node"].update({"irq_cores": irq, "helper_cores": {"nv-hostengine": helper}})
+    m = collector_matrix.build_matrix(legs, GROUPS, ACTIVE)
+    rows = {r["group"]: r for r in m["rows"]}
+    x = rows["x86_perf"]
+    assert abs(x["irq_core_s_per_h_delta"] - (0.3892 - 0.0013) * 3600) < 1e-6
+    assert abs(x["helper_core_s_per_h_delta"]) < 1e-9
+    assert abs(x["node_core_s_per_h"] - (5.0 + (0.3892 - 0.0013) * 3600)) < 1e-6
+    assert abs(rows["filesystem"]["node_core_s_per_h"] - 3.0) < 1e-6
+    text = profile_report._set_lines({"governor": None, "metrics": {k: profile_report.not_measured("x")
+                                      for k, *_ in profile_report.HEADLINE_METRICS},
+                                      "collector_matrix": m, "baseline_drift": {}})
+    joined = "\n".join(text)
+    assert "Node core-s/h" in joined and "cite it, not daemon CPU alone" in joined
+    assert f"| x86_perf | host_cpu_hw, intel_x86_rapl | {profile_report._num(x['node_core_s_per_h'])} |" in joined
+
+
+def test_group_node_cost_without_node_fields_is_daemon_cpu():
+    m = collector_matrix.build_matrix(_legs(), GROUPS, ACTIVE)
+    x = {r["group"]: r for r in m["rows"]}["x86_perf"]
+    assert x["irq_core_s_per_h_delta"] is None and abs(x["node_core_s_per_h"] - 5.0) < 1e-9

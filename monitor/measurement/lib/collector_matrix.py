@@ -29,7 +29,17 @@ COLUMNS = (
     ("wakeups_per_s", "wakeups_per_s_delta", False),
     ("perf_event_fds", "perf_event_fds_delta", False),
     ("init_cpu_s", "init_cpu_s_delta", False),
+    ("irq_core_s_per_h", "irq_core_s_per_h_delta", False),
+    ("helper_core_s_per_h", "helper_core_s_per_h_delta", False),
 )
+# Cost a group causes outside the daemon process: interrupt time (CPU counter rotation, c573-002
+# x86_perf 1,396 core-s/h against 0.23 in the daemon) and helper processes (standalone DCGM
+# nv-hostengine). Node-level, from leg["node"]; ``node_core_s_per_h`` adds them to daemon CPU.
+_NODE_KEYS = {
+    "irq_core_s_per_h": lambda n: None if n.get("irq_cores") is None else n["irq_cores"] * 3600.0,
+    "helper_core_s_per_h": lambda n: (None if n.get("helper_cores") is None
+                                      else sum(n["helper_cores"].values()) * 3600.0),
+}
 RESIDUAL_FRACTION = 0.10
 
 
@@ -47,6 +57,8 @@ def _as_ci(v: Any) -> dict[str, Any] | None:
 
 
 def _value(leg: dict[str, Any], key: str) -> Any:
+    if key in _NODE_KEYS:
+        return _NODE_KEYS[key](leg.get("node") or {})
     return (leg.get("process") or {}).get(key)
 
 
@@ -175,6 +187,8 @@ def build_matrix(legs: list[dict[str, Any]], groups: dict[str, list[str]],
             else:
                 row[col] = comb["mean"]
         row["share_of_all"] = sum(shares) / len(shares) if shares else None
+        row["node_core_s_per_h"] = row["cpu_core_s_per_h"]["mean"] + sum(
+            row.get(c) or 0.0 for c in ("irq_core_s_per_h_delta", "helper_core_s_per_h_delta"))
         if len(measured) < len(types):
             row["notes"].append("group cost covers only the types that ran")
         rows.append(row)

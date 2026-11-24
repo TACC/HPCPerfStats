@@ -496,18 +496,24 @@ def _set_lines(gs: dict[str, Any]) -> list[str]:
         lines.append(f"| {label} (`{key}`) | {_fmt(gs['metrics'][key])} |")
     mx = gs.get("collector_matrix") or {}
     lines += ["", f"## Per-driver cost (SOLO − NONE, paired within block){suffix}", "",
-              "| Driver group | Types | CPU core-s/h [95% CI] | Share of ALL | ms/fast | ms/full | "
+              "Node core-s/h = daemon CPU + interrupt time + helper processes the group causes "
+              "(CPU counter rotation, standalone DCGM); cite it, not daemon CPU alone.", "",
+              "| Driver group | Types | Node core-s/h | Daemon CPU core-s/h [95% CI] | Interrupt Δ "
+              "core-s/h | Helper Δ core-s/h | Share of ALL | ms/fast | ms/full | "
               "USS Δ MiB | Broker Δ B/h | Wakeups Δ/s | perf FDs Δ | Init Δ CPU-s | Notes |",
-              "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+              "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
+              "| --- |"]
     num = _num
     for r in mx.get("rows", []):
         if r["status"] != "ok":
             lines.append(f"| {r['group']} | {', '.join(r['types'])} | NOT_MEASURED ({r.get('reason')}) "
-                         "| | | | | | | | | |")
+                         "| | | | | | | | | | | | |")
             continue
         c = r["cpu_core_s_per_h"]
         ci = f" [{c['lo']:.4g}, {c['hi']:.4g}]" if c.get("lo") is not None else ""
-        lines.append(f"| {r['group']} | {', '.join(r['types'])} | {c['mean']:.4g}{ci} | "
+        lines.append(f"| {r['group']} | {', '.join(r['types'])} | {num(r.get('node_core_s_per_h'))} | "
+                     f"{c['mean']:.4g}{ci} | {num(r.get('irq_core_s_per_h_delta'))} | "
+                     f"{num(r.get('helper_core_s_per_h_delta'))} | "
                      f"{num(r.get('share_of_all'))} | {num(r.get('ms_per_fast_sample'))} | "
                      f"{num(r.get('ms_per_full_sample'))} | {num(r.get('uss_mib_delta'))} | "
                      f"{num(r.get('broker_bytes_per_h_delta'))} | {num(r.get('wakeups_per_s_delta'))} | "
