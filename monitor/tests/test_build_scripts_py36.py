@@ -111,6 +111,9 @@ def py36_violations(path):
     out = []
     for node in ast.walk(tree):
         line = getattr(node, "lineno", 0)
+        # feature_version rejects := only from Python 3.10 (EL9 python3 is 3.9).
+        if isinstance(node, ast.NamedExpr):
+            out.append("{}:{}: assignment expression := (3.8+)".format(path.name, line))
         if isinstance(node, ast.ImportFrom) and node.module == "__future__":
             if any(a.name == "annotations" for a in node.names):
                 out.append("{}:{}: from __future__ import annotations".format(path.name, line))
