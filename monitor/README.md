@@ -1154,6 +1154,21 @@ exits 1 on any FAIL, unexpected `NOT_RUN` / `SKIP`, ratio outside the tolerance,
 or class without a file, and 2 on unreadable or invalid input; `--json` prints the same result
 for machines. Tests: `tests/test_correctness_matrix.py`.
 
+### Campaign node verify (`scripts/campaign_verify_node.sh`)
+
+`scripts/campaign_verify_node.sh ls6|gb200` (root, any cwd) is the per-node operator command,
+so nobody pastes a multi-KB block (pastes over 4 KB lose lines on cluster nodes). It writes
+`site/hpcperfstats.site.conf` from the packaged conf when missing (key names printed, never
+values), removes the other clusters' fleet markers, resets the packaged conf and spec, and runs
+`git pull --ff-only`. It then checks the checkout gates and runs the debug RPM build and
+`rpm_debug_shm_verify.sh` (logs in `/tmp/hps-cc-<host>/`, reports in `../test_runs/monitor/`).
+`ls6` adapts to the node: Genoa (`lscpu` `EPYC 9xxx`) adds the DF channel step and needs the
+Genoa DF commit, and the GPU field-response step (four `dcgmproftester` loads) runs only when
+`nvidia-smi -L` lists a GPU. `gb200` needs the CC 10.0 peak row, turns the four standalone
+checks off, and runs one tensor load (1004). The debug RPM is erased only when every step
+returned 0; otherwise a `== KEEP debug RPM: ...` line names the step rc values.
+Tests: `tests/test_campaign_verify_node.py`.
+
 ## Profiling `hpcperfstatsd`
 
 Use these steps on a **representative host** (same kernel, privilege level, and enabled collectors as production). Run as the same user as the daemon when attaching with `strace`/`perf`, unless you use `sudo` and account for `ptrace` scope (`/proc/sys/kernel/yama/ptrace_scope` on many Linux distros).
