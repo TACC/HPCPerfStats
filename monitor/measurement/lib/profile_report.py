@@ -18,6 +18,7 @@ from typing import Any
 
 from . import (
     collector_matrix,
+    counter_rotation,
     driver_map,
     fwq,
     leg_summary,
@@ -424,6 +425,9 @@ def build_profile(run_dir: Path) -> dict[str, Any]:
         "metrics": first["metrics"],
         "metrics_governor": first["governor"],
         "collector_matrix": first["collector_matrix"],
+        "counter_rotation": counter_rotation.summarize(
+            [leg for leg in legs if leg.get("governor") == first["governor"]]
+            if first["governor"] else legs, host.get("nproc_online")),
         "governor_sets": gsets,
         "schema_keys": _schema_keys(run_dir),
         "collector_profile": _collector_profile(
@@ -574,7 +578,8 @@ def _md(profile: dict[str, Any]) -> str:
                          f"{ty['wall_ms_per_call']:.4g} | {ty['wait_ms_per_call']:.4g} |")
     else:
         lines.append(f"NOT_MEASURED ({cp.get('reason')})")
-    lines += [""] + thread_top_lines(profile)
+    lines += [""] + counter_rotation.md_lines(profile.get("counter_rotation"))
+    lines += thread_top_lines(profile)
     lines += ["", "## Legs", "",
               "| Leg | Governor | Status | Contaminated | Node busy cores | Clock MHz min/p50/max | "
               "Wakeups/s | Verified types |", "| --- | --- | --- | --- | --- | --- | --- | --- |"]
