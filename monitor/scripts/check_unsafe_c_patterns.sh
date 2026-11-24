@@ -2,6 +2,9 @@
 # Fail if monitor src/ contains forbidden unbounded string APIs or unsafe exec helpers.
 # Allowlist: scripts/check_unsafe_c_patterns.allowlist (file:line per entry).
 set -euo pipefail
+# check-local runs this as /bin/sh; EL8 bash 4.4 in posix mode rejects `< <(...)` below
+# (LS6 c313-031: syntax error near unexpected token `<').
+set +o posix
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="${ROOT}/src"
