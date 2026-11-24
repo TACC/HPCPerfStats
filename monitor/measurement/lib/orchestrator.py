@@ -89,6 +89,9 @@ UNIT_PROPS = ("ExecStart", "Nice", "IOSchedulingClass", "IOSchedulingPriority", 
 # Basename stays hpcperfstatsd: the sampler finds the daemon by comm (DAEMON_COMM).
 PROFILER_BINARY = MEASURE_DIR + "/profiler/hpcperfstatsd"
 DAEMON_COMM = "hpcperfstatsd"
+# Processes that do work for the daemon (standalone DCGM serves its GPU fields): sampled as
+# helpers, reported per leg and not counted as outside load (leg_summary._helper_cores).
+HELPER_COMMS = ("nv-hostengine",)
 DISCOVERY_SECONDS = 120
 TYPES_WAIT_SECONDS = 120
 SYSFS_CPU = cpufreq.SYSFS_CPU
@@ -712,6 +715,8 @@ class Run:
                str(MEASUREMENT_ROOT / "bin" / "sample_proc.py"), "--out", str(path),
                "--duration", str(seconds), "--comm", DAEMON_COMM, "--amqp-port",
                str(self.amqp_port), "--cpufreq-root", str(SYSFS_CPU)]
+        for comm in HELPER_COMMS:
+            cmd += ["--helper-comm", comm]
         if shutil.which("taskset") is None:
             cmd = cmd[3:]
         return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=open(path.with_suffix(".err"), "w"))

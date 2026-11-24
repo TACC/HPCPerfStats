@@ -390,9 +390,11 @@ def _node_summary(quiet: list[dict[str, Any]], proc: dict[str, Any] | None) -> d
                     lambda s: s["self"].get("cpu_s"), 3600.0)
     busy_ci = stats.mean_ci(busy)
     daemon_cores = (proc["cpu_core_s_per_h"]["mean"] / 3600.0) if proc else 0.0
+    helpers = _helper_cores(nodes)
     non_daemon = None
     if busy_ci:
-        non_daemon = busy_ci["mean"] - daemon_cores - (harness or 0) / 3600.0
+        non_daemon = (busy_ci["mean"] - daemon_cores - (harness or 0) / 3600.0
+                      - sum(helpers.values()))
     return {
         "busy_cores": busy_ci,
         **{f"{k}_cores": (sum(v) / len(v) if v else None) for k, v in parts.items()},
@@ -405,10 +407,31 @@ def _node_summary(quiet: list[dict[str, Any]], proc: dict[str, Any] | None) -> d
         "cached_mib": sum(cached) / len(cached) if cached else None,
         "energy": energy,
         "harness_cpu_s_per_h": harness,
+        "helper_cores": helpers,
         "non_daemon_busy_cores": non_daemon,
         "loadavg1_max": max((s["node"].get("loadavg1") or 0) for s in nodes),
         "cur_freq_mhz": _freq_window(nodes),
     }
+
+
+def _helper_cores(nodes: list[dict[str, Any]]) -> dict[str, float]:
+    """Mean cores of each helper process the daemon drives (standalone DCGM ``nv-hostengine``).
+
+    LS6 c317-016 2026-11-24: the host engine served the daemon's GPU fields at 1.54 cores,
+    counted as outside load (the ALL leg aborted). It is monitor cost: reported per leg and kept
+    out of ``non_daemon_busy_cores``. Only consecutive samples of the same PID count.
+    """
+    out: dict[str, float] = {}
+    for comm in sorted({c for s in nodes for c in (s.get("helpers") or {})}):
+        ticks = span = 0.0
+        for a, b in _pairs(nodes):
+            ha, hb = (a.get("helpers") or {}).get(comm), (b.get("helpers") or {}).get(comm)
+            if ha and hb and ha["pid"] == hb["pid"] and b["wall"] > a["wall"]:
+                ticks += (hb["utime"] + hb["stime"]) - (ha["utime"] + ha["stime"])
+                span += b["wall"] - a["wall"]
+        if span > 0:
+            out[comm] = ticks / CLK_TCK / span
+    return out
 
 
 def _freq_window(nodes: list[dict[str, Any]]) -> dict[str, float] | None:

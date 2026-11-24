@@ -191,6 +191,15 @@ def thread_split(s0: dict[str, Any], s1: dict[str, Any]) -> dict[str, float]:
     return {name: ns / total for name, ns in per.items()}
 
 
+def sample_cpu_ticks(pid: int, proc_root: Path | str = "/proc") -> dict[str, Any] | None:
+    """``utime``/``stime`` clock ticks of one process (helper processes); None when gone."""
+    text = _read(Path(proc_root) / str(pid) / "stat")
+    if text is None:
+        return None
+    stat = parse_pid_stat(text)
+    return {"pid": pid, "utime": stat["utime"], "stime": stat["stime"]}
+
+
 def find_pid_by_comm(comm: str, proc_root: Path | str = "/proc") -> int | None:
     """Lowest PID whose ``comm`` equals ``comm`` (the main daemon process)."""
     found: list[int] = []
