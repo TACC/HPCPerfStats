@@ -106,9 +106,12 @@ if test -n "${INST}" \
   stop "installed ${INST} sorts >= ${EXP}: rerun with HPCS_RELEASE=<higher>"
 fi
 
-LEFT="$(squeue -h -w "${N}" -o %L 2>/dev/null | head -1)"
-SECS="$(echo "${LEFT}" | awk -F'[-:]' '{n = NF; s = $n + 60 * $(n - 1)
-  if (n >= 3) s += 3600 * $(n - 2); if (n == 4) s += 86400 * $1; print s + 0}')"
+# HPCS_ALLOC_LEFT (squeue %L, e.g. 23:10:00) when squeue on the node does not list the job
+# (c122-018 2026-11-23). Fields are read right to left, so an empty or short value is 0 or
+# seconds, never a field -1 read.
+LEFT="${HPCS_ALLOC_LEFT:-$(squeue -h -w "${N}" -o %L | head -1)}"
+SECS="$(echo "${LEFT}" | awk -F'[-:]' '{split("1 60 3600 86400", m, " ")
+  for (i = NF; i >= 1 && NF - i < 4; i--) s += $i * m[NF - i + 1]} END {print s + 0}')"
 echo "allocation left: ${LEFT:-unknown} (${SECS} s)"
 test "${SECS}" -ge $((MIN_HOURS * 3600)) || stop "need >= ${MIN_HOURS} h left"
 

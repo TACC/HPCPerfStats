@@ -127,8 +127,25 @@ def test_each_gate_stops_without_launching(node: Path, env: dict, reason: str) -
     res = _run(node, **env)
     assert res.returncode == 1
     assert "STOP: " in res.stdout and reason in res.stdout, res.stdout
+    # c122-018: an empty squeue line crashed awk (field -1) and left the seconds empty.
+    assert "fatal" not in res.stderr and "integer expression" not in res.stderr, res.stderr
     assert "NOT launched" in res.stdout
     assert _log(node) == ""
+
+
+@pytest.mark.parametrize("left, secs", [
+    ("23:10:00", 83400), ("1-00:00:00", 86400), ("12:05", 725), ("45", 45), ("", 0),
+    ("UNLIMITED", 0),
+])
+def test_allocation_left_parses_every_squeue_form(node: Path, left: str, secs: int) -> None:
+    res = _run(node, SQ=left)
+    assert f"({secs} s)" in res.stdout, res.stdout
+
+
+def test_alloc_left_override_when_squeue_cannot_see_the_job(node: Path) -> None:
+    res = _run(node, SQ="", HPCS_ALLOC_LEFT="40:00:00")
+    assert res.returncode == 0 and "(144000 s)" in res.stdout, res.stdout
+    assert "--max-hours 20" in _log(node)
 
 
 def test_failed_check_never_builds_the_rpm(node: Path) -> None:
