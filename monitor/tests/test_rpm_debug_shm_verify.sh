@@ -169,12 +169,13 @@ mkdir -p "${fake}/bin" "${fake}/ws" "${fake}/shm" "${fake}/top/SPECS" "${fake}/t
 run_fn() { (PATH="${fake}/bin:/usr/bin:/bin"; . "${verify}"; "$@"); }
 
 # EL8: python3 is 3.6, so a python3.N on PATH wins over python3 when there is no repo venv.
-printf '#!/bin/sh\n' > "${fake}/bin/python3.9"
+# The fake is the first candidate: a host /usr/bin/python3.12 beat a fake 3.9 (LS6 c313-031).
+printf '#!/bin/sh\n' > "${fake}/bin/python3.12"
 printf '#!/bin/sh\n' > "${fake}/bin/python3"
-chmod +x "${fake}/bin/python3.9" "${fake}/bin/python3"
+chmod +x "${fake}/bin/python3.12" "${fake}/bin/python3"
 got="$(run_fn resolve_python "${fake}/ws")"
-test "${got}" = "${fake}/bin/python3.9" \
-  || { echo "resolve_python picked ${got}, want python3.9 before python3" >&2; exit 1; }
+test "${got}" = "${fake}/bin/python3.12" \
+  || { echo "resolve_python picked ${got}, want python3.12 before python3" >&2; exit 1; }
 
 # Same-NVR rebuild: install passes --replacefiles (rpm refused the files otherwise, #77).
 printf '#!/bin/sh\necho "rpm $*" > "%s/rpm.args"\n' "${fake}" > "${fake}/bin/rpm"
