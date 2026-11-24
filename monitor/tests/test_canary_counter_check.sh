@@ -221,11 +221,12 @@ has '^accuracy dp .*> 4: monitor FP count at least .* low FAIL' ||
 # SCF: monitor arm_aarch64_imc (both sockets) matches perf on both nvidia_scf_pmu_<N>.
 run 0 --scf --warm 0 --window 2
 has '2 SCF PMU(s)' || fail "SCF PMUs not counted: ${out}"
-# perf is divided by its wall time, which includes ~50 ms of process start-up: up to 2% of
-# this 3 s window (under 0.05% of a node's 120 s one).
-has 'read  monitor 2.56 GB/s perf 2.5[0-9] GB/s mon/perf \(1\.0[0-2]\|0\.99\)' ||
+# perf is divided by its wall time, which includes process start-up: ~50 ms here, ~90 ms on
+# c122-018 (write mon/perf 1.031), so up to 4% of this 3 s window, inside the script's 5%
+# limit (under 0.1% of a node's 120 s one).
+has 'read  monitor 2.56 GB/s perf 2\.[45][0-9] GB/s mon/perf \(1\.0[0-4]\|0\.99\)' ||
   fail "SCF read bandwidth wrong: ${out}"
-has 'write monitor 1.28 GB/s perf 1.2[0-9] GB/s mon/perf \(1\.0[0-2]\|0\.99\)' ||
+has 'write monitor 1.28 GB/s perf 1.2[0-9] GB/s mon/perf \(1\.0[0-4]\|0\.99\)' ||
   fail "SCF write bandwidth wrong: ${out}"
 has '^RESULT: PASS' || fail "SCF run did not PASS: ${out}"
 [ "$(cat "${T}/mode")" = idle ] || fail "load still running after SCF run"
