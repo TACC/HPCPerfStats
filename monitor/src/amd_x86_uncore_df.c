@@ -35,7 +35,7 @@ static void amd_df_milan_collect(struct stats_type *type)
   x86_uncore_perf_collect(type, &g_amd_df_milan);
 }
 
-static struct x86_uncore_perf g_amd_df_genoa = X86_UNCORE_PERF_INIT(&x86_uncore_profile_df_zen4);
+static struct x86_uncore_perf g_amd_df_genoa = X86_UNCORE_PERF_INIT(&x86_uncore_profile_df_zen5);
 
 static int amd_df_genoa_begin(struct stats_type *type)
 {

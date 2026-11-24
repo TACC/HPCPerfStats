@@ -455,10 +455,10 @@ static void test_df_zen4_read_plus_write_beats(void)
   add_file("amd_df", "format/umask", "config:8-15,24-27\n");
   add_cpu(0, 0);
   add_cpu(64, 1);
-  u = make_reader(&x86_uncore_profile_df_zen4);
-  /* Genoa: 12 channel rows; channels 0-3 have verified read and write codes. */
+  u = make_reader(&x86_uncore_profile_df_zen5);
+  /* Genoa / Turin: 12 channel rows, each with read and write codes. */
   assert(x86_uncore_perf_attach(&u) == 12 && strcmp(u.dev[0].name, "chan0") == 0);
-  assert(u.packages == 2 && u.n_open == 16);
+  assert(u.packages == 2 && u.n_open == 48);
   for (i = 0; i < g_fake_perf_n; i++)
     fake_perf_push(i, 0, 0, 0);
   x86_uncore_perf_read(&u);
@@ -476,8 +476,8 @@ static void test_df_zen4_read_plus_write_beats(void)
   assert(val_of("chan3", "dram_read_beats") == 10);
   assert(code_of("chan0", "dram_data_beats") == STATS_SENTINEL_NOT_PRESENT);
   assert(fake_perf_find(11, 0xdf | (0xffULL << 8) | (0xfULL << 24), 64) >= 0);
-  assert(code_of("chan4", "dram_read_beats") == STATS_SENTINEL_NOT_BUILT);
-  assert(code_of("chan11", "dram_write_beats") == STATS_SENTINEL_NOT_BUILT);
+  assert(val_of("chan4", "dram_read_beats") == 10);
+  assert(val_of("chan11", "dram_write_beats") == 10);
   tree_done(&u);
   printf("test_df_zen4_read_plus_write_beats passed\n");
 }
@@ -673,7 +673,6 @@ static void test_profiles_match_schema(void)
   assert_keys_in_schema(&x86_uncore_profile_imc_gnr, icx_schema);
   assert_keys_in_schema(&x86_uncore_profile_df_zen2, df_schema);
   assert_keys_in_schema(&x86_uncore_profile_df_zen3, df_schema);
-  assert_keys_in_schema(&x86_uncore_profile_df_zen4, df_schema);
   assert_keys_in_schema(&x86_uncore_profile_df_zen5, df_schema);
   printf("test_profiles_match_schema passed\n");
 }

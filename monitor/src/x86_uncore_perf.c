@@ -62,9 +62,9 @@ const struct x86_uncore_profile x86_uncore_profile_imc_gnr = {imc_keys, ARRAY_LE
  * cpumask CPUs. Zen2 / Zen3: event 0x07 + 0x40 x N, umask 0x38 (perf
  * dram_channel_data_controller_N), one combined read + write count (dram_data_beats); Milan
  * channels 0-7 verified, Rome channels 0-1 only. Zen4 / Zen5: read beats event 0x1f + 0x40 x N
- * umask 0xffe and write beats umask 0xfff (dram_read_beats / dram_write_beats). Turin channels
- * 0-11 verified (c573-002: the 12 channels sum to 0.986 of a read load's bytes); Genoa takes only
- * the channel 0-3 entries until its own check, so its other rows emit NOT_BUILT. */
+ * umask 0xffe and write beats umask 0xfff (dram_read_beats / dram_write_beats), one profile for
+ * Genoa and Turin. Turin channels 0-11 verified (c573-002: the 12 channels sum to 0.986 of a read
+ * load's bytes); Genoa shares the encoding and its 12 DDR5 channels. */
 static const char *const df_keys[] = {"dram_data_beats", "dram_read_beats", "dram_write_beats"};
 
 static const struct x86_uncore_event df_zen3_beats[] = {
@@ -106,8 +106,6 @@ static const struct x86_uncore_class df_zen2_classes[] = {
     {"amd_df", 0, "chan", df_zen3_beats, 2, 8}};
 static const struct x86_uncore_class df_zen3_classes[] = {
     {"amd_df", 0, "chan", df_zen3_beats, ARRAY_LEN(df_zen3_beats), 8}};
-static const struct x86_uncore_class df_zen4_classes[] = {
-    {"amd_df", 0, "chan", df_zen5_beats, 8, 12}};
 static const struct x86_uncore_class df_zen5_classes[] = {
     {"amd_df", 0, "chan", df_zen5_beats, ARRAY_LEN(df_zen5_beats), 12}};
 
@@ -115,8 +113,6 @@ const struct x86_uncore_profile x86_uncore_profile_df_zen2 = {
     df_keys, ARRAY_LEN(df_keys), 0, df_zen2_classes, ARRAY_LEN(df_zen2_classes)};
 const struct x86_uncore_profile x86_uncore_profile_df_zen3 = {
     df_keys, ARRAY_LEN(df_keys), 0, df_zen3_classes, ARRAY_LEN(df_zen3_classes)};
-const struct x86_uncore_profile x86_uncore_profile_df_zen4 = {
-    df_keys, ARRAY_LEN(df_keys), 0, df_zen4_classes, ARRAY_LEN(df_zen4_classes)};
 const struct x86_uncore_profile x86_uncore_profile_df_zen5 = {
     df_keys, ARRAY_LEN(df_keys), 0, df_zen5_classes, ARRAY_LEN(df_zen5_classes)};
 

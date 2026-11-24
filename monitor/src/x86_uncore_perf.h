@@ -110,8 +110,7 @@ extern const struct x86_uncore_profile x86_uncore_profile_imc_spr; /* SPR and EM
 extern const struct x86_uncore_profile x86_uncore_profile_imc_gnr; /* GNR and SRF: SCH0 CAS */
 extern const struct x86_uncore_profile x86_uncore_profile_df_zen2;
 extern const struct x86_uncore_profile x86_uncore_profile_df_zen3;
-extern const struct x86_uncore_profile x86_uncore_profile_df_zen4;
-extern const struct x86_uncore_profile x86_uncore_profile_df_zen5;
+extern const struct x86_uncore_profile x86_uncore_profile_df_zen5; /* Zen4 and Zen5 */
 
 /** CPUs of a sysfs cpulist ("0", "0,64", "0-3,8") into @p cpus. @return the count, -1 when
  * unparsable, empty or longer than @p cap. */

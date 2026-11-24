@@ -155,19 +155,17 @@ class Memory(unittest.TestCase):
         self.assertEqual(set(r), {"mem_write"})
 
     def test_amd_df_zen4_rows_split_read_and_write(self):
-        """Genoa: one chan<N> row per channel with read and write beats, so both kernels have a
-        single-direction counter; rows 4-11 carry NOT_BUILT and are left out."""
+        """Genoa: one chan<N> row per channel (12) with read and write beats, so both kernels
+        have a single-direction counter."""
         def df(rd, wr):
-            rows = {"chan%d" % n: {"dram_data_beats": -2, "dram_read_beats": rd,
-                                   "dram_write_beats": wr} for n in range(4)}
-            rows.update({"chan%d" % n: {"dram_data_beats": -2, "dram_read_beats": -10,
-                                        "dram_write_beats": -10} for n in range(4, 12)})
-            return {"amd_x86_uncore_df_genoa": rows}
-        r = by_name(ca.check_memory(snap(df(0, 0)), snap(df(100, 7)), "read", 400 * 64))
+            return {"amd_x86_uncore_df_genoa": {
+                "chan%d" % n: {"dram_data_beats": -2, "dram_read_beats": rd,
+                               "dram_write_beats": wr} for n in range(12)}}
+        r = by_name(ca.check_memory(snap(df(0, 0)), snap(df(100, 7)), "read", 1200 * 64))
         self.assertEqual(r["mem_read"]["status"], "PASS")
         self.assertAlmostEqual(r["mem_read"]["ratio"], 1.0)
-        self.assertIn("8 row(s) NOT_BUILT", r["mem_read"]["reason"])
-        w = by_name(ca.check_memory(snap(df(0, 0)), snap(df(100, 25)), "write", 100 * 64))
+        self.assertNotIn("NOT_BUILT", r["mem_read"]["reason"])
+        w = by_name(ca.check_memory(snap(df(0, 0)), snap(df(100, 25)), "write", 300 * 64))
         self.assertEqual(w["mem_write"]["status"], "PASS")
 
     def test_amd_df_milan_rows_count_all_eight_channels(self):
