@@ -115,8 +115,11 @@ verify_run() {
   return 0
 }
 
-# One nvidia_gpu row set from the debug shm mirror ($1 fast|full), keys filtered by $W.
+# One nvidia_gpu row set from the debug shm mirror ($1 fast|full), keys filtered by $W. A daemon
+# restart unlinks fast/full until that tier's first tick: poll up to 60 s for the file.
 snap() {
+  local i=0
+  while test ! -e "$D/$1" && test "$i" -lt 60; do sleep 1; i=$((i + 1)); done
   awk -v t="@$1" -v w="$W" -v ty="$TY" '
     FNR==NR { if ($1=="!" ty) { n=0
         for (i=2;i<=NF;i++) {

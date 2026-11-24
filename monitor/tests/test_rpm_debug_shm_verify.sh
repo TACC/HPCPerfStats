@@ -104,12 +104,12 @@ if grep -q 'systemctl restart' "${verify}"; then
 fi
 
 # perf_raw_flops reads <not counted> while the daemon holds the FP counters: stop before it,
-# start and wait for a fresh full payload after it.
+# start and wait for fresh payloads after it.
 canary_order="$(awk '/^run_canary_checks\(\)/,/^}/' "${verify}" \
-  | grep -o 'systemctl stop hpcperfstats.service\|perf_raw_flops_check.sh\|systemctl start hpcperfstats.service\|wait_full_payload' \
+  | grep -o 'systemctl stop hpcperfstats.service\|perf_raw_flops_check.sh\|systemctl start hpcperfstats.service\|wait_payloads' \
   | tr '\n' ' ')"
-test "${canary_order}" = "systemctl stop hpcperfstats.service perf_raw_flops_check.sh systemctl start hpcperfstats.service wait_full_payload " \
-  || { echo "perf_raw_flops must run between service stop and start+wait_full_payload: ${canary_order}" >&2; exit 1; }
+test "${canary_order}" = "systemctl stop hpcperfstats.service perf_raw_flops_check.sh systemctl start hpcperfstats.service wait_payloads " \
+  || { echo "perf_raw_flops must run between service stop and start+wait_payloads: ${canary_order}" >&2; exit 1; }
 
 grep -q 'RPM %post' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must not restart daemon (spec %post handles it)" >&2; exit 1; }
@@ -203,14 +203,25 @@ grep -q 'hpc_debug_build 1' "${fake}/rpmbuild.args" \
 
 # Slow-tier restart: shm files exist before the first full sample; wait for a metric row.
 printf '\n1795000000.0 - h1\n' > "${fake}/shm/full"
-if WAIT_FULL_POLL_SECONDS=1 run_fn wait_full_payload "${fake}/shm" 2 >/dev/null 2>&1; then
-  echo "wait_full_payload must fail when full has no metric rows" >&2; exit 1
+if WAIT_FULL_POLL_SECONDS=1 run_fn wait_payloads "${fake}/shm" 2 0 >/dev/null 2>&1; then
+  echo "wait_payloads must fail when full has no metric rows" >&2; exit 1
 fi
 printf 'host_cpu - 1 2 3\n' >> "${fake}/shm/full"
-run_fn wait_full_payload "${fake}/shm" 2 >/dev/null \
-  || { echo "wait_full_payload must pass once full has a metric row" >&2; exit 1; }
-run_fn wait_full_payload "${fake}/shm/missing" 0 \
-  || { echo "wait_full_payload 0 must not wait" >&2; exit 1; }
+run_fn wait_payloads "${fake}/shm" 2 0 >/dev/null \
+  || { echo "wait_payloads must pass once full has a metric row (slow tier off)" >&2; exit 1; }
+run_fn wait_payloads "${fake}/shm/missing" 0 1 \
+  || { echo "wait_payloads 0 must not wait" >&2; exit 1; }
+# The daemon unlinks fast and full at startup and rewrites fast only at its first fast-tier tick
+# (c122-018 2026-11-24: fast missing 89 s after the verify ended). Slow tier on: wait for both,
+# bounded (timeout path names the missing file).
+if WAIT_FULL_POLL_SECONDS=1 run_fn wait_payloads "${fake}/shm" 2 1 >"${fake}/wait.log" 2>&1; then
+  echo "wait_payloads must fail while fast is missing with the slow tier on" >&2; exit 1
+fi
+grep -q "no metric rows in ${fake}/shm/fast after 2s" "${fake}/wait.log" \
+  || { echo "wait_payloads timeout must name fast: $(cat "${fake}/wait.log")" >&2; exit 1; }
+printf '\n1795000000.0 - h1\nhost_cpu - @fast 1 2\n' > "${fake}/shm/fast"
+run_fn wait_payloads "${fake}/shm" 2 1 >/dev/null \
+  || { echo "wait_payloads must pass once fast and full have metric rows" >&2; exit 1; }
 
 # run_canary_checks under the script's set -euo pipefail: on a non-x86 class (Grace) the x86
 # test must not abort the run (c122-018 2026-11-21: every canary after counter accuracy came out
@@ -223,7 +234,7 @@ for cls in grace amd; do
   # which would hide exactly the abort this checks for.
   set +e
   (PERF_RAW_FLOPS_CHECK=0 PMU_SHARING_CHECK=0 FP_SLICES_CHECK=0 SCF_PERF_CHECK=0 \
-    run_fn run_canary_checks "${fake}/arch_py" "${fake}/canary_${cls}.tsv" "${fake}/shm" \
+    run_fn run_canary_checks "${fake}/arch_py" "${fake}/canary_${cls}.tsv" "${fake}/shm" 1 \
     >"${fake}/canary_${cls}.log" 2>&1)
   rc=$?
   set -e
@@ -234,5 +245,78 @@ for cls in grace amd; do
   grep -q 'fp_slices' "${fake}/canary_${cls}.tsv" \
     || { echo "run_canary_checks stopped before fp_slices for arch ${cls}" >&2; exit 1; }
 done
+
+# After the perf_raw_flops stop/start the later canaries read fast (canary_counter_check.sh dies
+# without it): the restart wait must cover fast with the slow tier on, and only then.
+printf '#!/bin/sh\necho amd\n' > "${fake}/arch_py"
+printf '#!/bin/sh\necho "systemctl $*" >> "%s/systemctl.log"\n' "${fake}" > "${fake}/bin/systemctl"
+printf '#!/bin/sh\necho "fake check ok"\n' > "${fake}/bin/timeout"
+chmod +x "${fake}/arch_py" "${fake}/bin/systemctl" "${fake}/bin/timeout"
+rm -f "${fake}/shm/fast"
+for slow in 1 0; do
+  set +e
+  (WAIT_FULL_SECONDS=2 WAIT_FULL_POLL_SECONDS=1 PMU_SHARING_CHECK=0 FP_SLICES_CHECK=0 \
+    SCF_PERF_CHECK=0 run_fn run_canary_checks "${fake}/arch_py" "${fake}/perf_raw.tsv" \
+    "${fake}/shm" "${slow}" >"${fake}/perf_raw_${slow}.log" 2>&1)
+  rc=$?
+  set -e
+  grep -q 'systemctl start hpcperfstats.service' "${fake}/systemctl.log" \
+    || { echo "perf_raw_flops path must restart the service" >&2; exit 1; }
+  if test "${slow}" = 1 && test "${rc}" = 0; then
+    echo "post-perf_raw wait must fail while fast is missing (slow tier on)" >&2
+    cat "${fake}/perf_raw_1.log" >&2; exit 1
+  fi
+  if test "${slow}" = 0 && test "${rc}" != 0; then
+    echo "post-perf_raw wait must not need fast with the slow tier off (rc ${rc})" >&2
+    cat "${fake}/perf_raw_0.log" >&2; exit 1
+  fi
+done
+grep -q "no metric rows in ${fake}/shm/fast" "${fake}/perf_raw_1.log" \
+  || { echo "post-perf_raw wait must report the missing fast" >&2; exit 1; }
+rm -f "${fake}/bin/systemctl" "${fake}/bin/timeout"
+
+# fault_inject_verify.sh restarts the daemon last and exits without waiting, so the run used to
+# end with fast missing. verify_node must wait for the republished mirrors after it, fail the run
+# when they do not come back, and leave fault_inject's own result alone.
+mkdir -p "${fake}/mon/scripts" "${fake}/work" "${fake}/reports"
+cat > "${fake}/py" <<'EOF'
+#!/bin/sh
+case "$1" in -c) echo fixture-slug ;; esac
+case "$*" in *" arch "*) echo grace ;; esac
+exit 0
+EOF
+chmod +x "${fake}/py"
+run_verify_node() {
+  printf '#!/bin/sh\n%s\necho "fault_inject: PASS (fake)"\n' "$1" \
+    > "${fake}/mon/scripts/fault_inject_verify.sh"
+  chmod +x "${fake}/mon/scripts/fault_inject_verify.sh"
+  printf '\n1795000000.0 - h1\nhost_cpu - @fast 1 2\n' > "${fake}/shm/fast"
+  : > "${fake}/work/results.tsv"
+  set +e
+  (VERIFY_MONITOR_DIR="${fake}/mon" VERIFY_WS="${fake}/ws" VERIFY_PY="${fake}/py" \
+    VERIFY_REPORT_DIR="${fake}/reports" VERIFY_WORK="${fake}/work" RPM_TOPDIR="${tmpdir}" \
+    DIST_TOP=hpcperfstats-3.0 HPCPERFSTATS_DEBUG_SHM_DIR="${fake}/shm" ENABLE_SLOW_TIER="$2" \
+    SKIP_INSTALL=1 SKIP_SHM_LS=1 COUNTER_CHECK=0 PERF_RAW_FLOPS_CHECK=0 SCF_PERF_CHECK=0 \
+    PMU_SHARING_CHECK=0 FP_SLICES_CHECK=0 WAIT_FULL_SECONDS=2 WAIT_FULL_POLL_SECONDS=1 \
+    run_fn verify_node >"${fake}/verify_node.log" 2>&1)
+  rc=$?
+  set -e
+}
+# shellcheck disable=SC2016  # SHM_DIR expands in the fake fault_inject_verify.sh
+run_verify_node 'rm -f "${SHM_DIR}/fast"' 1
+test "${rc}" != 0 \
+  || { echo "verify_node must fail when fast is not republished after fault_inject" >&2; exit 1; }
+grep -q 'after the fault_inject restart' "${fake}/verify_node.log" \
+  || { echo "verify_node must name the post-fault_inject wait: $(cat "${fake}/verify_node.log")" >&2; exit 1; }
+grep -q "^fault_inject	PASS" "${fake}/work/results.tsv" \
+  || { echo "a failed mirror wait must not overwrite fault_inject's result: $(cat "${fake}/work/results.tsv")" >&2; exit 1; }
+# shellcheck disable=SC2016  # SHM_DIR expands in the fake fault_inject_verify.sh
+run_verify_node 'rm -f "${SHM_DIR}/fast"' 0
+test "${rc}" = 0 \
+  || { echo "slow tier off: verify_node must not wait for fast (rc ${rc}): $(cat "${fake}/verify_node.log")" >&2; exit 1; }
+# shellcheck disable=SC2016  # SHM_DIR expands in the fake fault_inject_verify.sh
+run_verify_node 'printf "\n1.0 - h1\nhost_cpu - @fast 3 4\n" > "${SHM_DIR}/fast"' 1
+test "${rc}" = 0 \
+  || { echo "verify_node must pass once fast is republished (rc ${rc}): $(cat "${fake}/verify_node.log")" >&2; exit 1; }
 
 echo "test_rpm_debug_shm_verify passed"

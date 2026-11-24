@@ -1089,7 +1089,7 @@ node in bounded time). Summary names are the `checks[].name` values of the campa
 
 | Check | Proves | Wired | Switch (summary name) | Reason when not wired |
 |-------|--------|-------|-----------------------|-----------------------|
-| install / service / first full payload | DEBUG RPM installed, `hpcperfstats.service` active, a full payload with rows, slug resolved | yes | always (`preflight`) | |
+| install / service / first full payload | DEBUG RPM installed, `hpcperfstats.service` active, full (and, slow tier on, fast) payloads with rows, slug resolved; the same bounded wait follows every daemon restart in the run | yes | always (`preflight`) | |
 | `validate_shm_messages.py` structure | schema, fast and full rows parse against the capability manifest; listend host contract | yes | always (`message_structure`) | |
 | value sentinel layers | `$sentinels` banner, allowed codes per key, `NOT_PRESENT` checked against the live source, no key `NOT_UPDATED` twice; BeeGFS RDMA / SDP mounts must read `NOT_PRESENT` | yes | `STRICT_SENTINELS`, `SENTINEL_PROBE_CHECK` (`sentinels`) | |
 | plausibility | values inside plausible ranges | yes | `STRICT_PLAUSIBILITY` (`plausibility`) | |

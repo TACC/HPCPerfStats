@@ -29,7 +29,10 @@ STUBS = {
     "systemctl": 'echo "systemctl $*" >>"$CALLS"; [ "$1" = is-active ] && echo active; true',
     "rpm": 'echo "rpm $*" >>"$CALLS"; echo hpcperfstatsd-3.1-1.el8.x86_64',
     "timeout": 'shift; exec "$@"',
-    "sleep": "true",
+    # LATE_SRC: the daemon restart left `fast` missing; it reappears at the 3rd sleep.
+    "sleep": ('echo "sleep $*" >>"$CALLS"; if [ -n "${LATE_SRC:-}" ]; then '
+              'n=$(grep -c "^sleep" "$CALLS"); [ "$n" -ge 3 ] && '
+              'cp "$LATE_SRC" "$HPCS_DEBUG_SHM/fast"; fi; true'),
     "perf": 'echo "perf $*" >>"$CALLS"; echo "7,,amd_df/event=0x1f,umask=0xffe/"',
     "taskset": "true",
     "dcgmi": 'echo "dcgmi $*"',
@@ -221,6 +224,26 @@ class CampaignVerifyNode(unittest.TestCase):
         self.assertEqual(loads, ["1006", "1007", "1008", "1004"])
         self.assertEqual(out.count("tester rc=0"), 4)
         self.assertIn("== idle after", out)
+        self.assert_erased(res)
+
+    def test_snap_waits_for_a_mirror_the_restart_removed(self):
+        # c122-018 2026-11-24: right after the verify, fast was missing for 89 s (the daemon
+        # unlinks it at startup) and the first snap read failed.
+        late = self.tmp / "late_fast"
+        (self.tmp / "shm" / "fast").rename(late)
+        res = self.run_node(NGPU="1", LATE_SRC=str(late))
+        self.assertIn("== idle\n@fast ts 100.0\ndev 0 sm_active=5\n", res.stdout,
+                      res.stdout + res.stderr)
+        self.assertNotIn("shm/fast", res.stderr)
+        self.assertEqual(self.calls.count("sleep 1\n"), 3)
+
+    def test_snap_gives_up_on_a_missing_mirror_after_60_polls(self):
+        (self.tmp / "shm" / "fast").unlink()
+        res = self.run_node(NGPU="1")
+        self.assertIn("== idle after", res.stdout)
+        self.assertIn("shm/fast", res.stderr)
+        polls = self.calls.count("sleep 1\n")
+        self.assertTrue(polls > 0 and polls % 60 == 0, polls)
         self.assert_erased(res)
 
     def test_gpu_present_without_tester_keeps_the_rpm(self):

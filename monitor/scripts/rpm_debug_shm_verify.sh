@@ -12,7 +12,8 @@
 # Optional: ENABLE_SLOW_TIER, HPCPERFSTATS_DEBUG_SHM_DIR, WORKSPACE_ROOT,
 #           SKIP_INSTALL=1, SKIP_SHM_LS=1, FAST (default 30), FULL (default 60),
 #           POST_INSTALL_SLEEP_SECONDS (defaults to FULL; soak via stress-ng --cpu 0),
-#           WAIT_SHM_SECONDS, WAIT_FULL_SECONDS (default 900; 0 = no wait for full rows),
+#           WAIT_SHM_SECONDS, WAIT_FULL_SECONDS (default 900; 0 = no wait): after each daemon
+#             start, bound on the wait for full rows (and fast rows with the slow tier on),
 #           RPM_BUILD=1 (remove stale daemon RPMs and run the debug rpmbuild first),
 #           HPCS_RELEASE (RPM_BUILD only: adds --define "hpc_release N"; default spec Release),
 #           CROSS_SAMPLE_CHECK (default 1; set 0 to disable),
@@ -148,22 +149,24 @@ build_debug_rpm() {
   }
 }
 
-# Waits up to <seconds> for a full payload with at least one metric row: the shm files exist
-# right after the restart, but a slow-tier daemon writes its first full sample later.
-wait_full_payload() {
-  local shm_dir="$1"
-  local seconds="$2"
-  local deadline
+# wait_payloads SHM_DIR SECONDS ENABLE_SLOW: waits up to SECONDS for metric rows in full and, with
+# the slow tier on, in fast. The daemon unlinks both at startup and rewrites each at its tier's
+# first tick (fast up to one sample_freq_slow after full); slow tier off writes no fast.
+wait_payloads() {
+  local shm_dir="$1" seconds="$2" names=full deadline name
 
   test "${seconds}" -gt 0 2>/dev/null || return 0
+  env_flag_on "$3" && names="full fast"
   deadline=$(($(date +%s) + seconds))
-  echo "Waiting up to ${seconds}s for a full payload with metric rows ..."
-  until grep -qE '^[a-z][a-z0-9_]* ' "${shm_dir}/full" 2>/dev/null; do
-    if test "$(date +%s)" -ge "${deadline}"; then
-      echo "ERROR: no metric rows in ${shm_dir}/full after ${seconds}s" >&2
-      return 1
-    fi
-    sleep "${WAIT_FULL_POLL_SECONDS:-15}"
+  for name in ${names}; do
+    echo "Waiting up to ${seconds}s for a ${name} payload with metric rows ..."
+    until grep -qE '^[a-z][a-z0-9_]* ' "${shm_dir}/${name}" 2>/dev/null; do
+      if test "$(date +%s)" -ge "${deadline}"; then
+        echo "ERROR: no metric rows in ${shm_dir}/${name} after ${seconds}s" >&2
+        return 1
+      fi
+      sleep "${WAIT_FULL_POLL_SECONDS:-15}"
+    done
   done
 }
 
@@ -181,7 +184,8 @@ Defaults: cross-sample + strict plausibility/live-spot/cross-sample (set *=0 to 
 Golden diff is opt-in: GOLDEN_DIR=/path|auto or GOLDEN_CHECK=1.
 Optional: SKIP_INSTALL=1 to re-validate without reinstall or post-install wait.
 Optional: RPM_BUILD=1 to remove stale daemon RPMs and run the debug rpmbuild first.
-Waits up to WAIT_FULL_SECONDS (default 900) for a full payload with metric rows.
+After each daemon start, waits up to WAIT_FULL_SECONDS (default 900) for full (and, slow
+tier on, fast) payloads with metric rows.
 After validation: counter accuracy (COUNTER_CHECK=0 to skip), the wired canary checks, then
 fault injection (FAULT_INJECT=0 to skip). Writes a per-node campaign JSON next to the reports.
 EOF
@@ -320,10 +324,10 @@ run_extra_check() {
   record_check "${results}" "${name}" "${status}" - "exit ${rc}: ${reason}"
 }
 
-# run_canary_checks PY RESULTS SHM_DIR: the standalone counter checks that run unattended as root in
-# bounded time (README "Correctness check inventory").
+# run_canary_checks PY RESULTS SHM_DIR ENABLE_SLOW: the standalone counter checks that run
+# unattended as root in bounded time (README "Correctness check inventory").
 run_canary_checks() {
-  local py="$1" results="$2" shm_dir="$3" class grace=0 scf=0 x86=0 idle_pmu=0
+  local py="$1" results="$2" shm_dir="$3" slow="$4" class grace=0 scf=0 x86=0 idle_pmu=0
   class="$("${py}" "${SCRIPT_DIR}/lib/counter_accuracy.py" arch --field class)" || class=other
   test "${class}" != grace || grace=1
   if test "${grace}" = 1 && ls -d /sys/bus/event_source/devices/nvidia_scf_pmu_* >/dev/null 2>&1; then
@@ -340,7 +344,7 @@ run_canary_checks() {
     "x86 perf FLOP events only (arch ${class})" -- "${SCRIPT_DIR}/perf_raw_flops_check.sh"
   if test "${idle_pmu}" = 1; then
     systemctl start hpcperfstats.service
-    wait_full_payload "${shm_dir}" "${WAIT_FULL_SECONDS:-900}"
+    wait_payloads "${shm_dir}" "${WAIT_FULL_SECONDS:-900}" "${slow}"
   fi
   run_extra_check "${results}" scf_perf SCF_PERF_CHECK "${scf}" \
     "needs Grace nvidia_scf_pmu_* PMUs (arch ${class})" -- \
@@ -470,7 +474,7 @@ verify_node() {
     fi
   fi
 
-  wait_full_payload "${shm_dir}" "${WAIT_FULL_SECONDS:-900}" || return 1
+  wait_payloads "${shm_dir}" "${WAIT_FULL_SECONDS:-900}" "${enable_slow}" || return 1
 
   slug="$("${py}" -c "import json; print(json.load(open('${caps}'))['capability_slug'])")"
   echo "capability_slug=${slug}"
@@ -592,7 +596,7 @@ PY
   echo "PASS: validate_shm_messages (slug=${slug})"
 
   run_counter_accuracy "${caps}" "${shm_dir}" "${py}" "${results}" "${report_dir}"
-  run_canary_checks "${py}" "${results}" "${shm_dir}"
+  run_canary_checks "${py}" "${results}" "${shm_dir}" "${enable_slow}"
 
   # Live fault injection (DEBUG RPMs; SKIP line otherwise): restarts the daemon twice, so it
   # runs after every check that reads the running daemon.
@@ -607,6 +611,11 @@ PY
   fi
   record_fault_inject "${results}" "${fi_out}" "${fi_rc}"
   rm -f "${fi_out}"
+  # Its last restart returns before the daemon republishes: never hand off a missing mirror.
+  wait_payloads "${shm_dir}" "${WAIT_FULL_SECONDS:-900}" "${enable_slow}" || {
+    echo "ERROR: debug shm mirrors not republished after the fault_inject restart" >&2
+    return 1
+  }
 }
 
 # record_fault_inject RESULTS OUT RC: fault_inject_verify.sh output and exit code -> one status.
