@@ -83,7 +83,7 @@ run() {
   rc=$?
   set -e
 }
-has() { echo "${out}" | grep -qF -- "$1" || fail "$2: missing '$1' in: ${out}"; }
+has() { grep -qF -- "$1" <<<"${out}" || fail "$2: missing '$1' in: ${out}"; }
 
 # Intel defaults: dp FLOPs on the 256b event (weight 4), sp on 256b single (weight 8); the 512b
 # events are not in the table, so perf reports <not supported> and they are skipped.
@@ -134,7 +134,7 @@ run amd "${T}/amd.tab"
 [ "${rc}" -eq 0 ] || fail "amd pass exit ${rc}: ${out}"
 has "event all-flops" "amd event"
 has "sp ratio 1.000 PASS" "amd sp ratio"
-echo "${out}" | grep -q "leak" && fail "amd has no precision events, so no leak line: ${out}"
+grep -q "leak" <<<"${out}" && fail "amd has no precision events, so no leak line: ${out}"
 echo "fp_ret_sse_avx_ops.all 500000 500000" >"${T}/amd_half.tab"
 run amd "${T}/amd_half.tab" --precisions dp
 [ "${rc}" -eq 1 ] || fail "amd undercount exit ${rc}: ${out}"

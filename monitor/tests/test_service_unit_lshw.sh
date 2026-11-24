@@ -25,14 +25,14 @@ test -n "${bind_bin}" || { echo "missing BindReadOnlyPaths for /usr/bin/lshw" >&
 test -n "${bind_sbin}" || { echo "missing BindReadOnlyPaths for /usr/sbin/lshw" >&2; exit 1; }
 
 # Source must be the installed stub (optional leading '-' for missing-source ignore).
-echo "${bind_bin}" | grep -qE "BindReadOnlyPaths=-?${STUB_INSTALL}:/usr/bin/lshw" \
+grep -qE "BindReadOnlyPaths=-?${STUB_INSTALL}:/usr/bin/lshw" <<<"${bind_bin}" \
   || { echo "bin bind source drift: ${bind_bin}" >&2; exit 1; }
-echo "${bind_sbin}" | grep -qE "BindReadOnlyPaths=-?${STUB_INSTALL}:/usr/sbin/lshw" \
+grep -qE "BindReadOnlyPaths=-?${STUB_INSTALL}:/usr/sbin/lshw" <<<"${bind_sbin}" \
   || { echo "sbin bind source drift: ${bind_sbin}" >&2; exit 1; }
 
 path_line="$(grep -E '^Environment=PATH=' "${UNIT}" || true)"
 test -n "${path_line}" || { echo "missing Environment=PATH= in unit" >&2; exit 1; }
-echo "${path_line}" | grep -q "${STUB_DIR}" \
+grep -q "${STUB_DIR}" <<<"${path_line}" \
   || { echo "PATH does not list stub dir ${STUB_DIR}: ${path_line}" >&2; exit 1; }
 
 echo "test_service_unit_lshw.sh passed"

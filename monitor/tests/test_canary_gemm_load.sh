@@ -59,7 +59,7 @@ grep -q "GEMM_T" "${PREFIX}/src/gemm_load.c" || fail "source not written"
 
 # Foreground run is bounded by --seconds and reports a positive rate and a finite check value.
 out="$("${SCRIPT}" run --prefix "${PREFIX}" --precision sp --seconds 1 --size 64 --threads 2)"
-echo "${out}" | grep -q "gemm_load sp n=64 threads=2 seconds=1 started" || fail "no start line: ${out}"
+grep -q "gemm_load sp n=64 threads=2 seconds=1 started" <<<"${out}" || fail "no start line: ${out}"
 echo "${out}" | grep -Eq "GFLOP/s=[0-9]*\.[0-9]+ .*check=1\.000" || fail "no rate/check line: ${out}"
 # A bounded run ends with its exact FLOP total (2 n^3 per GEMM; perf_raw_flops_check.sh needs it).
 total="$(echo "${out}" | sed -n 's/^gemm_load sp done total_flops=\([0-9]*\) elapsed=.*/\1/p')"
@@ -94,7 +94,7 @@ set -e
 # The read kernel reads the whole --mib array every pass and reports exactly passes x array bytes;
 # check= is the per-pass sum (64 MiB of doubles that are all 1.0).
 out="$("${SCRIPT}" run --prefix "${PREFIX}" --kernel read --mib 64 --seconds 1 --threads 2)"
-echo "${out}" | grep -q "read_load mib=64 threads=2 seconds=1 started" || fail "no read start: ${out}"
+grep -q "read_load mib=64 threads=2 seconds=1 started" <<<"${out}" || fail "no read start: ${out}"
 echo "${out}" | grep -Eq "GB/s=[0-9]*\.[0-9]+ .*check=8388608$" || fail "no read rate/check: ${out}"
 bytes="$(echo "${out}" | sed -n 's/^read_load done total_bytes_read=\([0-9]*\) passes=\([0-9]*\) .*/\1 \2/p')"
 [ -n "${bytes}" ] || fail "no read done line: ${out}"
@@ -111,7 +111,7 @@ grep -q "kernel=read .* mib=64 seconds=0" "${PREFIX}/gemm_load.state" || fail "r
 # passes x array bytes. Pass p stores the value p, and check= sums one double per 4 KiB of the
 # array (16384 for 64 MiB), so the final check equals passes x 16384 only if every pass stored.
 out="$("${SCRIPT}" run --prefix "${PREFIX}" --kernel write --mib 64 --seconds 1 --threads 2)"
-echo "${out}" | grep -q "write_load mib=64 threads=2 seconds=1 started" || fail "no write start: ${out}"
+grep -q "write_load mib=64 threads=2 seconds=1 started" <<<"${out}" || fail "no write start: ${out}"
 echo "${out}" | grep -Eq "^write_load GB/s=[0-9]*\.[0-9]+ elapsed=[0-9]+s check=[0-9]+$" ||
   fail "no write rate/check: ${out}"
 bytes="$(echo "${out}" | sed -n 's/^write_load done total_bytes_written=\([0-9]*\) passes=\([0-9]*\) elapsed=[0-9.]*s$/\1 \2/p')"

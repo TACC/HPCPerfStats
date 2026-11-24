@@ -11,6 +11,7 @@ import os
 import shutil
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -71,6 +72,7 @@ def node(tmp_path: Path) -> Path:
     etc.mkdir()
     (etc / "hpcperfstats.conf").write_text(
         "server stats.ls6.example\nqueue ls6\nuser guest\npassword secret\n")
+    (etc / "scaling_governor").write_text("performance\n")
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     for name, body in STUBS.items():
@@ -83,14 +85,19 @@ def _run(node: Path, cluster: str = "ls6", **env: str) -> subprocess.CompletedPr
     full = {"PATH": f"{node / 'stubs'}:/usr/bin:/bin", "HOME": str(node / "home"),
             "HPCS_ETC_CONF": str(node / "etc" / "hpcperfstats.conf"),
             "HPCS_SYSCONFIG": str(node / "etc" / "sysconfig"),
-            "HPCS_DROPIN_DIR": str(node / "etc" / "dropins"), **env}
+            "HPCS_DROPIN_DIR": str(node / "etc" / "dropins"),
+            "HPCS_CPUFREQ": str(node / "etc" / "scaling_governor"), **env}
     script = node / "w" / "monitor" / "measurement" / "bin" / SCRIPT.name
     return subprocess.run(["bash", str(script), cluster], capture_output=True, text=True,
                           env=full, timeout=60, check=False)
 
 
-def _log(node: Path) -> str:
+def _log(node: Path, wait: float = 5.0) -> str:
+    """The fake harness's log. It runs detached, so a launch may still be writing it."""
     path = node / "w" / "test_runs" / "overhead" / "v31_c313-031.log"
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline and not (path.exists() and path.read_text()):
+        time.sleep(0.05)
     return path.read_text() if path.exists() else ""
 
 
@@ -130,7 +137,7 @@ def test_each_gate_stops_without_launching(node: Path, env: dict, reason: str) -
     # c122-018: an empty squeue line crashed awk (field -1) and left the seconds empty.
     assert "fatal" not in res.stderr and "integer expression" not in res.stderr, res.stderr
     assert "NOT launched" in res.stdout
-    assert _log(node) == ""
+    assert _log(node, wait=0.5) == ""
 
 
 @pytest.mark.parametrize("left, secs", [
@@ -184,3 +191,18 @@ def test_unknown_cluster_is_a_usage_error(node: Path) -> None:
 def test_script_is_executable_and_parses() -> None:
     assert os.access(SCRIPT, os.X_OK)
     subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
+
+
+def test_no_cpufreq_stops_before_the_build(node: Path) -> None:
+    """c313-031: the harness refused --governors performance only after a 30 min build."""
+    (node / "etc" / "scaling_governor").unlink()
+    res = _run(node)
+    assert res.returncode == 1 and "HPCS_GOVERNORS=none" in res.stdout, res.stdout
+    assert not (node / "w" / "monitor" / "rpmbuild").exists()
+
+
+def test_governors_none_reaches_the_harness(node: Path) -> None:
+    (node / "etc" / "scaling_governor").unlink()
+    res = _run(node, HPCS_GOVERNORS="none")
+    assert res.returncode == 0, res.stdout
+    assert "--governors none" in _log(node)

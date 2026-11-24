@@ -65,6 +65,15 @@ for t in gcc make autoreconf rpmbuild cmake; do
 done
 echo "cluster=${CLUSTER} host=${N} arch=$(uname -m) cpus=$(nproc) python=${P3}"
 
+# The harness preflight refuses a governor the node cannot set; catch it before the build
+# (LS6 c313-031: no cpufreq, frequency is firmware-controlled). HPCS_CPUFREQ is for the tests.
+GOV="${HPCS_GOVERNORS:-performance}"
+CPUFREQ="${HPCS_CPUFREQ:-/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor}"
+echo "governors=${GOV} cpufreq=$(cat "${CPUFREQ}" 2>/dev/null || echo none)"
+if test "${GOV}" != none && test ! -e "${CPUFREQ}"; then
+  stop "no cpufreq governor on this node; rerun with HPCS_GOVERNORS=none if accepted"
+fi
+
 # Broker keys: the site conf unless it is the repo-default localhost, then the node's conf.
 SRC="${SITE}"
 declare -A B
@@ -163,7 +172,7 @@ if test "${OK}" = 1; then
   sed 's/^password .*/password REDACTED/' "${C}"
   OUT="measurement/results/v31_${N}_$(date -u +%Y%m%dT%H%MZ)"
   setsid nohup timeout --signal=TERM $((SECS - 1800)) ./measurement/bin/run_overhead_profile.sh \
-    --governors performance --profile-collectors --leg-seconds 1800 --settle-seconds 60 \
+    --governors "${GOV}" --profile-collectors --leg-seconds 1800 --settle-seconds 60 \
     --fwq-seconds 300 --blocks 3 --max-hours 20 --cadence-sweep 60 \
     --allocation-user sharrell --conf "${C}" --rpm "${RPM}" \
     --build-info rpmbuild/build-info --out "${OUT}" >"${L}/v31_${N}.log" 2>&1 </dev/null &
