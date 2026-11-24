@@ -398,6 +398,14 @@ A monitor correctness block wrapped prep and verify in `if timeout … $PREP …
 |----|-------|
 | `systemctl status hpcperfstats --no-pager`, `journalctl -u hpcperfstats`, `rpm -q hpcperfstatsd`, `ps … \| grep '[h]pcperfstatsd'` | `systemctl is-active hpcperfstatsd` (unit not found reads as `inactive`); `rpm -q hpcperfstats` |
 
+### Anti-pattern — monitor DEBUG build on an LS6 node without `cmake` on root's PATH (c313-031 2026-11-23)
+
+`prepare_rpmbuild_ls6.sh --debug-build` stopped with **`prep rc=127`** and `./scripts/build_static_bundle.sh: line 506: cmake: command not found`. LS6 compute nodes keep cmake under `/opt/apps/cmake/<version>/bin` (3.21.3 and 3.24.2 on c313-031), and a root shell has neither it nor Lmod on PATH. The operator had to add it by hand and paste the block again.
+
+| Do | Don't |
+|----|-------|
+| In the node block, before the build: `CM=$(ls -d /opt/apps/cmake/*/bin 2>/dev/null \| sort -V \| tail -n 1)`, then `command -v cmake >/dev/null \|\| export PATH=$PATH:$CM`, then `echo "cmake=$(command -v cmake)"` so a missing cmake shows before the build | Assume a root shell on a compute node has the build tools the dev host has (`module load` does not work as root there) |
+
 ### Anti-pattern — GPU node discovery commands (GPU field response, 2026-11-18)
 
 Four GPU-node commands failed on real nodes during the GPU discovery round:
