@@ -20,6 +20,10 @@ from .procsample import CLK_TCK, process_run_ns_delta
 
 CONTAMINATION_MIN_CORES = 0.25
 _BUSY = ("user", "nice", "system", "irq", "softirq", "steal")
+# Contamination is other processes, i.e. user/system time. Interrupt time is left out: the
+# daemon's counter rotation is interrupt time on every core (c573-002 0.39 cores; c492-081 SKX
+# and c317-016 A100 aborted on it 2026-11-24) and is reported as counter_rotation instead.
+_PROCESS = ("user", "nice", "system")
 BURST_TOLERANCE_S = 2.0
 
 
@@ -350,13 +354,14 @@ def _node_summary(quiet: list[dict[str, Any]], proc: dict[str, Any] | None) -> d
     nodes = [s for s in quiet if s.get("node")]
     if len(nodes) < 2:
         return None
-    busy, parts = [], {k: [] for k in ("user", "system", "irq", "softirq")}
+    busy, procs, parts = [], [], {k: [] for k in ("user", "system", "irq", "softirq")}
     for a, b in _pairs(nodes):
         dt = b["wall"] - a["wall"]
         ca, cb = a["node"]["cpu"], b["node"]["cpu"]
         if dt <= 0 or not ca or not cb:
             continue
         busy.append(sum(cb.get(k, 0) - ca.get(k, 0) for k in _BUSY) / CLK_TCK / dt)
+        procs.append(sum(cb.get(k, 0) - ca.get(k, 0) for k in _PROCESS) / CLK_TCK / dt)
         for k in parts:
             parts[k].append((cb.get(k, 0) - ca.get(k, 0)) / CLK_TCK / dt)
     first, last = nodes[0]["node"], nodes[-1]["node"]
@@ -391,10 +396,9 @@ def _node_summary(quiet: list[dict[str, Any]], proc: dict[str, Any] | None) -> d
     busy_ci = stats.mean_ci(busy)
     daemon_cores = (proc["cpu_core_s_per_h"]["mean"] / 3600.0) if proc else 0.0
     helpers = _helper_cores(nodes)
-    non_daemon = None
-    if busy_ci:
-        non_daemon = (busy_ci["mean"] - daemon_cores - (harness or 0) / 3600.0
-                      - sum(helpers.values()))
+    ours = daemon_cores + (harness or 0) / 3600.0 + sum(helpers.values())
+    non_daemon = busy_ci["mean"] - ours if busy_ci else None
+    outside = sum(procs) / len(procs) - ours if procs else None
     return {
         "busy_cores": busy_ci,
         **{f"{k}_cores": (sum(v) / len(v) if v else None) for k, v in parts.items()},
@@ -409,6 +413,7 @@ def _node_summary(quiet: list[dict[str, Any]], proc: dict[str, Any] | None) -> d
         "harness_cpu_s_per_h": harness,
         "helper_cores": helpers,
         "non_daemon_busy_cores": non_daemon,
+        "outside_process_cores": outside,
         "loadavg1_max": max((s["node"].get("loadavg1") or 0) for s in nodes),
         "cur_freq_mhz": _freq_window(nodes),
     }
@@ -461,9 +466,9 @@ def summarize_leg(leg_dir: Path) -> dict[str, Any]:
     if extra and status == "ok":
         status = "type_mismatch"
     contaminated = False
-    if node and node.get("non_daemon_busy_cores") is not None:
+    if node and node.get("outside_process_cores") is not None:
         limit = max(CONTAMINATION_MIN_CORES, 0.01 * (node_online(quiet) or 1))
-        contaminated = node["non_daemon_busy_cores"] > limit
+        contaminated = node["outside_process_cores"] > limit
     fwq_dir = leg_dir / "fwq"
     fwq_summary = fwq.summarize(fwq.load_quanta(fwq_dir)) if fwq_dir.is_dir() else None
     perf = None
