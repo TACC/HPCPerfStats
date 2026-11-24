@@ -91,10 +91,12 @@ set -e
 test "${rc}" -eq 1 || fail "HPC_WARN_GATE_REQUIRE=1 should exit 1, got ${rc}"
 
 # --- --push without the aarch64 sysroot: aarch64-only banner; REQUIRE=1 fails in preflight ---
-# Only on hosts whose x86 prerequisites pass (otherwise the whole-gate skip comes first).
+# Only on hosts whose x86 prerequisites pass (otherwise the whole-gate skip comes first) and
+# that have clang + ld.lld, which the gate checks before the sysroot (LS6 c313-031: no clang).
 DEFAULT_PREFIX="${SCRIPT_DIR}/../../../.build/prefix-static"
 if test "$(uname -s)" = "Linux" && command -v gcc >/dev/null 2>&1 \
-  && command -v autoreconf >/dev/null 2>&1 && test -f "${DEFAULT_PREFIX}/lib/libev.a"; then
+  && command -v autoreconf >/dev/null 2>&1 && test -f "${DEFAULT_PREFIX}/lib/libev.a" \
+  && command -v clang >/dev/null 2>&1 && command -v ld.lld >/dev/null 2>&1; then
   set +e
   out="$(ARM_SYSROOT="${WORK}/no-such-sysroot" HPC_WARN_GATE_LOG="${WORK}/arm.log" \
     HPC_WARN_GATE_REQUIRE=1 "${GATE}" --push 2>&1)"
