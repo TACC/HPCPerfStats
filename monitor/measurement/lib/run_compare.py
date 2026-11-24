@@ -22,7 +22,8 @@ SCHEDULE_KEYS = ("leg_seconds", "settle_seconds", "fwq_seconds", "blocks", "gove
                  "off_legs")
 INTENDED_BUILD = ("rpm_nvra", "capability_slug", "fleet", "shared_node_multi_jid",
                   "ib_mad_dlopen", "git_commit", "git_dirty")
-INTENDED_HOST = ("kernel", "os", "nproc_online", "numa_nodes", "mem_gib", "gpus", "pmu_sharers")
+INTENDED_HOST = ("kernel", "os", "nproc_online", "numa_nodes", "mem_gib", "gpus", "pmu_sharers",
+                 "cpufreq")
 
 
 def parse_conf(text: str | None) -> dict[str, str]:
@@ -77,7 +78,8 @@ def load_run(run_dir: Path) -> dict[str, Any]:
                      "mem_total_kib") else None,
                  "gpus": len([g for g in host.get("gpus") or [] if "3D controller" in g]),
                  "pmu_sharers": ",".join(f"{u}={st}" for u, st in sorted(
-                     (host.get("pmu_sharers") or {}).items())) or None},
+                     (host.get("pmu_sharers") or {}).items())) or None,
+                 "cpufreq": host.get("cpufreq_governor")},
         "groups": sorted(sched.get("groups") or []),
         "variants": sorted(sched.get("variants") or []),
         "legs": legs,
@@ -98,11 +100,18 @@ def compare(runs: list[dict[str, Any]]) -> dict[str, Any]:
     must += [(f"schedule.{k}", v) for k, v in _rows(runs, "schedule", list(SCHEDULE_KEYS))]
     must += [(f"conf.{k}", v) for k, v in _rows(runs, "conf", conf_keys)]
     must.append(("fit_steps", [[s.get("step") for s in r["fit_steps"]] for r in runs]))
+    # A node without cpufreq cannot set any governor (LS6 c313-031: firmware-managed clock), so
+    # `--governors none` there is hardware, not a setting: it is shown and left out of the match.
+    no_cpufreq = [r["schedule"].get("governors") == [] and r["host"].get("cpufreq") is None
+                  for r in runs]
     must_rows = []
     for key, vals in must:
-        same = len({json.dumps(v, sort_keys=True) for v in vals}) == 1
+        kept = [v for v, skip in zip(vals, no_cpufreq) if not (skip and key == "schedule.governors")]
+        same = len({json.dumps(v, sort_keys=True) for v in kept}) <= 1
         if key == "fit_steps":
             same = all(v == [] for v in vals)
+        if key == "schedule.governors":
+            vals = ["none (no cpufreq)" if skip else v for v, skip in zip(vals, no_cpufreq)]
         must_rows.append({"key": key, "values": vals, "same": same})
     intended = [(f"build.{k}", v) for k, v in _rows(runs, "build", list(INTENDED_BUILD))]
     intended += [(f"host.{k}", v) for k, v in _rows(runs, "host", list(INTENDED_HOST))]

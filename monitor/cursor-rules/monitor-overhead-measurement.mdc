@@ -91,7 +91,10 @@ Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
    original governor on every exit path (and in `restore.sh`); a governor the driver does not
    offer fails preflight before any change. Each leg records governor, `scaling_cur_freq`
    min/p50/max and node busy cores. Never quote core-s/h without its governor; never compare
-   core-s/h across governors.
+   core-s/h across governors. A node with no cpufreq interface (firmware-managed clock, LS6
+   c313-031 2026-11-24) runs `--governors none` (`HPCS_GOVERNORS=none` in
+   `campaign_node_run.sh`, which stops before the build otherwise); `compare_runs.py` accepts
+   that only when provenance `cpufreq_governor` is null and lists it as `host.cpufreq`.
 13. **Wakeups/s is the headline metric** — voluntary + nonvoluntary context switches of
    **every** daemon thread per second (per-tid `status`; `/proc/<pid>/status` is the leader
    only). It does not depend on the governor, so it is the cross-architecture number;

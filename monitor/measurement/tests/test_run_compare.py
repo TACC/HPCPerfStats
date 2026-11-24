@@ -17,21 +17,22 @@ CONF = ("server stats.{site}.tacc.utexas.edu\nqueue {site}\nport 5672\nuser REDA
 
 def _run(tmp: Path, name: str, site: str, leg_seconds: int = 1800, buf: int = 6,
          fit: list | None = None, shared: bool = False, groups=("arm_cpu", "filesystem"),
-         version: str = "3.1", powerd: str = "inactive") -> Path:
+         version: str = "3.1", powerd: str = "inactive", governors=("performance",),
+         cpufreq: str | None = "performance") -> Path:
     raw = tmp / name / "raw"
     raw.mkdir(parents=True)
     legs = [{"kind": k, "leg_id": f"b1-{k}-"} for k in ("OFF", "NONE", "ALL")]
     legs += [{"kind": "SOLO", "leg_id": f"b1-SOLO-{g}"} for g in groups]
     (raw / "run.json").write_text(json.dumps({
         "schedule": {"leg_seconds": leg_seconds, "settle_seconds": 60, "fwq_seconds": 300,
-                     "blocks": 3, "governors": ["performance"], "off_legs": True,
+                     "blocks": 3, "governors": list(governors), "off_legs": True,
                      "fit_steps": fit or [], "groups": list(groups), "variants": [],
                      "legs": legs},
         "flags": {}}))
     (raw / "provenance.json").write_text(json.dumps({
         "host": {"short": name, "kernel": "k", "os_release": 'PRETTY_NAME="Rocky Linux 9.7"\n',
                  "nproc_online": 144, "numa_nodes": 2, "mem_total_kib": 2 ** 28, "gpus": [],
-                 "pmu_sharers": {"nvidia-powerd": powerd}},
+                 "pmu_sharers": {"nvidia-powerd": powerd}, "cpufreq_governor": cpufreq},
         "build": {"conf_redacted": CONF.format(site=site, buf=buf),
                   "rpm_qip": {"stdout": f"Name        : hpcperfstatsd\nVersion     : {version}\n"
                                         "Release     : 1.el9\n"},
@@ -104,3 +105,31 @@ def test_pmu_sharers_are_an_intended_difference(tmp_path):
     assert result["ok"]
     intended = {r["key"]: r["values"] for r in result["intended"]}
     assert intended["host.pmu_sharers"] == ["nvidia-powerd=active", "nvidia-powerd=inactive"]
+
+
+def test_governor_none_on_a_node_without_cpufreq_is_hardware_not_a_mismatch(tmp_path):
+    """LS6 c313-031 has no cpufreq (firmware clock): run with --governors none, kept in."""
+    runs = [run_compare.load_run(_run(tmp_path, "c573-002", "stampede3")),
+            run_compare.load_run(_run(tmp_path, "c313-031", "ls6", governors=(),
+                                      cpufreq=None))]
+    result = run_compare.compare(runs)
+    assert result["ok"], [r for r in result["must"] if not r["same"]]
+    gov = next(r for r in result["must"] if r["key"] == "schedule.governors")
+    assert gov["values"] == [["performance"], "none (no cpufreq)"]
+    intended = {r["key"]: r["values"] for r in result["intended"]}
+    assert intended["host.cpufreq"] == ["performance", None]
+
+
+def test_governor_none_where_cpufreq_exists_is_still_a_mismatch(tmp_path):
+    runs = [run_compare.load_run(_run(tmp_path, "c573-002", "stampede3")),
+            run_compare.load_run(_run(tmp_path, "c317-016", "ls6", governors=()))]
+    result = run_compare.compare(runs)
+    assert not result["ok"]
+    gov = next(r for r in result["must"] if r["key"] == "schedule.governors")
+    assert gov["same"] is False and gov["values"] == [["performance"], []]
+
+
+def test_different_governors_on_cpufreq_nodes_still_mismatch(tmp_path):
+    runs = [run_compare.load_run(_run(tmp_path, "a", "x")),
+            run_compare.load_run(_run(tmp_path, "b", "y", governors=("ondemand",)))]
+    assert not run_compare.compare(runs)["ok"]
