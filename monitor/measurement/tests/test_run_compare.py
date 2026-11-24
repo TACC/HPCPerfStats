@@ -133,3 +133,21 @@ def test_different_governors_on_cpufreq_nodes_still_mismatch(tmp_path):
     runs = [run_compare.load_run(_run(tmp_path, "a", "x")),
             run_compare.load_run(_run(tmp_path, "b", "y", governors=("ondemand",)))]
     assert not run_compare.compare(runs)["ok"]
+
+
+def test_other_perf_holders_and_nmi_watchdog_are_listed(tmp_path):
+    d = _run(tmp_path, "c492-081", "stampede3")
+    prov = json.loads((d / "raw" / "provenance.json").read_text())
+    prov["host"].update({"perf_event_holders": {"hpcperfstatsd": 96, "perf": 48},
+                         "nmi_watchdog": "1"})
+    (d / "raw" / "provenance.json").write_text(json.dumps(prov))
+    e = _run(tmp_path, "c460-220", "stampede3")
+    prov = json.loads((e / "raw" / "provenance.json").read_text())
+    prov["host"].update({"perf_event_holders": {"hpcperfstatsd": 80}, "nmi_watchdog": "0"})
+    (e / "raw" / "provenance.json").write_text(json.dumps(prov))
+    old = _run(tmp_path, "c573-002", "stampede3")
+    result = run_compare.compare([run_compare.load_run(x) for x in (d, e, old)])
+    intended = {r["key"]: r["values"] for r in result["intended"]}
+    assert intended["host.other_perf_holders"] == ["perf=48", "none", None]
+    assert intended["host.nmi_watchdog"] == ["1", "0", None]
+    assert result["ok"]

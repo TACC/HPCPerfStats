@@ -103,7 +103,37 @@ def host_info() -> dict[str, Any]:
         "cpufreq_governor": gov.strip() if gov else None,
         "perf_event_paranoid": (_read("/proc/sys/kernel/perf_event_paranoid") or "").strip() or None,
         "gpus": gpus, "nvidia_smi": smi, "pmu_sharers": pmu_sharers(),
+        "perf_event_holders": perf_event_holders(),
+        "nmi_watchdog": (_read("/proc/sys/kernel/nmi_watchdog") or "").strip() or None,
     }
+
+
+PERF_EVENT_FD = "anon_inode:[perf_event]"
+
+
+def perf_event_holders(proc_root: str = "/proc") -> dict[str, int]:
+    """perf_event fds per process name: every program holding counters beside the daemon.
+
+    Counter rotation starts once the open events need more counters than are free (c573-002,
+    2026-11-24); any holder (nvidia-powerd, a user's perf / LIKWID job, our own hpcperfstatsd)
+    shows here, whatever its service name. Processes that vanish or deny access are skipped.
+    """
+    out: dict[str, int] = {}
+    for pdir in Path(proc_root).glob("[0-9]*"):
+        try:
+            fds = list((pdir / "fd").iterdir())
+        except OSError:
+            continue
+        n = 0
+        for fd in fds:
+            try:
+                n += os.readlink(fd) == PERF_EVENT_FD
+            except OSError:
+                continue
+        if n:
+            comm = (_read(str(pdir / "comm")) or "?").strip()
+            out[comm] = out.get(comm, 0) + n
+    return out
 
 
 def pmu_sharers() -> dict[str, str | None]:

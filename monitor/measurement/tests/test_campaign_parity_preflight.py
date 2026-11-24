@@ -104,3 +104,20 @@ def test_profiler_binary_keeps_the_daemon_comm():
     """The kernel comm is the basename cut to 15 chars; `hpcperfstatsd-profiler` became
     `hpcperfstatsd-p`, so the sampler never found the PROFILE leg's daemon."""
     assert orchestrator.Path(orchestrator.PROFILER_BINARY).name[:15] == orchestrator.DAEMON_COMM
+
+
+def test_perf_event_holders_counts_every_program_holding_counters(tmp_path):
+    """c573-002 2026-11-24: rotation starts when events exceed free counters, so every holder
+    (nvidia-powerd, a user's perf job, our daemon) must be on record, not just one service."""
+    import os
+    from lib import provenance
+    for pid, comm, links in ((10, "nvidia-powerd", ["anon_inode:[perf_event]"] * 3 + ["/dev/null"]),
+                             (11, "hpcperfstatsd", ["anon_inode:[perf_event]"] * 2),
+                             (12, "bash", ["/dev/pts/0"])):
+        fd = tmp_path / str(pid) / "fd"
+        fd.mkdir(parents=True)
+        (tmp_path / str(pid) / "comm").write_text(comm + "\n")
+        for i, target in enumerate(links):
+            os.symlink(target, fd / str(i))
+    (tmp_path / "13").mkdir()  # vanished / no fd dir: skipped
+    assert provenance.perf_event_holders(str(tmp_path)) == {"nvidia-powerd": 3, "hpcperfstatsd": 2}

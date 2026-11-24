@@ -23,7 +23,7 @@ SCHEDULE_KEYS = ("leg_seconds", "settle_seconds", "fwq_seconds", "blocks", "gove
 INTENDED_BUILD = ("rpm_nvra", "capability_slug", "fleet", "shared_node_multi_jid",
                   "ib_mad_dlopen", "git_commit", "git_dirty")
 INTENDED_HOST = ("kernel", "os", "nproc_online", "numa_nodes", "mem_gib", "gpus", "pmu_sharers",
-                 "cpufreq")
+                 "cpufreq", "other_perf_holders", "nmi_watchdog")
 
 
 def parse_conf(text: str | None) -> dict[str, str]:
@@ -79,7 +79,13 @@ def load_run(run_dir: Path) -> dict[str, Any]:
                  "gpus": len([g for g in host.get("gpus") or [] if "3D controller" in g]),
                  "pmu_sharers": ",".join(f"{u}={st}" for u, st in sorted(
                      (host.get("pmu_sharers") or {}).items())) or None,
-                 "cpufreq": host.get("cpufreq_governor")},
+                 "cpufreq": host.get("cpufreq_governor"),
+                 # Other programs holding perf counters (our own daemon left out); None = run
+                 # recorded before the field existed, "none" = recorded and nothing else held one.
+                 "other_perf_holders": None if host.get("perf_event_holders") is None else (
+                     ",".join(f"{c}={n}" for c, n in sorted(host["perf_event_holders"].items())
+                              if c != "hpcperfstatsd") or "none"),
+                 "nmi_watchdog": host.get("nmi_watchdog")},
         "groups": sorted(sched.get("groups") or []),
         "variants": sorted(sched.get("variants") or []),
         "legs": legs,
