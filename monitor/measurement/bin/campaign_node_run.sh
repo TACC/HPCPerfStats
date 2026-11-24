@@ -39,6 +39,15 @@ stop() {
   echo "STOP: $*"
 }
 
+# One copy per node: two copies building the same ../.build tree delete each other's configure
+# files (c460-220 2026-11-24: libev "C compiler cannot create executables"). The harness is
+# launched without the lock fd, so a later copy can still stop an old harness below.
+exec 9>"${D}/campaign.lock"
+if ! flock -n 9; then
+  echo "STOP: another campaign_node_run.sh is running on this node (${D}/campaign.lock)"
+  exit 1
+fi
+
 pkill -TERM -f overhead_profile.py
 while pgrep -f overhead_profile.py >/dev/null; do sleep 5; done
 unset HPCS_BUNDLE_FLEET LIBS CPPFLAGS LDFLAGS CFLAGS CC
@@ -128,7 +137,14 @@ if test "${OK}" = 1; then
   rm -f scripts/fleet/*.force
   test -f Makefile && make distclean >/dev/null 2>&1
   ./scripts/build_static_bundle.sh >"${L}/${N}_31_bundle.log" 2>&1
-  echo "bundle rc=$?"
+  BRC=$?
+  echo "bundle rc=${BRC}"
+  if test "${BRC}" != 0; then
+    stop "static bundle build failed (${L}/${N}_31_bundle.log), last lines:"
+    grep -n -iE 'error' "${L}/${N}_31_bundle.log" | tail -6
+  fi
+fi
+if test "${OK}" = 1; then
   make -C .build-static check >"${L}/${N}_31_check.log" 2>&1
   CRC=$?
   echo "check rc=${CRC}"
@@ -175,7 +191,7 @@ if test "${OK}" = 1; then
     --governors "${GOV}" --profile-collectors --leg-seconds 1800 --settle-seconds 60 \
     --fwq-seconds 300 --blocks 3 --max-hours 20 --cadence-sweep 60 \
     --allocation-user sharrell --conf "${C}" --rpm "${RPM}" \
-    --build-info rpmbuild/build-info --out "${OUT}" >"${L}/v31_${N}.log" 2>&1 </dev/null &
+    --build-info rpmbuild/build-info --out "${OUT}" >"${L}/v31_${N}.log" 2>&1 </dev/null 9>&- &
   echo "launched out=${OUT} log=${L}/v31_${N}.log; stops by $((SECS - 1800)) s"
   sleep 90
   pgrep -af overhead_profile | head -2

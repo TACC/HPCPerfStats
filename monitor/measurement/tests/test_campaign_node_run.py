@@ -7,6 +7,7 @@ gates as one file; these tests drive it with stub commands on PATH.
 
 from __future__ import annotations
 
+import fcntl
 import os
 import shutil
 import stat
@@ -63,7 +64,9 @@ def node(tmp_path: Path) -> Path:
          '#!/bin/bash\necho "harness $* py=$HPCPERFSTATS_PYTHON"\n')
     (mon / "scripts" / "fleet").mkdir(parents=True)
     (mon / "scripts" / "fleet" / "ls6.force").touch()
-    _exe(mon / "scripts" / "build_static_bundle.sh", "#!/bin/bash\n")
+    _exe(mon / "scripts" / "build_static_bundle.sh",
+         '#!/bin/bash\n[ -z "${BF:-}" ] || { echo "configure: error: C compiler cannot '
+         'create executables"; exit 77; }\n')
     _exe(mon / "scripts" / "prepare_rpmbuild_ls6.sh", PREPARE)
     (mon / "site").mkdir()
     (mon / "site" / "hpcperfstats.site.conf").write_text(
@@ -206,3 +209,25 @@ def test_governors_none_reaches_the_harness(node: Path) -> None:
     res = _run(node, HPCS_GOVERNORS="none")
     assert res.returncode == 0, res.stdout
     assert "--governors none" in _log(node)
+
+
+def test_failed_bundle_stops_before_make_check(node: Path) -> None:
+    """c460-220: bundle rc=77 went on to make check, which failed on a missing .build-static."""
+    res = _run(node, BF="1")
+    assert res.returncode == 1, res.stdout
+    assert "static bundle build failed" in res.stdout
+    assert "C compiler cannot create executables" in res.stdout
+    assert "check rc=" not in res.stdout
+    assert not (node / "w" / "monitor" / "rpmbuild").exists()
+
+
+def test_second_copy_refuses_while_one_runs(node: Path) -> None:
+    """c460-220: two copies built the same ../.build tree and deleted each other's files."""
+    lock = node / "home" / "hps_campaign" / "campaign.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open("w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        res = _run(node)
+        assert res.returncode == 1 and "another campaign_node_run.sh" in res.stdout
+        assert "bundle rc=" not in res.stdout
+    assert _run(node).returncode == 0
