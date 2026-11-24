@@ -41,7 +41,9 @@ stop() {
 
 # One copy per node: two copies building the same ../.build tree delete each other's configure
 # files (c460-220 2026-11-24: libev "C compiler cannot create executables"). The harness is
-# launched without the lock fd, so a later copy can still stop an old harness below.
+# launched without the lock fd, so a later copy can still stop an old harness below. Build and
+# test steps run without it too: a test helper left running kept the lock on c317-016
+# 2026-11-24 after the script had been stopped.
 exec 9>"${D}/campaign.lock"
 if ! flock -n 9; then
   echo "STOP: another campaign_node_run.sh is running on this node (${D}/campaign.lock)"
@@ -135,8 +137,8 @@ test "${SECS}" -ge $((MIN_HOURS * 3600)) || stop "need >= ${MIN_HOURS} h left"
 
 if test "${OK}" = 1; then
   rm -f scripts/fleet/*.force
-  test -f Makefile && make distclean >/dev/null 2>&1
-  ./scripts/build_static_bundle.sh >"${L}/${N}_31_bundle.log" 2>&1
+  test -f Makefile && make distclean >/dev/null 2>&1 9>&-
+  ./scripts/build_static_bundle.sh >"${L}/${N}_31_bundle.log" 2>&1 9>&-
   BRC=$?
   echo "bundle rc=${BRC}"
   if test "${BRC}" != 0; then
@@ -145,7 +147,7 @@ if test "${OK}" = 1; then
   fi
 fi
 if test "${OK}" = 1; then
-  make -C .build-static check >"${L}/${N}_31_check.log" 2>&1
+  make -C .build-static check >"${L}/${N}_31_check.log" 2>&1 9>&-
   CRC=$?
   echo "check rc=${CRC}"
   grep -E '^# (TOTAL|PASS|SKIP|FAIL)' "${L}/${N}_31_check.log"
@@ -155,14 +157,14 @@ if test "${OK}" = 1; then
     stop "make check failed (${L}/${N}_31_check.log), last lines:"
     tail -12 "${L}/${N}_31_check.log"
   fi
-  make -C .build-static distclean >/dev/null 2>&1
+  make -C .build-static distclean >/dev/null 2>&1 9>&-
 fi
 if test "${OK}" = 1; then
   rm -rf rpmbuild
   # The harness installs its own conf, so the packaged localhost broker is irrelevant.
-  if HPCS_ALLOW_DEFAULT_BROKER=1 "./scripts/${PREP}" >"${L}/${N}_31_prepare.log" 2>&1; then
+  if HPCS_ALLOW_DEFAULT_BROKER=1 "./scripts/${PREP}" >"${L}/${N}_31_prepare.log" 2>&1 9>&-; then
     rpmbuild -ba --define "_topdir ${PWD}/rpmbuild" "${PWD}/rpmbuild/SPECS/hpcperfstats.spec" \
-      >"${L}/${N}_31_rpmbuild.log" 2>&1
+      >"${L}/${N}_31_rpmbuild.log" 2>&1 9>&-
     echo "rpmbuild rc=$?"
   else
     stop "${PREP} failed (${L}/${N}_31_prepare.log)"

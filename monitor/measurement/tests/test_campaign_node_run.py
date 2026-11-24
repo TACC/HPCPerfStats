@@ -24,8 +24,9 @@ STUBS = {
     "pkill": "exit 1",
     "pgrep": '[ "$1" = -af ] && echo "123 overhead_profile.py"; [ "$1" = -af ]',
     "squeue": 'echo "${SQ-47:00:00}"',
-    "make": ('case "$*" in *check*) echo "# TOTAL: 152"; [ -z "${CF:-}" ] || '
-             '{ echo "FAIL: test_x"; exit 2; };; esac'),
+    "make": ('case "$*" in *check*) echo "# TOTAL: 152"; '
+             '[ -z "${LEAK:-}" ] || (setsid /bin/sleep 31 >/dev/null 2>&1 &); '
+             '[ -z "${CF:-}" ] || { echo "FAIL: test_x"; exit 2; };; esac'),
     "rpmbuild": ("mkdir -p rpmbuild/RPMS/x86_64; cd rpmbuild/RPMS/x86_64; "
                  "touch hpcperfstatsd-3.1-1.el8.x86_64.rpm "
                  "hpcperfstatsd-debuginfo-3.1-1.el8.x86_64.rpm"),
@@ -231,3 +232,16 @@ def test_second_copy_refuses_while_one_runs(node: Path) -> None:
         assert res.returncode == 1 and "another campaign_node_run.sh" in res.stdout
         assert "bundle rc=" not in res.stdout
     assert _run(node).returncode == 0
+
+
+def test_build_children_do_not_keep_the_lock(node: Path) -> None:
+    """c317-016 2026-11-24: a helper started by make check outlived the stopped script, kept the
+    inherited lock fd, and refused every relaunch."""
+    res = _run(node, LEAK="1")
+    assert res.returncode == 0, res.stdout
+    lock = node / "home" / "hps_campaign" / "campaign.lock"
+    try:
+        with lock.open("w") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)   # raises if a leaked child holds it
+    finally:
+        subprocess.run(["pkill", "-f", "[/]bin/sleep 31"], check=False)
