@@ -1,0 +1,2 @@
+host,arch,cpu_model,not_idle,daemon_cpu_core_s_per_h,daemon_cpu_pct_node,daemon_cpu_1s_max_pct,daemon_uss_mib,daemon_rss_mib,broker_bytes_acked_per_h,node_busy_cores_delta,node_power_w_delta,fwq_mean_slowdown_pct,fwq_frac_above_off_p99,daemon_perf_event_fds
+c317-016,x86_64,AMD EPYC 7763 64-Core Processor,,724.1209290089287,0.15714429883006265,24.993662112708595,133.20615434914953,148.99966342775207,4653218.550738164,1.71468016932951,24.216754891880043,0.8616008812278105,0.32011418866476776,778.0

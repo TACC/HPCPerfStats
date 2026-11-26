@@ -1,0 +1,3802 @@
+{
+  "schema_version": 1,
+  "harness_version": "1.0.0",
+  "run_dir": "/root/taccstatstesting/HPCPerfStats/monitor/measurement/results/v31_c551-001_20261125T1510Z",
+  "host": {
+    "hostname": "c551-001.stampede3.tacc.utexas.edu",
+    "short": "c551-001",
+    "arch": "x86_64",
+    "cpu_model": "Intel(R) Xeon(R) Platinum 8468",
+    "cpu": {
+      "vendor_id": "GenuineIntel",
+      "cpu family": "6",
+      "model": "143",
+      "model name": "Intel(R) Xeon(R) Platinum 8468",
+      "stepping": "8",
+      "microcode": "0x2b000650"
+    },
+    "lscpu": {
+      "cmd": [
+        "lscpu",
+        "-J"
+      ],
+      "ok": true,
+      "rc": 0,
+      "stdout": "{\n   \"lscpu\": [\n      {\n         \"field\": \"Architecture:\",\n         \"data\": \"x86_64\"\n      },{\n         \"field\": \"CPU op-mode(s):\",\n         \"data\": \"32-bit, 64-bit\"\n      },{\n         \"field\": \"Address sizes:\",\n         \"data\": \"52 bits physical, 57 bits virtual\"\n      },{\n         \"field\": \"Byte Order:\",\n         \"data\": \"Little Endian\"\n      },{\n         \"field\": \"CPU(s):\",\n         \"data\": \"96\"\n      },{\n         \"field\": \"On-line CPU(s) list:\",\n         \"data\": \"0-95\"\n      },{\n         \"field\": \"Vendor ID:\",\n         \"data\": \"GenuineIntel\"\n      },{\n         \"field\": \"BIOS Vendor ID:\",\n         \"data\": \"Intel\"\n      },{\n         \"field\": \"Model name:\",\n         \"data\": \"Intel(R) Xeon(R) Platinum 8468\"\n      },{\n         \"field\": \"BIOS Model name:\",\n         \"data\": \"Intel(R) Xeon(R) Platinum 8468\"\n      },{\n         \"field\": \"CPU family:\",\n         \"data\": \"6\"\n      },{\n         \"field\": \"Model:\",\n         \"data\": \"143\"\n      },{\n         \"field\": \"Thread(s) per core:\",\n         \"data\": \"1\"\n      },{\n         \"field\": \"Core(s) per socket:\",\n         \"data\": \"48\"\n      },{\n         \"field\": \"Socket(s):\",\n         \"data\": \"2\"\n      },{\n         \"field\": \"Stepping:\",\n         \"data\": \"8\"\n      },{\n         \"field\": \"CPU(s) scaling MHz:\",\n         \"data\": \"91%\"\n      },{\n         \"field\": \"CPU max MHz:\",\n         \"data\": \"3800.0000\"\n      },{\n         \"field\": \"CPU min MHz:\",\n         \"data\": \"800.0000\"\n      },{\n         \"field\": \"BogoMIPS:\",\n         \"data\": \"4200.00\"\n      },{\n         \"field\": \"Flags:\",\n         \"data\": \"fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid dca sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb cat_l3 cat_l2 cdp_l3 cdp_l2 ssbd mba ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb intel_pt avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local split_lock_detect user_shstk avx_vnni avx512_bf16 wbnoinvd dtherm ida arat pln pts vnmi avx512vbmi umip pku ospke waitpkg avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg tme avx512_vpopcntdq la57 rdpid bus_lock_detect cldemote movdiri movdir64b enqcmd fsrm md_clear serialize tsxldtrk pconfig arch_lbr ibt amx_bf16 avx512_fp16 amx_tile amx_int8 flush_l1d arch_capabilities\"\n      },{\n         \"field\": \"Virtualization:\",\n         \"data\": \"VT-x\"\n      },{\n         \"field\": \"L1d cache:\",\n         \"data\": \"4.5 MiB (96 instances)\"\n      },{\n         \"field\": \"L1i cache:\",\n         \"data\": \"3 MiB (96 instances)\"\n      },{\n         \"field\": \"L2 cache:\",\n         \"data\": \"192 MiB (96 instances)\"\n      },{\n         \"field\": \"L3 cache:\",\n         \"data\": \"210 MiB (2 instances)\"\n      },{\n         \"field\": \"NUMA node(s):\",\n         \"data\": \"2\"\n      },{\n         \"field\": \"NUMA node0 CPU(s):\",\n         \"data\": \"0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52,54,56,58,60,62,64,66,68,70,72,74,76,78,80,82,84,86,88,90,92,94\"\n      },{\n         \"field\": \"NUMA node1 CPU(s):\",\n         \"data\": \"1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33,35,37,39,41,43,45,47,49,51,53,55,57,59,61,63,65,67,69,71,73,75,77,79,81,83,85,87,89,91,93,95\"\n      },{\n         \"field\": \"Vulnerability Gather data sampling:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Indirect target selection:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Itlb multihit:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability L1tf:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Mds:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Meltdown:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Mmio stale data:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Reg file data sampling:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Retbleed:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Spec rstack overflow:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Spec store bypass:\",\n         \"data\": \"Vulnerable\"\n      },{\n         \"field\": \"Vulnerability Spectre v1:\",\n         \"data\": \"Vulnerable: __user pointer sanitization and usercopy barriers only; no swapgs barriers\"\n      },{\n         \"field\": \"Vulnerability Spectre v2:\",\n         \"data\": \"Vulnerable; IBPB: disabled; STIBP: disabled; PBRSB-eIBRS: Vulnerable; BHI: Vulnerable\"\n      },{\n         \"field\": \"Vulnerability Srbds:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Tsa:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Tsx async abort:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Vmscape:\",\n         \"data\": \"Vulnerable\"\n      }\n   ]\n}\n",
+      "stderr": ""
+    },
+    "nproc_online": 96,
+    "smt_active": "0",
+    "numa_nodes": 2,
+    "mem_total_kib": 1055800684,
+    "kernel": "5.14.0-611.24.1.el9_7.x86_64",
+    "cmdline": "BOOT_IMAGE=(hd1,gpt2)/vmlinuz-5.14.0-611.24.1.el9_7.x86_64 root=UUID=c9a17ece-e14c-40fb-bd16-e03304bca239 ro selinux=0 console=ttyS0,115200n8 console=tty1 console=ttyS0,115200n8 mitigations=off pci=realloc=off crashkernel=1G-2G:192M,2G-64G:256M,64G-:512M",
+    "os_release": "NAME=\"Rocky Linux\"\nVERSION=\"9.7 (Blue Onyx)\"\nID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"9.7\"\nPLATFORM_ID=\"platform:el9\"\nPRETTY_NAME=\"Rocky Linux 9.7 (Blue Onyx)\"\nANSI_COLOR=\"0;32\"\nLOGO=\"fedora-logo-icon\"\nCPE_NAME=\"cpe:/o:rocky:rocky:9::baseos\"\nHOME_URL=\"https://rockylinux.org/\"\nVENDOR_NAME=\"RESF\"\nVENDOR_URL=\"https://resf.org/\"\nBUG_REPORT_URL=\"https://bugs.rockylinux.org/\"\nSUPPORT_END=\"2032-05-31\"\nROCKY_SUPPORT_PRODUCT=\"Rocky-Linux-9\"\nROCKY_SUPPORT_PRODUCT_VERSION=\"9.7\"\nREDHAT_SUPPORT_PRODUCT=\"Rocky Linux\"\nREDHAT_SUPPORT_PRODUCT_VERSION=\"9.7\"\n",
+    "cpufreq_governor": "performance",
+    "perf_event_paranoid": "0",
+    "gpus": [
+      "04:00.0 VGA compatible controller: Matrox Electronics Systems Ltd. Integrated Matrox G200eW3 Graphics Controller (rev 04)",
+      "4b:00.0 Display controller: Intel Corporation Ponte Vecchio XT (2 Tile) [Data Center GPU Max 1550] (rev 2f)",
+      "5c:00.0 Display controller: Intel Corporation Ponte Vecchio XT (2 Tile) [Data Center GPU Max 1550] (rev 2f)",
+      "9a:00.0 Display controller: Intel Corporation Ponte Vecchio XT (2 Tile) [Data Center GPU Max 1550] (rev 2f)",
+      "ca:00.0 Display controller: Intel Corporation Ponte Vecchio XT (2 Tile) [Data Center GPU Max 1550] (rev 2f)"
+    ],
+    "nvidia_smi": null,
+    "pmu_sharers": {
+      "nvidia-powerd": "inactive"
+    },
+    "perf_event_holders": {
+      "vnfs-collector": 148,
+      "xpumd": 648
+    },
+    "nmi_watchdog": "1"
+  },
+  "flags": {
+    "measure_queue_left": true,
+    "interrupted": false
+  },
+  "not_idle": null,
+  "run_complete": true,
+  "legs_missing": [],
+  "baseline_drift": {
+    "OFF": true,
+    "NONE": false,
+    "ALL": false
+  },
+  "metrics": {
+    "daemon_cpu_core_s_per_h": {
+      "value": 1.1660345808130888,
+      "unit": "core-s/h",
+      "ci95": [
+        1.0766744822476588,
+        1.2553946793785187
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_cpu_core_s_per_day": {
+      "value": 27.98482993951413,
+      "unit": "core-s/day",
+      "ci95": [
+        25.840187573943812,
+        30.129472305084448
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_cpu_pct_one_core": {
+      "value": 0.03238984946703024,
+      "unit": "%",
+      "ci95": [
+        0.031542714957826276,
+        0.0332369839762342
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_cpu_pct_node": {
+      "value": 0.000337394265281565,
+      "unit": "%",
+      "ci95": [
+        0.00032856994747735706,
+        0.0003462185830857729
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_user_s_per_h": {
+      "value": 0.14672334632221018,
+      "unit": "s/h",
+      "ci95": [
+        0.11670633362055749,
+        0.17674035902386287
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_system_s_per_h": {
+      "value": 1.0170501834105814,
+      "unit": "s/h",
+      "ci95": [
+        0.9670218586484776,
+        1.0670785081726852
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "cost_ms_per_fast_sample": {
+      "value": 9.53552418865012,
+      "unit": "CPU-ms",
+      "ci95": [
+        9.351930683029213,
+        9.719117694271027
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "cost_ms_per_full_sample": {
+      "value": 9.949263157918894,
+      "unit": "CPU-ms",
+      "ci95": [
+        9.765770209920085,
+        10.132756105917704
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "cost_ms_per_send": {
+      "status": "NOT_MEASURED",
+      "reason": "ms_per_send not available in ALL legs"
+    },
+    "daemon_rss_mib": {
+      "value": 3.652544726831609,
+      "unit": "MiB",
+      "ci95": [
+        3.4903310953951774,
+        3.8147583582680404
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_pss_mib": {
+      "value": 1.5899684237361058,
+      "unit": "MiB",
+      "ci95": [
+        1.4380087173772254,
+        1.7419281300949863
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_uss_mib": {
+      "value": 1.530799935164942,
+      "unit": "MiB",
+      "ci95": [
+        1.38030505372851,
+        1.681294816601374
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_vmhwm_mib": {
+      "value": 4.72265625,
+      "unit": "MiB",
+      "ci95": [
+        3.41796875,
+        6.02734375
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_threads": {
+      "value": 1.0,
+      "unit": "count",
+      "ci95": [
+        1.0,
+        1.0
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_fds": {
+      "value": 1486.0,
+      "unit": "count",
+      "ci95": [
+        1486.0,
+        1486.0
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_perf_event_fds": {
+      "value": 1476.0,
+      "unit": "count",
+      "ci95": [
+        1476.0,
+        1476.0
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_wakeups_per_s": {
+      "value": 2.0050169504635202,
+      "unit": "/s",
+      "ci95": [
+        1.9711088002231048,
+        2.0389251007039357
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_minflt_per_s": {
+      "value": 4.12229295493202,
+      "unit": "/s",
+      "ci95": [
+        4.091720415518436,
+        4.152865494345605
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_majflt_per_s": {
+      "value": 0.0,
+      "unit": "/s",
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_read_bytes_per_h": {
+      "value": 0.0,
+      "unit": "bytes/h",
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_write_bytes_per_h": {
+      "value": 0.0,
+      "unit": "bytes/h",
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_syscalls_per_s": {
+      "value": 62.298161699868196,
+      "unit": "/s",
+      "ci95": [
+        62.26216674065298,
+        62.33415665908341
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "startup_wall_s": {
+      "value": 30.29174029827118,
+      "unit": "s",
+      "ci95": [
+        29.96422553062439,
+        30.61925506591797
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "startup_cpu_s": {
+      "value": 0.027145465644855236,
+      "unit": "CPU-s",
+      "ci95": [
+        0.024422318563614685,
+        0.029868612726095787
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "startup_peak_rss_mib": {
+      "value": 3.220703125,
+      "unit": "MiB",
+      "ci95": [
+        3.171875,
+        3.26953125
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_cpu_core_s_per_h_under_load": {
+      "value": 0.9957336611274576,
+      "unit": "core-s/h",
+      "ci95": [
+        0.797775480117925,
+        1.1936918421369902
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_cpu_1s_p50_pct": {
+      "value": 3.7917729008945654e-05,
+      "unit": "% of one core",
+      "ci95": [
+        -7.99907527958062e-06,
+        8.383453329747194e-05
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_cpu_1s_p95_pct": {
+      "value": 0.3999984898688676,
+      "unit": "% of one core",
+      "ci95": [
+        0.38906667690017666,
+        0.41093030283755855
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_cpu_1s_max_pct": {
+      "value": 0.607500897216156,
+      "unit": "% of one core",
+      "ci95": [
+        0.5538783732403949,
+        0.661123421191917
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "broker_bytes_acked_per_h": {
+      "value": 3701067.937434908,
+      "unit": "bytes/h",
+      "ci95": [
+        3681517.5939850076,
+        3720618.2808848084
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "broker_bytes_received_per_h": {
+      "value": 960.3627342687938,
+      "unit": "bytes/h",
+      "ci95": [
+        960.0901086797303,
+        960.6353598578573
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "broker_segs_out_per_h": {
+      "value": 2731.3659918249723,
+      "unit": "segments/h",
+      "ci95": [
+        2716.588061070159,
+        2746.143922579786
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "broker_bytes_per_send": {
+      "value": 308422.3281195757,
+      "unit": "bytes",
+      "ci95": [
+        306793.132832084,
+        310051.52340706735
+      ],
+      "n": 6,
+      "source": "raw/legs/*ALL*/samples.jsonl"
+    },
+    "daemon_ipc": {
+      "status": "NOT_MEASURED",
+      "reason": "perf stat not run or events not counted"
+    },
+    "daemon_cache_miss_ratio": {
+      "status": "NOT_MEASURED",
+      "reason": "perf stat not run or events not counted"
+    },
+    "node_busy_cores_delta": {
+      "value": 0.6102760056397699,
+      "unit": "cores",
+      "ci95": [
+        0.567026364590412,
+        0.6535256466891278
+      ],
+      "n": null,
+      "source": "raw/legs/*/samples.jsonl (ALL \u2212 OFF)"
+    },
+    "node_irq_per_s_delta": {
+      "value": 94081.85206446522,
+      "unit": "/s",
+      "ci95": [
+        94016.36391061437,
+        94147.34021831607
+      ],
+      "n": null,
+      "source": "raw/legs/*/samples.jsonl (ALL \u2212 OFF)"
+    },
+    "node_softirq_per_s_delta": {
+      "value": 25202.0898819005,
+      "unit": "/s",
+      "ci95": [
+        23942.374522107133,
+        26461.80524169387
+      ],
+      "n": null,
+      "source": "raw/legs/*/samples.jsonl (ALL \u2212 OFF)"
+    },
+    "node_ctxt_per_s_delta": {
+      "value": 3061.958331814276,
+      "unit": "/s",
+      "ci95": [
+        -6967.75005420685,
+        13091.666717835402
+      ],
+      "n": null,
+      "source": "raw/legs/*/samples.jsonl (ALL \u2212 OFF)"
+    },
+    "node_mem_used_mib_delta": {
+      "value": -49.99257130771912,
+      "unit": "MiB",
+      "ci95": [
+        -800.323937533846,
+        700.3387949184078
+      ],
+      "n": null,
+      "source": "raw/legs/*/samples.jsonl (ALL \u2212 OFF)"
+    },
+    "node_psi_cpu_some_avg10_delta": {
+      "status": "NOT_MEASURED",
+      "reason": "PSI not available (kernel without CONFIG_PSI or psi=0)"
+    },
+    "node_power_w_delta": {
+      "value": 3.150135796102461,
+      "unit": "W",
+      "ci95": [
+        2.8732065770517217,
+        3.4270650151532003
+      ],
+      "n": null,
+      "source": "powercap/hwmon energy counters"
+    },
+    "harness_cpu_s_per_h": {
+      "value": 55.84790695386615,
+      "unit": "core-s/h",
+      "ci95": [
+        23.85770401046288,
+        87.83810989726942
+      ],
+      "n": 27,
+      "source": "sampler /proc/self/schedstat"
+    },
+    "fwq_mean_slowdown_pct": {
+      "value": 0.4034506382215179,
+      "unit": "%",
+      "ci95": [
+        0.2967644277982055,
+        0.5101368486448303
+      ],
+      "n": 24,
+      "source": "raw/legs/*/fwq/fwq_cpu*.bin"
+    },
+    "fwq_p99_ratio": {
+      "value": 1.026986684384797,
+      "unit": "ratio",
+      "ci95": [
+        0.9715504715272786,
+        1.0824228972423153
+      ],
+      "n": 24,
+      "source": "raw/legs/*/fwq/fwq_cpu*.bin"
+    },
+    "fwq_p999_ratio": {
+      "value": 1.0219102847665125,
+      "unit": "ratio",
+      "ci95": [
+        0.9939259510800791,
+        1.0498946184529458
+      ],
+      "n": 24,
+      "source": "raw/legs/*/fwq/fwq_cpu*.bin"
+    },
+    "fwq_max_detour_us": {
+      "value": 75558.91566666667,
+      "unit": "\u00b5s",
+      "ci95": [
+        62443.63566666667,
+        88674.19566666667
+      ],
+      "n": 6,
+      "source": "raw/legs/*/fwq/fwq_cpu*.bin"
+    },
+    "fwq_frac_above_off_p99": {
+      "value": 0.010559644359931042,
+      "unit": "fraction",
+      "ci95": [
+        0.009808431615482617,
+        0.011310857104379466
+      ],
+      "n": 6,
+      "source": "raw/legs/*/fwq/fwq_cpu*.bin"
+    },
+    "fwq_none_slowdown_pct": {
+      "value": 0.00665266096911236,
+      "unit": "%",
+      "ci95": [
+        -0.035467179466582475,
+        0.04877250140480719
+      ],
+      "n": 12,
+      "source": "raw/legs/*/fwq/fwq_cpu*.bin"
+    },
+    "gpu_interference": {
+      "status": "NOT_MEASURED",
+      "reason": "out of scope (CPU-only study)"
+    }
+  },
+  "metrics_governor": "performance",
+  "collector_matrix": {
+    "rows": [
+      {
+        "group": "x86_perf",
+        "types": [
+          "host_cpu_hw",
+          "intel_x86_rapl",
+          "intel_x86_uncore_imc_spr"
+        ],
+        "notes": [],
+        "status": "ok",
+        "types_measured": [
+          "host_cpu_hw",
+          "intel_x86_rapl",
+          "intel_x86_uncore_imc_spr"
+        ],
+        "cpu_core_s_per_h": {
+          "mean": 0.6127089054026232,
+          "lo": 0.5405572912628337,
+          "hi": 0.6848605195424128,
+          "n": 3,
+          "method": "replicates:max(pooled_within,half_range)",
+          "n_blocks": 3
+        },
+        "ms_per_fast_sample": null,
+        "ms_per_full_sample": null,
+        "uss_mib_delta": 1.0003519733924826,
+        "broker_bytes_per_h_delta": -92.560549426473,
+        "wakeups_per_s_delta": 0.012232267859157764,
+        "perf_event_fds_delta": 1476.0,
+        "init_cpu_s_delta": 0.013616926256459267,
+        "irq_core_s_per_h_delta": 2065.779179490697,
+        "helper_core_s_per_h_delta": 0.0,
+        "share_of_all": 0.5253812860547877,
+        "node_core_s_per_h": 2066.3918883960996
+      },
+      {
+        "group": "filesystem",
+        "types": [
+          "beegfs_client",
+          "host_block",
+          "host_cpu",
+          "host_mem",
+          "host_net",
+          "host_nfs",
+          "host_numa",
+          "host_proc",
+          "host_ps",
+          "host_roofline_peak",
+          "host_sysv_shm",
+          "host_tmpfs",
+          "host_vfs",
+          "host_vm",
+          "lustre_llite",
+          "lustre_mdc",
+          "lustre_osc"
+        ],
+        "notes": [],
+        "status": "ok",
+        "types_measured": [
+          "beegfs_client",
+          "host_block",
+          "host_cpu",
+          "host_mem",
+          "host_net",
+          "host_nfs",
+          "host_numa",
+          "host_proc",
+          "host_ps",
+          "host_roofline_peak",
+          "host_sysv_shm",
+          "host_tmpfs",
+          "host_vfs",
+          "host_vm",
+          "lustre_llite",
+          "lustre_mdc",
+          "lustre_osc"
+        ],
+        "cpu_core_s_per_h": {
+          "mean": 0.42925485264415153,
+          "lo": 0.37913725280447874,
+          "hi": 0.4793724524838243,
+          "n": 3,
+          "method": "replicates:max(pooled_within,half_range)",
+          "n_blocks": 3
+        },
+        "ms_per_fast_sample": null,
+        "ms_per_full_sample": null,
+        "uss_mib_delta": 1.2093561921296296,
+        "broker_bytes_per_h_delta": -63.510092885083886,
+        "wakeups_per_s_delta": 0.36576292710979835,
+        "perf_event_fds_delta": 0.0,
+        "init_cpu_s_delta": 0.0010794848282374221,
+        "irq_core_s_per_h_delta": 0.19969713649177714,
+        "helper_core_s_per_h_delta": 0.0,
+        "share_of_all": 0.36810425825877763,
+        "node_core_s_per_h": 0.6289519891359286
+      },
+      {
+        "group": "intel_gpu",
+        "types": [
+          "intel_gpu"
+        ],
+        "notes": [],
+        "status": "ok",
+        "types_measured": [
+          "intel_gpu"
+        ],
+        "cpu_core_s_per_h": {
+          "mean": 0.04579552785807208,
+          "lo": 0.03745899755966363,
+          "hi": 0.054132058156480534,
+          "n": 3,
+          "method": "replicates:max(pooled_within,half_range)",
+          "n_blocks": 3
+        },
+        "ms_per_fast_sample": null,
+        "ms_per_full_sample": null,
+        "uss_mib_delta": 0.7029559484699858,
+        "broker_bytes_per_h_delta": -92.5490455236888,
+        "wakeups_per_s_delta": 0.6926717418381578,
+        "perf_event_fds_delta": 0.0,
+        "init_cpu_s_delta": 0.00029021173119411845,
+        "irq_core_s_per_h_delta": 0.7819854268242009,
+        "helper_core_s_per_h_delta": 0.0,
+        "share_of_all": 0.039220713095220246,
+        "node_core_s_per_h": 0.827780954682273
+      },
+      {
+        "group": "ib_mad",
+        "types": [
+          "host_opa"
+        ],
+        "notes": [],
+        "status": "ok",
+        "types_measured": [
+          "host_opa"
+        ],
+        "cpu_core_s_per_h": {
+          "mean": 0.016531710027952666,
+          "lo": 0.012360756920720757,
+          "hi": 0.020702663135184575,
+          "n": 3,
+          "method": "replicates:max(pooled_within,half_range)",
+          "n_blocks": 3
+        },
+        "ms_per_fast_sample": null,
+        "ms_per_full_sample": null,
+        "uss_mib_delta": 1.9356162162192556,
+        "broker_bytes_per_h_delta": -92.54904917728022,
+        "wakeups_per_s_delta": 0.0003754762532009644,
+        "perf_event_fds_delta": 0.0,
+        "init_cpu_s_delta": 0.0,
+        "irq_core_s_per_h_delta": 0.01830519856936519,
+        "helper_core_s_per_h_delta": 0.0,
+        "share_of_all": 0.014151128726153622,
+        "node_core_s_per_h": 0.034836908597317855
+      }
+    ],
+    "variants": [],
+    "framework": {
+      "status": "ok",
+      "cpu_core_s_per_h": {
+        "mean": 0.032350956884994585,
+        "lo": 0.02964387946632279,
+        "hi": 0.03505803430366638,
+        "n": 3,
+        "method": "replicates:max(pooled_within,half_range)"
+      }
+    },
+    "all": {
+      "cpu_core_s_per_h": {
+        "mean": 1.1660345808130888,
+        "lo": 1.0766744822476588,
+        "hi": 1.2553946793785187,
+        "n": 3,
+        "method": "replicates:max(pooled_within,half_range)"
+      },
+      "types": [
+        "beegfs_client",
+        "host_block",
+        "host_cpu",
+        "host_cpu_hw",
+        "intel_x86_rapl",
+        "intel_x86_uncore_imc_spr",
+        "intel_gpu",
+        "lustre_llite",
+        "lustre_mdc",
+        "lustre_osc",
+        "host_mem",
+        "host_net",
+        "host_nfs",
+        "host_numa",
+        "host_opa",
+        "host_proc",
+        "host_ps",
+        "host_roofline_peak",
+        "host_sysv_shm",
+        "host_tmpfs",
+        "host_vfs",
+        "host_vm"
+      ]
+    },
+    "residual": {
+      "cpu_core_s_per_h": {
+        "mean": 0.02939262799529475,
+        "lo": -0.09616609387898013,
+        "hi": 0.15495134986956963,
+        "n": 3,
+        "method": "replicates:max(pooled_within,half_range)"
+      },
+      "large": false,
+      "note": null
+    },
+    "method": "SOLO\u2212NONE paired within block; replicates max(pooled, half-range)"
+  },
+  "counter_rotation": {
+    "status": "ok",
+    "group": "x86_perf",
+    "online_cpus": 96,
+    "solo": {
+      "n": 3,
+      "irq_cores": 0.573827549858527,
+      "intr_per_s": 93932.1212587452,
+      "intr_per_s_per_cpu": 978.4595964452625,
+      "us_per_interrupt": 6.108960372216792
+    },
+    "all": {
+      "n": 6,
+      "irq_cores": 0.5755973604251682,
+      "intr_per_s": 93971.30898322946,
+      "intr_per_s_per_cpu": 978.8678019086404,
+      "us_per_interrupt": 6.125248850922737
+    },
+    "pairs": [
+      {
+        "leg_id": "performance-b1-SOLO-x86_perf",
+        "none_leg_id": "performance-b1-NONE-",
+        "irq_cores": 0.5724014457212308,
+        "intr_per_s": 93922.76463715952,
+        "intr_per_s_per_cpu": 978.3621316370783,
+        "us_per_interrupt": 6.094384550247431
+      },
+      {
+        "leg_id": "performance-b2-SOLO-x86_perf",
+        "none_leg_id": "performance-b2-NONE-",
+        "irq_cores": 0.5705075767840948,
+        "intr_per_s": 93941.13065313715,
+        "intr_per_s_per_cpu": 978.553444303512,
+        "us_per_interrupt": 6.07303289642749
+      },
+      {
+        "leg_id": "performance-b3-SOLO-x86_perf",
+        "none_leg_id": "performance-b3-NONE-",
+        "irq_cores": 0.5785736270702555,
+        "intr_per_s": 93932.46848593895,
+        "intr_per_s_per_cpu": 978.4632133951974,
+        "us_per_interrupt": 6.159463669975457
+      },
+      {
+        "leg_id": "performance-b1-ALL-first",
+        "none_leg_id": "performance-b1-NONE-",
+        "irq_cores": 0.5717747266205725,
+        "intr_per_s": 93951.57423349429,
+        "intr_per_s_per_cpu": 978.6622315988989,
+        "us_per_interrupt": 6.08584508865772
+      },
+      {
+        "leg_id": "performance-b1-ALL-second",
+        "none_leg_id": "performance-b1-NONE-",
+        "irq_cores": 0.5787190233074528,
+        "intr_per_s": 93937.91926934538,
+        "intr_per_s_per_cpu": 978.5199923890144,
+        "us_per_interrupt": 6.1606540554524
+      },
+      {
+        "leg_id": "performance-b2-ALL-first",
+        "none_leg_id": "performance-b2-NONE-",
+        "irq_cores": 0.5835123684206505,
+        "intr_per_s": 93948.03196663893,
+        "intr_per_s_per_cpu": 978.6253329858222,
+        "us_per_interrupt": 6.211012154335031
+      },
+      {
+        "leg_id": "performance-b2-ALL-second",
+        "none_leg_id": "performance-b2-NONE-",
+        "irq_cores": 0.5711571025088115,
+        "intr_per_s": 93956.80600390628,
+        "intr_per_s_per_cpu": 978.7167292073572,
+        "us_per_interrupt": 6.078932722394431
+      },
+      {
+        "leg_id": "performance-b3-ALL-first",
+        "none_leg_id": "performance-b3-NONE-",
+        "irq_cores": 0.5779932871645587,
+        "intr_per_s": 94037.17652875639,
+        "intr_per_s_per_cpu": 979.5539221745457,
+        "us_per_interrupt": 6.146433873286374
+      },
+      {
+        "leg_id": "performance-b3-ALL-second",
+        "none_leg_id": "performance-b3-NONE-",
+        "irq_cores": 0.5704276545289636,
+        "intr_per_s": 93996.34589723557,
+        "intr_per_s_per_cpu": 979.1286030962038,
+        "us_per_interrupt": 6.068615211410466
+      }
+    ]
+  },
+  "governor_sets": [
+    {
+      "governor": "performance",
+      "headline": {
+        "wakeups_per_s": {
+          "value": 2.0050169504635202,
+          "unit": "/s",
+          "ci95": [
+            1.9711088002231048,
+            2.0389251007039357
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl (per-thread status ctxt)"
+        },
+        "wakeups_scope": "all_threads",
+        "cpu_core_s_per_h": {
+          "value": 1.1660345808130888,
+          "unit": "core-s/h",
+          "ci95": [
+            1.0766744822476588,
+            1.2553946793785187
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "cur_freq_p50_mhz": {
+          "value": 2879.1835833333334,
+          "unit": "MHz",
+          "ci95": [
+            2874.8218333333334,
+            2883.5453333333335
+          ],
+          "n": 6,
+          "source": "sysfs scaling_cur_freq"
+        },
+        "off_busy_cores": {
+          "value": 0.1910165075193476,
+          "unit": "cores",
+          "ci95": [
+            0.16724586794717067,
+            0.21478714709152452
+          ],
+          "n": 4,
+          "source": "raw/legs/*OFF*/samples.jsonl"
+        }
+      },
+      "metrics": {
+        "daemon_cpu_core_s_per_h": {
+          "value": 1.1660345808130888,
+          "unit": "core-s/h",
+          "ci95": [
+            1.0766744822476588,
+            1.2553946793785187
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_cpu_core_s_per_day": {
+          "value": 27.98482993951413,
+          "unit": "core-s/day",
+          "ci95": [
+            25.840187573943812,
+            30.129472305084448
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_cpu_pct_one_core": {
+          "value": 0.03238984946703024,
+          "unit": "%",
+          "ci95": [
+            0.031542714957826276,
+            0.0332369839762342
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_cpu_pct_node": {
+          "value": 0.000337394265281565,
+          "unit": "%",
+          "ci95": [
+            0.00032856994747735706,
+            0.0003462185830857729
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_user_s_per_h": {
+          "value": 0.14672334632221018,
+          "unit": "s/h",
+          "ci95": [
+            0.11670633362055749,
+            0.17674035902386287
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_system_s_per_h": {
+          "value": 1.0170501834105814,
+          "unit": "s/h",
+          "ci95": [
+            0.9670218586484776,
+            1.0670785081726852
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "cost_ms_per_fast_sample": {
+          "value": 9.53552418865012,
+          "unit": "CPU-ms",
+          "ci95": [
+            9.351930683029213,
+            9.719117694271027
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "cost_ms_per_full_sample": {
+          "value": 9.949263157918894,
+          "unit": "CPU-ms",
+          "ci95": [
+            9.765770209920085,
+            10.132756105917704
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "cost_ms_per_send": {
+          "status": "NOT_MEASURED",
+          "reason": "ms_per_send not available in ALL legs"
+        },
+        "daemon_rss_mib": {
+          "value": 3.652544726831609,
+          "unit": "MiB",
+          "ci95": [
+            3.4903310953951774,
+            3.8147583582680404
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_pss_mib": {
+          "value": 1.5899684237361058,
+          "unit": "MiB",
+          "ci95": [
+            1.4380087173772254,
+            1.7419281300949863
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_uss_mib": {
+          "value": 1.530799935164942,
+          "unit": "MiB",
+          "ci95": [
+            1.38030505372851,
+            1.681294816601374
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_vmhwm_mib": {
+          "value": 4.72265625,
+          "unit": "MiB",
+          "ci95": [
+            3.41796875,
+            6.02734375
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_threads": {
+          "value": 1.0,
+          "unit": "count",
+          "ci95": [
+            1.0,
+            1.0
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_fds": {
+          "value": 1486.0,
+          "unit": "count",
+          "ci95": [
+            1486.0,
+            1486.0
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_perf_event_fds": {
+          "value": 1476.0,
+          "unit": "count",
+          "ci95": [
+            1476.0,
+            1476.0
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_wakeups_per_s": {
+          "value": 2.0050169504635202,
+          "unit": "/s",
+          "ci95": [
+            1.9711088002231048,
+            2.0389251007039357
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_minflt_per_s": {
+          "value": 4.12229295493202,
+          "unit": "/s",
+          "ci95": [
+            4.091720415518436,
+            4.152865494345605
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_majflt_per_s": {
+          "value": 0.0,
+          "unit": "/s",
+          "ci95": [
+            0.0,
+            0.0
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_read_bytes_per_h": {
+          "value": 0.0,
+          "unit": "bytes/h",
+          "ci95": [
+            0.0,
+            0.0
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_write_bytes_per_h": {
+          "value": 0.0,
+          "unit": "bytes/h",
+          "ci95": [
+            0.0,
+            0.0
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_syscalls_per_s": {
+          "value": 62.298161699868196,
+          "unit": "/s",
+          "ci95": [
+            62.26216674065298,
+            62.33415665908341
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "startup_wall_s": {
+          "value": 30.29174029827118,
+          "unit": "s",
+          "ci95": [
+            29.96422553062439,
+            30.61925506591797
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "startup_cpu_s": {
+          "value": 0.027145465644855236,
+          "unit": "CPU-s",
+          "ci95": [
+            0.024422318563614685,
+            0.029868612726095787
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "startup_peak_rss_mib": {
+          "value": 3.220703125,
+          "unit": "MiB",
+          "ci95": [
+            3.171875,
+            3.26953125
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_cpu_core_s_per_h_under_load": {
+          "value": 0.9957336611274576,
+          "unit": "core-s/h",
+          "ci95": [
+            0.797775480117925,
+            1.1936918421369902
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_cpu_1s_p50_pct": {
+          "value": 3.7917729008945654e-05,
+          "unit": "% of one core",
+          "ci95": [
+            -7.99907527958062e-06,
+            8.383453329747194e-05
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_cpu_1s_p95_pct": {
+          "value": 0.3999984898688676,
+          "unit": "% of one core",
+          "ci95": [
+            0.38906667690017666,
+            0.41093030283755855
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_cpu_1s_max_pct": {
+          "value": 0.607500897216156,
+          "unit": "% of one core",
+          "ci95": [
+            0.5538783732403949,
+            0.661123421191917
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "broker_bytes_acked_per_h": {
+          "value": 3701067.937434908,
+          "unit": "bytes/h",
+          "ci95": [
+            3681517.5939850076,
+            3720618.2808848084
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "broker_bytes_received_per_h": {
+          "value": 960.3627342687938,
+          "unit": "bytes/h",
+          "ci95": [
+            960.0901086797303,
+            960.6353598578573
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "broker_segs_out_per_h": {
+          "value": 2731.3659918249723,
+          "unit": "segments/h",
+          "ci95": [
+            2716.588061070159,
+            2746.143922579786
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "broker_bytes_per_send": {
+          "value": 308422.3281195757,
+          "unit": "bytes",
+          "ci95": [
+            306793.132832084,
+            310051.52340706735
+          ],
+          "n": 6,
+          "source": "raw/legs/*ALL*/samples.jsonl"
+        },
+        "daemon_ipc": {
+          "status": "NOT_MEASURED",
+          "reason": "perf stat not run or events not counted"
+        },
+        "daemon_cache_miss_ratio": {
+          "status": "NOT_MEASURED",
+          "reason": "perf stat not run or events not counted"
+        },
+        "node_busy_cores_delta": {
+          "value": 0.6102760056397699,
+          "unit": "cores",
+          "ci95": [
+            0.567026364590412,
+            0.6535256466891278
+          ],
+          "n": null,
+          "source": "raw/legs/*/samples.jsonl (ALL \u2212 OFF)"
+        },
+        "node_irq_per_s_delta": {
+          "value": 94081.85206446522,
+          "unit": "/s",
+          "ci95": [
+            94016.36391061437,
+            94147.34021831607
+          ],
+          "n": null,
+          "source": "raw/legs/*/samples.jsonl (ALL \u2212 OFF)"
+        },
+        "node_softirq_per_s_delta": {
+          "value": 25202.0898819005,
+          "unit": "/s",
+          "ci95": [
+            23942.374522107133,
+            26461.80524169387
+          ],
+          "n": null,
+          "source": "raw/legs/*/samples.jsonl (ALL \u2212 OFF)"
+        },
+        "node_ctxt_per_s_delta": {
+          "value": 3061.958331814276,
+          "unit": "/s",
+          "ci95": [
+            -6967.75005420685,
+            13091.666717835402
+          ],
+          "n": null,
+          "source": "raw/legs/*/samples.jsonl (ALL \u2212 OFF)"
+        },
+        "node_mem_used_mib_delta": {
+          "value": -49.99257130771912,
+          "unit": "MiB",
+          "ci95": [
+            -800.323937533846,
+            700.3387949184078
+          ],
+          "n": null,
+          "source": "raw/legs/*/samples.jsonl (ALL \u2212 OFF)"
+        },
+        "node_psi_cpu_some_avg10_delta": {
+          "status": "NOT_MEASURED",
+          "reason": "PSI not available (kernel without CONFIG_PSI or psi=0)"
+        },
+        "node_power_w_delta": {
+          "value": 3.150135796102461,
+          "unit": "W",
+          "ci95": [
+            2.8732065770517217,
+            3.4270650151532003
+          ],
+          "n": null,
+          "source": "powercap/hwmon energy counters"
+        },
+        "harness_cpu_s_per_h": {
+          "value": 55.84790695386615,
+          "unit": "core-s/h",
+          "ci95": [
+            23.85770401046288,
+            87.83810989726942
+          ],
+          "n": 27,
+          "source": "sampler /proc/self/schedstat"
+        },
+        "fwq_mean_slowdown_pct": {
+          "value": 0.4034506382215179,
+          "unit": "%",
+          "ci95": [
+            0.2967644277982055,
+            0.5101368486448303
+          ],
+          "n": 24,
+          "source": "raw/legs/*/fwq/fwq_cpu*.bin"
+        },
+        "fwq_p99_ratio": {
+          "value": 1.026986684384797,
+          "unit": "ratio",
+          "ci95": [
+            0.9715504715272786,
+            1.0824228972423153
+          ],
+          "n": 24,
+          "source": "raw/legs/*/fwq/fwq_cpu*.bin"
+        },
+        "fwq_p999_ratio": {
+          "value": 1.0219102847665125,
+          "unit": "ratio",
+          "ci95": [
+            0.9939259510800791,
+            1.0498946184529458
+          ],
+          "n": 24,
+          "source": "raw/legs/*/fwq/fwq_cpu*.bin"
+        },
+        "fwq_max_detour_us": {
+          "value": 75558.91566666667,
+          "unit": "\u00b5s",
+          "ci95": [
+            62443.63566666667,
+            88674.19566666667
+          ],
+          "n": 6,
+          "source": "raw/legs/*/fwq/fwq_cpu*.bin"
+        },
+        "fwq_frac_above_off_p99": {
+          "value": 0.010559644359931042,
+          "unit": "fraction",
+          "ci95": [
+            0.009808431615482617,
+            0.011310857104379466
+          ],
+          "n": 6,
+          "source": "raw/legs/*/fwq/fwq_cpu*.bin"
+        },
+        "fwq_none_slowdown_pct": {
+          "value": 0.00665266096911236,
+          "unit": "%",
+          "ci95": [
+            -0.035467179466582475,
+            0.04877250140480719
+          ],
+          "n": 12,
+          "source": "raw/legs/*/fwq/fwq_cpu*.bin"
+        },
+        "gpu_interference": {
+          "status": "NOT_MEASURED",
+          "reason": "out of scope (CPU-only study)"
+        }
+      },
+      "collector_matrix": {
+        "rows": [
+          {
+            "group": "x86_perf",
+            "types": [
+              "host_cpu_hw",
+              "intel_x86_rapl",
+              "intel_x86_uncore_imc_spr"
+            ],
+            "notes": [],
+            "status": "ok",
+            "types_measured": [
+              "host_cpu_hw",
+              "intel_x86_rapl",
+              "intel_x86_uncore_imc_spr"
+            ],
+            "cpu_core_s_per_h": {
+              "mean": 0.6127089054026232,
+              "lo": 0.5405572912628337,
+              "hi": 0.6848605195424128,
+              "n": 3,
+              "method": "replicates:max(pooled_within,half_range)",
+              "n_blocks": 3
+            },
+            "ms_per_fast_sample": null,
+            "ms_per_full_sample": null,
+            "uss_mib_delta": 1.0003519733924826,
+            "broker_bytes_per_h_delta": -92.560549426473,
+            "wakeups_per_s_delta": 0.012232267859157764,
+            "perf_event_fds_delta": 1476.0,
+            "init_cpu_s_delta": 0.013616926256459267,
+            "irq_core_s_per_h_delta": 2065.779179490697,
+            "helper_core_s_per_h_delta": 0.0,
+            "share_of_all": 0.5253812860547877,
+            "node_core_s_per_h": 2066.3918883960996
+          },
+          {
+            "group": "filesystem",
+            "types": [
+              "beegfs_client",
+              "host_block",
+              "host_cpu",
+              "host_mem",
+              "host_net",
+              "host_nfs",
+              "host_numa",
+              "host_proc",
+              "host_ps",
+              "host_roofline_peak",
+              "host_sysv_shm",
+              "host_tmpfs",
+              "host_vfs",
+              "host_vm",
+              "lustre_llite",
+              "lustre_mdc",
+              "lustre_osc"
+            ],
+            "notes": [],
+            "status": "ok",
+            "types_measured": [
+              "beegfs_client",
+              "host_block",
+              "host_cpu",
+              "host_mem",
+              "host_net",
+              "host_nfs",
+              "host_numa",
+              "host_proc",
+              "host_ps",
+              "host_roofline_peak",
+              "host_sysv_shm",
+              "host_tmpfs",
+              "host_vfs",
+              "host_vm",
+              "lustre_llite",
+              "lustre_mdc",
+              "lustre_osc"
+            ],
+            "cpu_core_s_per_h": {
+              "mean": 0.42925485264415153,
+              "lo": 0.37913725280447874,
+              "hi": 0.4793724524838243,
+              "n": 3,
+              "method": "replicates:max(pooled_within,half_range)",
+              "n_blocks": 3
+            },
+            "ms_per_fast_sample": null,
+            "ms_per_full_sample": null,
+            "uss_mib_delta": 1.2093561921296296,
+            "broker_bytes_per_h_delta": -63.510092885083886,
+            "wakeups_per_s_delta": 0.36576292710979835,
+            "perf_event_fds_delta": 0.0,
+            "init_cpu_s_delta": 0.0010794848282374221,
+            "irq_core_s_per_h_delta": 0.19969713649177714,
+            "helper_core_s_per_h_delta": 0.0,
+            "share_of_all": 0.36810425825877763,
+            "node_core_s_per_h": 0.6289519891359286
+          },
+          {
+            "group": "intel_gpu",
+            "types": [
+              "intel_gpu"
+            ],
+            "notes": [],
+            "status": "ok",
+            "types_measured": [
+              "intel_gpu"
+            ],
+            "cpu_core_s_per_h": {
+              "mean": 0.04579552785807208,
+              "lo": 0.03745899755966363,
+              "hi": 0.054132058156480534,
+              "n": 3,
+              "method": "replicates:max(pooled_within,half_range)",
+              "n_blocks": 3
+            },
+            "ms_per_fast_sample": null,
+            "ms_per_full_sample": null,
+            "uss_mib_delta": 0.7029559484699858,
+            "broker_bytes_per_h_delta": -92.5490455236888,
+            "wakeups_per_s_delta": 0.6926717418381578,
+            "perf_event_fds_delta": 0.0,
+            "init_cpu_s_delta": 0.00029021173119411845,
+            "irq_core_s_per_h_delta": 0.7819854268242009,
+            "helper_core_s_per_h_delta": 0.0,
+            "share_of_all": 0.039220713095220246,
+            "node_core_s_per_h": 0.827780954682273
+          },
+          {
+            "group": "ib_mad",
+            "types": [
+              "host_opa"
+            ],
+            "notes": [],
+            "status": "ok",
+            "types_measured": [
+              "host_opa"
+            ],
+            "cpu_core_s_per_h": {
+              "mean": 0.016531710027952666,
+              "lo": 0.012360756920720757,
+              "hi": 0.020702663135184575,
+              "n": 3,
+              "method": "replicates:max(pooled_within,half_range)",
+              "n_blocks": 3
+            },
+            "ms_per_fast_sample": null,
+            "ms_per_full_sample": null,
+            "uss_mib_delta": 1.9356162162192556,
+            "broker_bytes_per_h_delta": -92.54904917728022,
+            "wakeups_per_s_delta": 0.0003754762532009644,
+            "perf_event_fds_delta": 0.0,
+            "init_cpu_s_delta": 0.0,
+            "irq_core_s_per_h_delta": 0.01830519856936519,
+            "helper_core_s_per_h_delta": 0.0,
+            "share_of_all": 0.014151128726153622,
+            "node_core_s_per_h": 0.034836908597317855
+          }
+        ],
+        "variants": [],
+        "framework": {
+          "status": "ok",
+          "cpu_core_s_per_h": {
+            "mean": 0.032350956884994585,
+            "lo": 0.02964387946632279,
+            "hi": 0.03505803430366638,
+            "n": 3,
+            "method": "replicates:max(pooled_within,half_range)"
+          }
+        },
+        "all": {
+          "cpu_core_s_per_h": {
+            "mean": 1.1660345808130888,
+            "lo": 1.0766744822476588,
+            "hi": 1.2553946793785187,
+            "n": 3,
+            "method": "replicates:max(pooled_within,half_range)"
+          },
+          "types": [
+            "beegfs_client",
+            "host_block",
+            "host_cpu",
+            "host_cpu_hw",
+            "intel_x86_rapl",
+            "intel_x86_uncore_imc_spr",
+            "intel_gpu",
+            "lustre_llite",
+            "lustre_mdc",
+            "lustre_osc",
+            "host_mem",
+            "host_net",
+            "host_nfs",
+            "host_numa",
+            "host_opa",
+            "host_proc",
+            "host_ps",
+            "host_roofline_peak",
+            "host_sysv_shm",
+            "host_tmpfs",
+            "host_vfs",
+            "host_vm"
+          ]
+        },
+        "residual": {
+          "cpu_core_s_per_h": {
+            "mean": 0.02939262799529475,
+            "lo": -0.09616609387898013,
+            "hi": 0.15495134986956963,
+            "n": 3,
+            "method": "replicates:max(pooled_within,half_range)"
+          },
+          "large": false,
+          "note": null
+        },
+        "method": "SOLO\u2212NONE paired within block; replicates max(pooled, half-range)"
+      },
+      "baseline_drift": {
+        "OFF": true,
+        "NONE": false,
+        "ALL": false
+      }
+    }
+  ],
+  "schema_keys": {
+    "status": "NOT_MEASURED",
+    "reason": "no leg captured a schema message (harness before schema capture, or management API unreachable: see raw/legs/*/meta.json schema_capture)"
+  },
+  "collector_profile": {
+    "status": "ok",
+    "label": "instrumented build (--enable-metric-profiler), not production; ranks collector types for diagnosis only and never feeds a headline number",
+    "cycles": 62,
+    "cycles_reported": 62,
+    "types": {
+      "host_cpu_hw": {
+        "calls": 62,
+        "wall_ns": 1356260987,
+        "cpu_ns": 1345205868,
+        "wait_ns": 11055119,
+        "wall_ms_per_call": 21.87517720967742,
+        "cpu_ms_per_call": 21.69686883870968,
+        "wait_ms_per_call": 0.17830837096774194
+      },
+      "host_proc": {
+        "calls": 62,
+        "wall_ns": 147255981,
+        "cpu_ns": 145724377,
+        "wait_ns": 1531604,
+        "wall_ms_per_call": 2.3750964677419355,
+        "cpu_ms_per_call": 2.3503931774193547,
+        "wait_ms_per_call": 0.024703290322580645
+      },
+      "lustre_osc": {
+        "calls": 62,
+        "wall_ns": 138093297,
+        "cpu_ns": 136948648,
+        "wait_ns": 1144649,
+        "wall_ms_per_call": 2.2273112419354835,
+        "cpu_ms_per_call": 2.2088491612903223,
+        "wait_ms_per_call": 0.01846208064516129
+      },
+      "host_cpu": {
+        "calls": 62,
+        "wall_ns": 126910138,
+        "cpu_ns": 125661419,
+        "wait_ns": 1248719,
+        "wall_ms_per_call": 2.0469377096774193,
+        "cpu_ms_per_call": 2.0267970806451614,
+        "wait_ms_per_call": 0.020140629032258064
+      },
+      "lustre_llite": {
+        "calls": 62,
+        "wall_ns": 114850950,
+        "cpu_ns": 65346405,
+        "wait_ns": 49504545,
+        "wall_ms_per_call": 1.852434677419355,
+        "cpu_ms_per_call": 1.0539742741935483,
+        "wait_ms_per_call": 0.7984604032258065
+      },
+      "host_nfs": {
+        "calls": 62,
+        "wall_ns": 51167686,
+        "cpu_ns": 50756704,
+        "wait_ns": 411491,
+        "wall_ms_per_call": 0.8252852580645161,
+        "cpu_ms_per_call": 0.8186565161290322,
+        "wait_ms_per_call": 0.006636951612903225
+      },
+      "host_net": {
+        "calls": 62,
+        "wall_ns": 48606537,
+        "cpu_ns": 48239604,
+        "wait_ns": 367329,
+        "wall_ms_per_call": 0.7839764032258064,
+        "cpu_ms_per_call": 0.778058129032258,
+        "wait_ms_per_call": 0.0059246612903225805
+      },
+      "intel_gpu": {
+        "calls": 62,
+        "wall_ns": 68619875642,
+        "cpu_ns": 48044435,
+        "wait_ns": 68571831207,
+        "wall_ms_per_call": 1106.7721877741935,
+        "cpu_ms_per_call": 0.7749102419354839,
+        "wait_ms_per_call": 1105.997277532258
+      },
+      "intel_x86_uncore_imc_spr": {
+        "calls": 62,
+        "wall_ns": 25525722,
+        "cpu_ns": 25415600,
+        "wait_ns": 110883,
+        "wall_ms_per_call": 0.4117051935483871,
+        "cpu_ms_per_call": 0.40992903225806454,
+        "wait_ms_per_call": 0.0017884354838709677
+      },
+      "host_ps": {
+        "calls": 62,
+        "wall_ns": 11600445,
+        "cpu_ns": 11503071,
+        "wait_ns": 97907,
+        "wall_ms_per_call": 0.18710395161290322,
+        "cpu_ms_per_call": 0.18553340322580644,
+        "wait_ms_per_call": 0.0015791451612903226
+      },
+      "host_mem": {
+        "calls": 62,
+        "wall_ns": 11592074,
+        "cpu_ns": 11467108,
+        "wait_ns": 125374,
+        "wall_ms_per_call": 0.18696893548387097,
+        "cpu_ms_per_call": 0.18495335483870967,
+        "wait_ms_per_call": 0.002022161290322581
+      },
+      "host_opa": {
+        "calls": 62,
+        "wall_ns": 10467399,
+        "cpu_ns": 10369184,
+        "wait_ns": 98858,
+        "wall_ms_per_call": 0.16882901612903228,
+        "cpu_ms_per_call": 0.16724490322580646,
+        "wait_ms_per_call": 0.001594483870967742
+      },
+      "host_numa": {
+        "calls": 62,
+        "wall_ns": 9777936,
+        "cpu_ns": 9659033,
+        "wait_ns": 119270,
+        "wall_ms_per_call": 0.15770864516129032,
+        "cpu_ms_per_call": 0.15579085483870966,
+        "wait_ms_per_call": 0.0019237096774193548
+      },
+      "host_vm": {
+        "calls": 62,
+        "wall_ns": 8741892,
+        "cpu_ns": 8621600,
+        "wait_ns": 120312,
+        "wall_ms_per_call": 0.14099825806451613,
+        "cpu_ms_per_call": 0.13905806451612904,
+        "wait_ms_per_call": 0.001940516129032258
+      },
+      "host_roofline_peak": {
+        "calls": 62,
+        "wall_ns": 12683489,
+        "cpu_ns": 8257719,
+        "wait_ns": 4426436,
+        "wall_ms_per_call": 0.20457240322580644,
+        "cpu_ms_per_call": 0.13318901612903228,
+        "wait_ms_per_call": 0.07139412903225806
+      },
+      "lustre_mdc": {
+        "calls": 62,
+        "wall_ns": 8227836,
+        "cpu_ns": 8147033,
+        "wait_ns": 81372,
+        "wall_ms_per_call": 0.13270703225806452,
+        "cpu_ms_per_call": 0.13140375806451612,
+        "wait_ms_per_call": 0.0013124516129032259
+      },
+      "beegfs_client": {
+        "calls": 62,
+        "wall_ns": 6265495,
+        "cpu_ns": 6239165,
+        "wait_ns": 26330,
+        "wall_ms_per_call": 0.10105637096774193,
+        "cpu_ms_per_call": 0.1006316935483871,
+        "wait_ms_per_call": 0.0004246774193548387
+      },
+      "host_tmpfs": {
+        "calls": 62,
+        "wall_ns": 5790182,
+        "cpu_ns": 5675692,
+        "wait_ns": 115361,
+        "wall_ms_per_call": 0.09339003225806451,
+        "cpu_ms_per_call": 0.09154341935483871,
+        "wait_ms_per_call": 0.0018606612903225806
+      },
+      "host_block": {
+        "calls": 62,
+        "wall_ns": 4686723,
+        "cpu_ns": 4686818,
+        "wait_ns": 227,
+        "wall_ms_per_call": 0.07559230645161291,
+        "cpu_ms_per_call": 0.07559383870967742,
+        "wait_ms_per_call": 3.661290322580645e-06
+      },
+      "intel_x86_rapl": {
+        "calls": 62,
+        "wall_ns": 3240871,
+        "cpu_ns": 3122808,
+        "wait_ns": 118581,
+        "wall_ms_per_call": 0.0522721129032258,
+        "cpu_ms_per_call": 0.05036787096774193,
+        "wait_ms_per_call": 0.0019125967741935484
+      },
+      "host_sysv_shm": {
+        "calls": 62,
+        "wall_ns": 1710988,
+        "cpu_ns": 1712015,
+        "wait_ns": 49,
+        "wall_ms_per_call": 0.02759658064516129,
+        "cpu_ms_per_call": 0.027613145161290324,
+        "wait_ms_per_call": 7.903225806451612e-07
+      },
+      "host_vfs": {
+        "calls": 62,
+        "wall_ns": 1504564,
+        "cpu_ns": 1495040,
+        "wait_ns": 9631,
+        "wall_ms_per_call": 0.02426716129032258,
+        "cpu_ms_per_call": 0.024113548387096773,
+        "wait_ms_per_call": 0.00015533870967741935
+      }
+    },
+    "groups": {
+      "x86_perf": {
+        "types": [
+          "host_cpu_hw",
+          "intel_x86_uncore_imc_spr",
+          "intel_x86_rapl"
+        ],
+        "cpu_ns": 1373744276,
+        "wall_ns": 1385027580,
+        "cpu_ms_per_cycle": 22.157165741935483,
+        "wall_ms_per_cycle": 22.33915451612903
+      },
+      "filesystem": {
+        "types": [
+          "host_proc",
+          "lustre_osc",
+          "host_cpu",
+          "lustre_llite",
+          "host_nfs",
+          "host_net",
+          "host_ps",
+          "host_mem",
+          "host_numa",
+          "host_vm",
+          "host_roofline_peak",
+          "lustre_mdc",
+          "beegfs_client",
+          "host_tmpfs",
+          "host_block",
+          "host_sysv_shm",
+          "host_vfs"
+        ],
+        "cpu_ns": 650141451,
+        "wall_ns": 709466213,
+        "cpu_ms_per_cycle": 10.486152435483872,
+        "wall_ms_per_cycle": 11.44300343548387
+      },
+      "intel_gpu": {
+        "types": [
+          "intel_gpu"
+        ],
+        "cpu_ns": 48044435,
+        "wall_ns": 68619875642,
+        "cpu_ms_per_cycle": 0.7749102419354839,
+        "wall_ms_per_cycle": 1106.7721877741935
+      },
+      "ib_mad": {
+        "types": [
+          "host_opa"
+        ],
+        "cpu_ns": 10369184,
+        "wall_ns": 10467399,
+        "cpu_ms_per_cycle": 0.16724490322580646,
+        "wall_ms_per_cycle": 0.16882901612903228
+      }
+    },
+    "metrics_top": [
+      {
+        "metric": "lustre_osc/work-clilov/ost_statfs",
+        "calls": 1488,
+        "wall_ns": 744266,
+        "cpu_ns": 371117,
+        "wait_ns": 373149,
+        "wall_ms_per_call": 0.0005001787634408602,
+        "cpu_ms_per_call": 0.0002494065860215054,
+        "wait_ms_per_call": 0.00025077217741935483
+      },
+      {
+        "metric": "lustre_osc/work-clilov/write_bytes",
+        "calls": 1488,
+        "wall_ns": 740834,
+        "cpu_ns": 388094,
+        "wait_ns": 352740,
+        "wall_ms_per_call": 0.000497872311827957,
+        "cpu_ms_per_call": 0.00026081586021505377,
+        "wait_ms_per_call": 0.00023705645161290324
+      },
+      {
+        "metric": "lustre_osc/work-clilov/ost_destroy",
+        "calls": 1488,
+        "wall_ns": 733352,
+        "cpu_ns": 377501,
+        "wait_ns": 355851,
+        "wall_ms_per_call": 0.0004928440860215054,
+        "cpu_ms_per_call": 0.0002536969086021505,
+        "wait_ms_per_call": 0.00023914717741935483
+      },
+      {
+        "metric": "lustre_osc/work-clilov/ost_setattr",
+        "calls": 1488,
+        "wall_ns": 730845,
+        "cpu_ns": 381293,
+        "wait_ns": 349552,
+        "wall_ms_per_call": 0.0004911592741935484,
+        "cpu_ms_per_call": 0.00025624529569892476,
+        "wait_ms_per_call": 0.00023491397849462366
+      },
+      {
+        "metric": "lustre_osc/work-clilov/ost_read",
+        "calls": 1488,
+        "wall_ns": 728523,
+        "cpu_ns": 371028,
+        "wait_ns": 357495,
+        "wall_ms_per_call": 0.0004895987903225807,
+        "cpu_ms_per_call": 0.00024934677419354836,
+        "wait_ms_per_call": 0.00024025201612903226
+      },
+      {
+        "metric": "lustre_osc/work-clilov/ost_write",
+        "calls": 1488,
+        "wall_ns": 726813,
+        "cpu_ns": 369876,
+        "wait_ns": 356937,
+        "wall_ms_per_call": 0.0004884495967741935,
+        "cpu_ms_per_call": 0.00024857258064516126,
+        "wait_ms_per_call": 0.00023987701612903227
+      },
+      {
+        "metric": "lustre_osc/work-clilov/wait",
+        "calls": 1488,
+        "wall_ns": 726589,
+        "cpu_ns": 370698,
+        "wait_ns": 355891,
+        "wall_ms_per_call": 0.000488299059139785,
+        "cpu_ms_per_call": 0.000249125,
+        "wait_ms_per_call": 0.00023917405913978496
+      },
+      {
+        "metric": "lustre_osc/work-clilov/read_bytes",
+        "calls": 1488,
+        "wall_ns": 726565,
+        "cpu_ns": 372664,
+        "wait_ns": 353901,
+        "wall_ms_per_call": 0.000488282930107527,
+        "cpu_ms_per_call": 0.00025044623655913977,
+        "wait_ms_per_call": 0.0002378366935483871
+      },
+      {
+        "metric": "lustre_osc/work-clilov/ost_punch",
+        "calls": 1488,
+        "wall_ns": 718336,
+        "cpu_ns": 373962,
+        "wait_ns": 344374,
+        "wall_ms_per_call": 0.00048275268817204303,
+        "cpu_ms_per_call": 0.0002513185483870968,
+        "wait_ms_per_call": 0.00023143413978494624
+      },
+      {
+        "metric": "lustre_osc/work-clilov/reqs",
+        "calls": 1488,
+        "wall_ns": 714041,
+        "cpu_ns": 364573,
+        "wait_ns": 349468,
+        "wall_ms_per_call": 0.00047986626344086023,
+        "cpu_ms_per_call": 0.00024500873655913975,
+        "wait_ms_per_call": 0.00023485752688172043
+      },
+      {
+        "metric": "lustre_mdc/work-clilov/reqs",
+        "calls": 248,
+        "wall_ns": 180772,
+        "cpu_ns": 120966,
+        "wait_ns": 59806,
+        "wall_ms_per_call": 0.0007289193548387096,
+        "cpu_ms_per_call": 0.00048776612903225807,
+        "wait_ms_per_call": 0.0002411532258064516
+      },
+      {
+        "metric": "lustre_mdc/work-clilov/wait",
+        "calls": 248,
+        "wall_ns": 133757,
+        "cpu_ns": 66566,
+        "wait_ns": 67191,
+        "wall_ms_per_call": 0.0005393427419354839,
+        "cpu_ms_per_call": 0.0002684112903225807,
+        "wait_ms_per_call": 0.00027093145161290324
+      }
+    ],
+    "source": "raw/legs/performance-b3-PROFILE-/journal.txt"
+  },
+  "schedule": {
+    "legs": [
+      {
+        "kind": "OFF",
+        "block": 1,
+        "group": null,
+        "fwq": true,
+        "brackets": [
+          1
+        ],
+        "leg_id": "performance-b1-OFF-",
+        "governor": "performance"
+      },
+      {
+        "kind": "NONE",
+        "block": 1,
+        "group": null,
+        "fwq": true,
+        "leg_id": "performance-b1-NONE-",
+        "governor": "performance"
+      },
+      {
+        "kind": "ALL",
+        "block": 1,
+        "group": null,
+        "fwq": true,
+        "position": "first",
+        "leg_id": "performance-b1-ALL-first",
+        "governor": "performance"
+      },
+      {
+        "kind": "SOLO",
+        "block": 1,
+        "group": "filesystem",
+        "fwq": false,
+        "leg_id": "performance-b1-SOLO-filesystem",
+        "governor": "performance"
+      },
+      {
+        "kind": "SOLO",
+        "block": 1,
+        "group": "intel_gpu",
+        "fwq": false,
+        "leg_id": "performance-b1-SOLO-intel_gpu",
+        "governor": "performance"
+      },
+      {
+        "kind": "SOLO",
+        "block": 1,
+        "group": "x86_perf",
+        "fwq": false,
+        "leg_id": "performance-b1-SOLO-x86_perf",
+        "governor": "performance"
+      },
+      {
+        "kind": "SOLO",
+        "block": 1,
+        "group": "ib_mad",
+        "fwq": false,
+        "leg_id": "performance-b1-SOLO-ib_mad",
+        "governor": "performance"
+      },
+      {
+        "kind": "ALL",
+        "block": 1,
+        "group": null,
+        "fwq": true,
+        "position": "second",
+        "leg_id": "performance-b1-ALL-second",
+        "governor": "performance"
+      },
+      {
+        "kind": "OFF",
+        "block": 2,
+        "group": null,
+        "fwq": true,
+        "brackets": [
+          1,
+          2
+        ],
+        "leg_id": "performance-b2-OFF-",
+        "governor": "performance"
+      },
+      {
+        "kind": "NONE",
+        "block": 2,
+        "group": null,
+        "fwq": true,
+        "leg_id": "performance-b2-NONE-",
+        "governor": "performance"
+      },
+      {
+        "kind": "ALL",
+        "block": 2,
+        "group": null,
+        "fwq": true,
+        "position": "first",
+        "leg_id": "performance-b2-ALL-first",
+        "governor": "performance"
+      },
+      {
+        "kind": "SOLO",
+        "block": 2,
+        "group": "intel_gpu",
+        "fwq": false,
+        "leg_id": "performance-b2-SOLO-intel_gpu",
+        "governor": "performance"
+      },
+      {
+        "kind": "SOLO",
+        "block": 2,
+        "group": "x86_perf",
+        "fwq": false,
+        "leg_id": "performance-b2-SOLO-x86_perf",
+        "governor": "performance"
+      },
+      {
+        "kind": "SOLO",
+        "block": 2,
+        "group": "filesystem",
+        "fwq": false,
+        "leg_id": "performance-b2-SOLO-filesystem",
+        "governor": "performance"
+      },
+      {
+        "kind": "SOLO",
+        "block": 2,
+        "group": "ib_mad",
+        "fwq": false,
+        "leg_id": "performance-b2-SOLO-ib_mad",
+        "governor": "performance"
+      },
+      {
+        "kind": "ALL",
+        "block": 2,
+        "group": null,
+        "fwq": true,
+        "position": "second",
+        "leg_id": "performance-b2-ALL-second",
+        "governor": "performance"
+      },
+      {
+        "kind": "OFF",
+        "block": 3,
+        "group": null,
+        "fwq": true,
+        "brackets": [
+          2,
+          3
+        ],
+        "leg_id": "performance-b3-OFF-",
+        "governor": "performance"
+      },
+      {
+        "kind": "NONE",
+        "block": 3,
+        "group": null,
+        "fwq": true,
+        "leg_id": "performance-b3-NONE-",
+        "governor": "performance"
+      },
+      {
+        "kind": "ALL",
+        "block": 3,
+        "group": null,
+        "fwq": true,
+        "position": "first",
+        "leg_id": "performance-b3-ALL-first",
+        "governor": "performance"
+      },
+      {
+        "kind": "SOLO",
+        "block": 3,
+        "group": "x86_perf",
+        "fwq": false,
+        "leg_id": "performance-b3-SOLO-x86_perf",
+        "governor": "performance"
+      },
+      {
+        "kind": "SOLO",
+        "block": 3,
+        "group": "intel_gpu",
+        "fwq": false,
+        "leg_id": "performance-b3-SOLO-intel_gpu",
+        "governor": "performance"
+      },
+      {
+        "kind": "SOLO",
+        "block": 3,
+        "group": "filesystem",
+        "fwq": false,
+        "leg_id": "performance-b3-SOLO-filesystem",
+        "governor": "performance"
+      },
+      {
+        "kind": "SOLO",
+        "block": 3,
+        "group": "ib_mad",
+        "fwq": false,
+        "leg_id": "performance-b3-SOLO-ib_mad",
+        "governor": "performance"
+      },
+      {
+        "kind": "ALL",
+        "block": 3,
+        "group": null,
+        "fwq": true,
+        "position": "second",
+        "leg_id": "performance-b3-ALL-second",
+        "governor": "performance"
+      },
+      {
+        "kind": "OFF",
+        "block": 3,
+        "group": null,
+        "fwq": true,
+        "brackets": [
+          3
+        ],
+        "leg_id": "performance-b3-OFF-end",
+        "governor": "performance"
+      },
+      {
+        "kind": "CADENCE",
+        "block": 3,
+        "group": null,
+        "fwq": false,
+        "sample_freq": 60.0,
+        "leg_id": "performance-b3-CADENCE-60.0",
+        "governor": "performance"
+      },
+      {
+        "kind": "PROFILE",
+        "block": 3,
+        "group": null,
+        "fwq": false,
+        "leg_id": "performance-b3-PROFILE-",
+        "governor": "performance"
+      }
+    ],
+    "seed": 619453,
+    "blocks": 3,
+    "groups": [
+      "filesystem",
+      "x86_perf",
+      "ib_mad",
+      "intel_gpu"
+    ],
+    "variants": [],
+    "leg_seconds": 1800,
+    "settle_seconds": 60,
+    "fwq_seconds": 300,
+    "setup_seconds": 2700,
+    "projected_seconds": 56820,
+    "max_hours": 20.0,
+    "fit_steps": [],
+    "off_legs": true,
+    "governors": [
+      "performance"
+    ],
+    "variant_specs": {}
+  },
+  "active_types": [
+    "beegfs_client",
+    "host_block",
+    "host_cpu",
+    "host_cpu_hw",
+    "intel_x86_rapl",
+    "intel_x86_uncore_imc_spr",
+    "intel_gpu",
+    "lustre_llite",
+    "lustre_mdc",
+    "lustre_osc",
+    "host_mem",
+    "host_net",
+    "host_nfs",
+    "host_numa",
+    "host_opa",
+    "host_proc",
+    "host_ps",
+    "host_roofline_peak",
+    "host_sysv_shm",
+    "host_tmpfs",
+    "host_vfs",
+    "host_vm"
+  ],
+  "groups": {
+    "filesystem": [
+      "beegfs_client",
+      "host_block",
+      "host_cpu",
+      "host_mem",
+      "host_net",
+      "host_nfs",
+      "host_numa",
+      "host_proc",
+      "host_ps",
+      "host_roofline_peak",
+      "host_sysv_shm",
+      "host_tmpfs",
+      "host_vfs",
+      "host_vm",
+      "lustre_llite",
+      "lustre_mdc",
+      "lustre_osc"
+    ],
+    "x86_perf": [
+      "host_cpu_hw",
+      "intel_x86_rapl",
+      "intel_x86_uncore_imc_spr"
+    ],
+    "ib_mad": [
+      "host_opa"
+    ],
+    "intel_gpu": [
+      "intel_gpu"
+    ]
+  },
+  "legs": [
+    {
+      "leg_id": "performance-b1-ALL-first",
+      "kind": "ALL",
+      "block": 1,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "beegfs_client",
+        "host_block",
+        "host_cpu",
+        "host_cpu_hw",
+        "intel_x86_rapl",
+        "intel_x86_uncore_imc_spr",
+        "intel_gpu",
+        "lustre_llite",
+        "lustre_mdc",
+        "lustre_osc",
+        "host_mem",
+        "host_net",
+        "host_nfs",
+        "host_numa",
+        "host_opa",
+        "host_proc",
+        "host_ps",
+        "host_roofline_peak",
+        "host_sysv_shm",
+        "host_tmpfs",
+        "host_vfs",
+        "host_vm"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.7841410455937912,
+      "cur_freq_mhz": {
+        "min": 1333.943,
+        "p50": 2876.474,
+        "max": 3104.874,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 1.9811231145201291,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "815873",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 1.1875284213488166,
+          "user_s_h": 0.16009075672889933,
+          "system_s_h": 1.0205785741467333,
+          "wakeups_s": 1.9811231145201291,
+          "active_share": 0.546414674819344
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b1-ALL-second",
+      "kind": "ALL",
+      "block": 1,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "beegfs_client",
+        "host_block",
+        "host_cpu",
+        "host_cpu_hw",
+        "intel_x86_rapl",
+        "intel_x86_uncore_imc_spr",
+        "intel_gpu",
+        "lustre_llite",
+        "lustre_mdc",
+        "lustre_osc",
+        "host_mem",
+        "host_net",
+        "host_nfs",
+        "host_numa",
+        "host_opa",
+        "host_proc",
+        "host_ps",
+        "host_roofline_peak",
+        "host_sysv_shm",
+        "host_tmpfs",
+        "host_vfs",
+        "host_vm"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.7673618794796055,
+      "cur_freq_mhz": {
+        "min": 1336.319,
+        "p50": 2873.9345000000003,
+        "max": 3104.696,
+        "n_samples": 1801
+      },
+      "wakeups_per_s": 2.019444090294311,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "914206",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 1.1645444377737135,
+          "user_s_h": 0.13999997544818887,
+          "system_s_h": 1.039999817615117,
+          "wakeups_s": 2.019444090294311,
+          "active_share": 0.6033333333333334
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b1-NONE-",
+      "kind": "NONE",
+      "block": 1,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.18764896603237075,
+      "cur_freq_mhz": {
+        "min": 1247.272,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 0.9633233843889185,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "795151",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.030568961633026016,
+          "user_s_h": 0.02001133400923316,
+          "system_s_h": 0.02001133400923316,
+          "wakeups_s": 0.9633233843889185,
+          "active_share": 0.9049471928849361
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b1-OFF-",
+      "kind": "OFF",
+      "block": 1,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.17339268663851573,
+      "cur_freq_mhz": {
+        "min": 1240.12,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": null,
+      "wakeups_scope": null,
+      "thread_top": null
+    },
+    {
+      "leg_id": "performance-b1-SOLO-filesystem",
+      "kind": "SOLO",
+      "block": 1,
+      "group": "filesystem",
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "beegfs_client",
+        "host_block",
+        "host_cpu",
+        "lustre_llite",
+        "lustre_mdc",
+        "lustre_osc",
+        "host_mem",
+        "host_net",
+        "host_nfs",
+        "host_numa",
+        "host_proc",
+        "host_ps",
+        "host_roofline_peak",
+        "host_sysv_shm",
+        "host_tmpfs",
+        "host_vfs",
+        "host_vm"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.2079100706243405,
+      "cur_freq_mhz": {
+        "min": 1168.447,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 1.3440949506279312,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "840121",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.4752555865893084,
+          "user_s_h": 0.10005669607652094,
+          "system_s_h": 0.38021544509077954,
+          "wakeups_s": 1.3440949506279312,
+          "active_share": 0.9043913285158421
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b1-SOLO-ib_mad",
+      "kind": "SOLO",
+      "block": 1,
+      "group": "ib_mad",
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "host_opa"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.17595967856411757,
+      "cur_freq_mhz": {
+        "min": 1236.27,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1801
+      },
+      "wakeups_per_s": 0.9733335434772804,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "896535",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.04865645050498941,
+          "user_s_h": 0.02000000431802631,
+          "system_s_h": 0.04000000863605262,
+          "wakeups_s": 0.9733335434772804,
+          "active_share": 0.9055555555555556
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b1-SOLO-intel_gpu",
+      "kind": "SOLO",
+      "block": 1,
+      "group": "intel_gpu",
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "intel_gpu"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.21721073451751932,
+      "cur_freq_mhz": {
+        "min": 1216.628,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1801
+      },
+      "wakeups_per_s": 1.6611118191424785,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "857800",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.0847320161161269,
+          "user_s_h": 0.0,
+          "system_s_h": 0.08000003409916953,
+          "wakeups_s": 1.6611118191424785,
+          "active_share": 0.9038888888888889
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b1-SOLO-x86_perf",
+      "kind": "SOLO",
+      "block": 1,
+      "group": "x86_perf",
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "host_cpu_hw",
+        "intel_x86_rapl",
+        "intel_x86_uncore_imc_spr"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.7858775842313552,
+      "cur_freq_mhz": {
+        "min": 1335.788,
+        "p50": 2878.5299999999997,
+        "max": 3104.74,
+        "n_samples": 1801
+      },
+      "wakeups_per_s": 0.9644444606680932,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "878879",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.6449047548484299,
+          "user_s_h": 0.040000000672870226,
+          "system_s_h": 0.6000000100930534,
+          "wakeups_s": 0.9644444606680932,
+          "active_share": 0.5944444444444444
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b2-ALL-first",
+      "kind": "ALL",
+      "block": 2,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "beegfs_client",
+        "host_block",
+        "host_cpu",
+        "host_cpu_hw",
+        "intel_x86_rapl",
+        "intel_x86_uncore_imc_spr",
+        "intel_gpu",
+        "lustre_llite",
+        "lustre_mdc",
+        "lustre_osc",
+        "host_mem",
+        "host_net",
+        "host_nfs",
+        "host_numa",
+        "host_opa",
+        "host_proc",
+        "host_ps",
+        "host_roofline_peak",
+        "host_sysv_shm",
+        "host_tmpfs",
+        "host_vfs",
+        "host_vm"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.773363732162162,
+      "cur_freq_mhz": {
+        "min": 1335.0,
+        "p50": 2878.405,
+        "max": 3104.718,
+        "n_samples": 1801
+      },
+      "wakeups_per_s": 1.9849985302631346,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "977190",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 1.1594834494927797,
+          "user_s_h": 0.13999989634097676,
+          "system_s_h": 0.9999992595784053,
+          "wakeups_s": 1.9849985302631346,
+          "active_share": 0.4677777777777778
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b2-ALL-second",
+      "kind": "ALL",
+      "block": 2,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "beegfs_client",
+        "host_block",
+        "host_cpu",
+        "host_cpu_hw",
+        "intel_x86_rapl",
+        "intel_x86_uncore_imc_spr",
+        "intel_gpu",
+        "lustre_llite",
+        "lustre_mdc",
+        "lustre_osc",
+        "host_mem",
+        "host_net",
+        "host_nfs",
+        "host_numa",
+        "host_opa",
+        "host_proc",
+        "host_ps",
+        "host_roofline_peak",
+        "host_sysv_shm",
+        "host_tmpfs",
+        "host_vfs",
+        "host_vm"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.8396249584405232,
+      "cur_freq_mhz": {
+        "min": 1319.884,
+        "p50": 2881.0434999999998,
+        "max": 3104.813,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 2.038933188893731,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1075538",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 1.1343462849305825,
+          "user_s_h": 0.18010205921525868,
+          "system_s_h": 0.960544315814713,
+          "wakeups_s": 2.038933188893731,
+          "active_share": 0.40689271817676487
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b2-NONE-",
+      "kind": "NONE",
+      "block": 2,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.21346229262026872,
+      "cur_freq_mhz": {
+        "min": 1220.866,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 0.9633234205192703,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "956471",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.03597527500658203,
+          "user_s_h": 0.0,
+          "system_s_h": 0.040022669519554216,
+          "wakeups_s": 0.9633234205192703,
+          "active_share": 0.9043913285158421
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b2-OFF-",
+      "kind": "OFF",
+      "block": 2,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.19522336010347333,
+      "cur_freq_mhz": {
+        "min": 1183.098,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": null,
+      "wakeups_scope": null,
+      "thread_top": null
+    },
+    {
+      "leg_id": "performance-b2-SOLO-filesystem",
+      "kind": "SOLO",
+      "block": 2,
+      "group": "filesystem",
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "beegfs_client",
+        "host_block",
+        "host_cpu",
+        "lustre_llite",
+        "lustre_mdc",
+        "lustre_osc",
+        "host_mem",
+        "host_net",
+        "host_nfs",
+        "host_numa",
+        "host_proc",
+        "host_ps",
+        "host_roofline_peak",
+        "host_sysv_shm",
+        "host_tmpfs",
+        "host_vfs",
+        "host_vm"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.22113861381742062,
+      "cur_freq_mhz": {
+        "min": 1198.296,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 1.3468739777108567,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1040182",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.4536629157252016,
+          "user_s_h": 0.08004533751149953,
+          "system_s_h": 0.36020401880174785,
+          "wakeups_s": 1.3468739777108567,
+          "active_share": 0.906058921623124
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b2-SOLO-ib_mad",
+      "kind": "SOLO",
+      "block": 2,
+      "group": "ib_mad",
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "host_opa"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.20546761243640443,
+      "cur_freq_mhz": {
+        "min": 1208.695,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 0.9566531925286305,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1057857",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.04838013429389735,
+          "user_s_h": 0.0,
+          "system_s_h": 0.04002267859503858,
+          "wakeups_s": 0.9566531925286305,
+          "active_share": 0.9049471928849361
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b2-SOLO-intel_gpu",
+      "kind": "SOLO",
+      "block": 2,
+      "group": "intel_gpu",
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "intel_gpu"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.18289850618032008,
+      "cur_freq_mhz": {
+        "min": 1194.582,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 1.6598292776370007,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1001443",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.0734901664059341,
+          "user_s_h": 0.020011337573654395,
+          "system_s_h": 0.06003401272096318,
+          "wakeups_s": 1.6598292776370007,
+          "active_share": 0.9049471928849361
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b2-SOLO-x86_perf",
+      "kind": "SOLO",
+      "block": 2,
+      "group": "x86_perf",
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "host_cpu_hw",
+        "intel_x86_rapl",
+        "intel_x86_uncore_imc_spr"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.7792336403882838,
+      "cur_freq_mhz": {
+        "min": 1337.355,
+        "p50": 2881.3875,
+        "max": 3104.592,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 1.0016784756227883,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1022521",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.6262273278003542,
+          "user_s_h": 0.060034004088380215,
+          "system_s_h": 0.5803287061876753,
+          "wakeups_s": 1.0016784756227883,
+          "active_share": 0.6264591439688716
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b3-ALL-first",
+      "kind": "ALL",
+      "block": 3,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "beegfs_client",
+        "host_block",
+        "host_cpu",
+        "host_cpu_hw",
+        "intel_x86_rapl",
+        "intel_x86_uncore_imc_spr",
+        "intel_gpu",
+        "lustre_llite",
+        "lustre_mdc",
+        "lustre_osc",
+        "host_mem",
+        "host_net",
+        "host_nfs",
+        "host_numa",
+        "host_opa",
+        "host_proc",
+        "host_ps",
+        "host_roofline_peak",
+        "host_sysv_shm",
+        "host_tmpfs",
+        "host_vfs",
+        "host_vm"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.8048751684976255,
+      "cur_freq_mhz": {
+        "min": 1260.365,
+        "p50": 2882.658,
+        "max": 3104.619,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 1.9711168884129002,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1138542",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 1.1953413669133102,
+          "user_s_h": 0.1200680338119533,
+          "system_s_h": 1.060600965338921,
+          "wakeups_s": 1.9711168884129002,
+          "active_share": 0.6609227348526959
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b3-ALL-second",
+      "kind": "ALL",
+      "block": 3,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "beegfs_client",
+        "host_block",
+        "host_cpu",
+        "host_cpu_hw",
+        "intel_x86_rapl",
+        "intel_x86_uncore_imc_spr",
+        "intel_gpu",
+        "lustre_llite",
+        "lustre_mdc",
+        "lustre_osc",
+        "host_mem",
+        "host_net",
+        "host_nfs",
+        "host_numa",
+        "host_opa",
+        "host_proc",
+        "host_ps",
+        "host_roofline_peak",
+        "host_sysv_shm",
+        "host_tmpfs",
+        "host_vfs",
+        "host_vm"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.8383882947809981,
+      "cur_freq_mhz": {
+        "min": 1325.892,
+        "p50": 2882.5865,
+        "max": 3104.983,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 2.034485890396913,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1236866",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 1.1557833030613702,
+          "user_s_h": 0.1400793563879842,
+          "system_s_h": 1.0205781679695989,
+          "wakeups_s": 2.034485890396913,
+          "active_share": 0.697609783212896
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b3-CADENCE-60.0",
+      "kind": "CADENCE",
+      "block": 3,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "beegfs_client",
+        "host_block",
+        "host_cpu",
+        "host_cpu_hw",
+        "intel_x86_rapl",
+        "intel_x86_uncore_imc_spr",
+        "intel_gpu",
+        "lustre_llite",
+        "lustre_mdc",
+        "lustre_osc",
+        "host_mem",
+        "host_net",
+        "host_nfs",
+        "host_numa",
+        "host_opa",
+        "host_proc",
+        "host_ps",
+        "host_roofline_peak",
+        "host_sysv_shm",
+        "host_tmpfs",
+        "host_vfs",
+        "host_vm"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.8291178441019911,
+      "cur_freq_mhz": {
+        "min": 1338.164,
+        "p50": 2881.1717500000004,
+        "max": 3104.606,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 1.511967736603979,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1279168",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.6111654159201629,
+          "user_s_h": 0.1000566884517339,
+          "system_s_h": 0.5002834422586695,
+          "wakeups_s": 1.511967736603979,
+          "active_share": 0.5163979988882713
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b3-NONE-",
+      "kind": "NONE",
+      "block": 3,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.21609643318986488,
+      "cur_freq_mhz": {
+        "min": 1211.722,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 0.9661027324935225,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1117822",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.03075798657065331,
+          "user_s_h": 0.0,
+          "system_s_h": 0.0200113339296702,
+          "wakeups_s": 0.9661027324935225,
+          "active_share": 0.9049471928849361
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b3-OFF-",
+      "kind": "OFF",
+      "block": 3,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.17451601755253165,
+      "cur_freq_mhz": {
+        "min": 1245.473,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": null,
+      "wakeups_scope": null,
+      "thread_top": null
+    },
+    {
+      "leg_id": "performance-b3-OFF-end",
+      "kind": "OFF",
+      "block": 3,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.2209339657828696,
+      "cur_freq_mhz": {
+        "min": 1214.155,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": null,
+      "wakeups_scope": null,
+      "thread_top": null
+    },
+    {
+      "leg_id": "performance-b3-PROFILE-",
+      "kind": "PROFILE",
+      "block": 3,
+      "group": null,
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "beegfs_client",
+        "host_block",
+        "host_cpu",
+        "host_cpu_hw",
+        "intel_x86_rapl",
+        "intel_x86_uncore_imc_spr",
+        "intel_gpu",
+        "lustre_llite",
+        "lustre_mdc",
+        "lustre_osc",
+        "host_mem",
+        "host_net",
+        "host_nfs",
+        "host_numa",
+        "host_opa",
+        "host_proc",
+        "host_ps",
+        "host_roofline_peak",
+        "host_sysv_shm",
+        "host_tmpfs",
+        "host_vfs",
+        "host_vm"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.8009555541016452,
+      "cur_freq_mhz": {
+        "min": 1339.089,
+        "p50": 2879.84775,
+        "max": 3104.211,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 1.9966868514120972,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1298605",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 4.066463183227502,
+          "user_s_h": 2.861621356088384,
+          "system_s_h": 1.1806689511133892,
+          "wakeups_s": 1.9966868514120972,
+          "active_share": 0.6970539188438021
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b3-SOLO-filesystem",
+      "kind": "SOLO",
+      "block": 3,
+      "group": "filesystem",
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "beegfs_client",
+        "host_block",
+        "host_cpu",
+        "lustre_llite",
+        "lustre_mdc",
+        "lustre_osc",
+        "host_mem",
+        "host_net",
+        "host_nfs",
+        "host_numa",
+        "host_proc",
+        "host_ps",
+        "host_roofline_peak",
+        "host_sysv_shm",
+        "host_tmpfs",
+        "host_vfs",
+        "host_vm"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.22819398850369743,
+      "cur_freq_mhz": {
+        "min": 1215.04,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 1.2990693903923185,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1201521",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.4537522555447457,
+          "user_s_h": 0.0800453539651236,
+          "system_s_h": 0.3802154313343371,
+          "wakeups_s": 1.2990693903923185,
+          "active_share": 0.90550305725403
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b3-SOLO-ib_mad",
+      "kind": "SOLO",
+      "block": 3,
+      "group": "ib_mad",
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "host_opa"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.2242575385555191,
+      "cur_freq_mhz": {
+        "min": 1202.619,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1801
+      },
+      "wakeups_per_s": 0.9638892301554034,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1219189",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.04947974951838399,
+          "user_s_h": 0.0,
+          "system_s_h": 0.040000014162068616,
+          "wakeups_s": 0.9638892301554034,
+          "active_share": 0.905
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b3-SOLO-intel_gpu",
+      "kind": "SOLO",
+      "block": 3,
+      "group": "intel_gpu",
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "intel_gpu"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.24614184006324252,
+      "cur_freq_mhz": {
+        "min": 1216.016,
+        "p50": 3800.0,
+        "max": 3800.0,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 1.6498236661367058,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1180450",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.07632220156535244,
+          "user_s_h": 0.020011338268504517,
+          "system_s_h": 0.06003401480551355,
+          "wakeups_s": 1.6498236661367058,
+          "active_share": 0.906058921623124
+        }
+      ]
+    },
+    {
+      "leg_id": "performance-b3-SOLO-x86_perf",
+      "kind": "SOLO",
+      "block": 3,
+      "group": "x86_perf",
+      "status": "ok",
+      "contaminated": false,
+      "verified_types": [
+        "host_cpu_hw",
+        "intel_x86_rapl",
+        "intel_x86_uncore_imc_spr"
+      ],
+      "missing_types": [],
+      "base": null,
+      "env": null,
+      "marker_seen": null,
+      "governor": "performance",
+      "governor_observed": [
+        "performance"
+      ],
+      "busy_cores": 0.7888646802923295,
+      "cur_freq_mhz": {
+        "min": 1432.401,
+        "p50": 2876.10625,
+        "max": 3104.499,
+        "n_samples": 1800
+      },
+      "wakeups_per_s": 0.9633234046883031,
+      "wakeups_scope": "all_threads",
+      "thread_top": [
+        {
+          "tid": "1162773",
+          "comm": "hpcperfstatsd",
+          "core_s_per_h": 0.6621515189874811,
+          "user_s_h": 0.04002266886183372,
+          "system_s_h": 0.6403627017893395,
+          "wakeups_s": 0.9633234046883031,
+          "active_share": 0.6848249027237354
+        }
+      ]
+    }
+  ],
+  "provenance": {
+    "host": {
+      "hostname": "c551-001.stampede3.tacc.utexas.edu",
+      "short": "c551-001",
+      "arch": "x86_64",
+      "cpu_model": "Intel(R) Xeon(R) Platinum 8468",
+      "cpu": {
+        "vendor_id": "GenuineIntel",
+        "cpu family": "6",
+        "model": "143",
+        "model name": "Intel(R) Xeon(R) Platinum 8468",
+        "stepping": "8",
+        "microcode": "0x2b000650"
+      },
+      "lscpu": {
+        "cmd": [
+          "lscpu",
+          "-J"
+        ],
+        "ok": true,
+        "rc": 0,
+        "stdout": "{\n   \"lscpu\": [\n      {\n         \"field\": \"Architecture:\",\n         \"data\": \"x86_64\"\n      },{\n         \"field\": \"CPU op-mode(s):\",\n         \"data\": \"32-bit, 64-bit\"\n      },{\n         \"field\": \"Address sizes:\",\n         \"data\": \"52 bits physical, 57 bits virtual\"\n      },{\n         \"field\": \"Byte Order:\",\n         \"data\": \"Little Endian\"\n      },{\n         \"field\": \"CPU(s):\",\n         \"data\": \"96\"\n      },{\n         \"field\": \"On-line CPU(s) list:\",\n         \"data\": \"0-95\"\n      },{\n         \"field\": \"Vendor ID:\",\n         \"data\": \"GenuineIntel\"\n      },{\n         \"field\": \"BIOS Vendor ID:\",\n         \"data\": \"Intel\"\n      },{\n         \"field\": \"Model name:\",\n         \"data\": \"Intel(R) Xeon(R) Platinum 8468\"\n      },{\n         \"field\": \"BIOS Model name:\",\n         \"data\": \"Intel(R) Xeon(R) Platinum 8468\"\n      },{\n         \"field\": \"CPU family:\",\n         \"data\": \"6\"\n      },{\n         \"field\": \"Model:\",\n         \"data\": \"143\"\n      },{\n         \"field\": \"Thread(s) per core:\",\n         \"data\": \"1\"\n      },{\n         \"field\": \"Core(s) per socket:\",\n         \"data\": \"48\"\n      },{\n         \"field\": \"Socket(s):\",\n         \"data\": \"2\"\n      },{\n         \"field\": \"Stepping:\",\n         \"data\": \"8\"\n      },{\n         \"field\": \"CPU(s) scaling MHz:\",\n         \"data\": \"91%\"\n      },{\n         \"field\": \"CPU max MHz:\",\n         \"data\": \"3800.0000\"\n      },{\n         \"field\": \"CPU min MHz:\",\n         \"data\": \"800.0000\"\n      },{\n         \"field\": \"BogoMIPS:\",\n         \"data\": \"4200.00\"\n      },{\n         \"field\": \"Flags:\",\n         \"data\": \"fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid dca sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb cat_l3 cat_l2 cdp_l3 cdp_l2 ssbd mba ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb intel_pt avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local split_lock_detect user_shstk avx_vnni avx512_bf16 wbnoinvd dtherm ida arat pln pts vnmi avx512vbmi umip pku ospke waitpkg avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg tme avx512_vpopcntdq la57 rdpid bus_lock_detect cldemote movdiri movdir64b enqcmd fsrm md_clear serialize tsxldtrk pconfig arch_lbr ibt amx_bf16 avx512_fp16 amx_tile amx_int8 flush_l1d arch_capabilities\"\n      },{\n         \"field\": \"Virtualization:\",\n         \"data\": \"VT-x\"\n      },{\n         \"field\": \"L1d cache:\",\n         \"data\": \"4.5 MiB (96 instances)\"\n      },{\n         \"field\": \"L1i cache:\",\n         \"data\": \"3 MiB (96 instances)\"\n      },{\n         \"field\": \"L2 cache:\",\n         \"data\": \"192 MiB (96 instances)\"\n      },{\n         \"field\": \"L3 cache:\",\n         \"data\": \"210 MiB (2 instances)\"\n      },{\n         \"field\": \"NUMA node(s):\",\n         \"data\": \"2\"\n      },{\n         \"field\": \"NUMA node0 CPU(s):\",\n         \"data\": \"0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52,54,56,58,60,62,64,66,68,70,72,74,76,78,80,82,84,86,88,90,92,94\"\n      },{\n         \"field\": \"NUMA node1 CPU(s):\",\n         \"data\": \"1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33,35,37,39,41,43,45,47,49,51,53,55,57,59,61,63,65,67,69,71,73,75,77,79,81,83,85,87,89,91,93,95\"\n      },{\n         \"field\": \"Vulnerability Gather data sampling:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Indirect target selection:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Itlb multihit:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability L1tf:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Mds:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Meltdown:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Mmio stale data:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Reg file data sampling:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Retbleed:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Spec rstack overflow:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Spec store bypass:\",\n         \"data\": \"Vulnerable\"\n      },{\n         \"field\": \"Vulnerability Spectre v1:\",\n         \"data\": \"Vulnerable: __user pointer sanitization and usercopy barriers only; no swapgs barriers\"\n      },{\n         \"field\": \"Vulnerability Spectre v2:\",\n         \"data\": \"Vulnerable; IBPB: disabled; STIBP: disabled; PBRSB-eIBRS: Vulnerable; BHI: Vulnerable\"\n      },{\n         \"field\": \"Vulnerability Srbds:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Tsa:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Tsx async abort:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Vmscape:\",\n         \"data\": \"Vulnerable\"\n      }\n   ]\n}\n",
+        "stderr": ""
+      },
+      "nproc_online": 96,
+      "smt_active": "0",
+      "numa_nodes": 2,
+      "mem_total_kib": 1055800684,
+      "kernel": "5.14.0-611.24.1.el9_7.x86_64",
+      "cmdline": "BOOT_IMAGE=(hd1,gpt2)/vmlinuz-5.14.0-611.24.1.el9_7.x86_64 root=UUID=c9a17ece-e14c-40fb-bd16-e03304bca239 ro selinux=0 console=ttyS0,115200n8 console=tty1 console=ttyS0,115200n8 mitigations=off pci=realloc=off crashkernel=1G-2G:192M,2G-64G:256M,64G-:512M",
+      "os_release": "NAME=\"Rocky Linux\"\nVERSION=\"9.7 (Blue Onyx)\"\nID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"9.7\"\nPLATFORM_ID=\"platform:el9\"\nPRETTY_NAME=\"Rocky Linux 9.7 (Blue Onyx)\"\nANSI_COLOR=\"0;32\"\nLOGO=\"fedora-logo-icon\"\nCPE_NAME=\"cpe:/o:rocky:rocky:9::baseos\"\nHOME_URL=\"https://rockylinux.org/\"\nVENDOR_NAME=\"RESF\"\nVENDOR_URL=\"https://resf.org/\"\nBUG_REPORT_URL=\"https://bugs.rockylinux.org/\"\nSUPPORT_END=\"2032-05-31\"\nROCKY_SUPPORT_PRODUCT=\"Rocky-Linux-9\"\nROCKY_SUPPORT_PRODUCT_VERSION=\"9.7\"\nREDHAT_SUPPORT_PRODUCT=\"Rocky Linux\"\nREDHAT_SUPPORT_PRODUCT_VERSION=\"9.7\"\n",
+      "cpufreq_governor": "performance",
+      "perf_event_paranoid": "0",
+      "gpus": [
+        "04:00.0 VGA compatible controller: Matrox Electronics Systems Ltd. Integrated Matrox G200eW3 Graphics Controller (rev 04)",
+        "4b:00.0 Display controller: Intel Corporation Ponte Vecchio XT (2 Tile) [Data Center GPU Max 1550] (rev 2f)",
+        "5c:00.0 Display controller: Intel Corporation Ponte Vecchio XT (2 Tile) [Data Center GPU Max 1550] (rev 2f)",
+        "9a:00.0 Display controller: Intel Corporation Ponte Vecchio XT (2 Tile) [Data Center GPU Max 1550] (rev 2f)",
+        "ca:00.0 Display controller: Intel Corporation Ponte Vecchio XT (2 Tile) [Data Center GPU Max 1550] (rev 2f)"
+      ],
+      "nvidia_smi": null,
+      "pmu_sharers": {
+        "nvidia-powerd": "inactive"
+      },
+      "perf_event_holders": {
+        "vnfs-collector": 148,
+        "xpumd": 648
+      },
+      "nmi_watchdog": "1"
+    },
+    "build": {
+      "rpm_path": "/root/taccstatstesting/HPCPerfStats/monitor/rpmbuild/RPMS/x86_64/hpcperfstatsd-3.1-1.el9.x86_64.rpm",
+      "rpm_sha256": "471c602ca27a221b1898c0fe558930bbabddb72f5f22188da169ea21e420803b",
+      "rpm_qip": {
+        "cmd": [
+          "rpm",
+          "-qip",
+          "/root/taccstatstesting/HPCPerfStats/monitor/rpmbuild/RPMS/x86_64/hpcperfstatsd-3.1-1.el9.x86_64.rpm"
+        ],
+        "ok": true,
+        "rc": 0,
+        "stdout": "Name        : hpcperfstatsd\nVersion     : 3.1\nRelease     : 1.el9\nArchitecture: x86_64\nInstall Date: (not installed)\nGroup       : System Environment/Base\nSize        : 484660\nLicense     : GPL\nSignature   : (none)\nSource RPM  : hpcperfstatsd-3.1-1.el9.src.rpm\nBuild Date  : Wed 25 Nov 2026 09:10:47 AM CST\nBuild Host  : c551-001.stampede3.tacc.utexas.edu\nPackager    : TACC - sharrell@tacc.utexas.edu\nVendor      : Texas Advanced Computing Center\nSummary     : Job-level Monitoring Client\nDescription :\nThis package provides the hpcperfstatsd daemon, along with a systemd unit for\ncontrol. The daemon publishes job-level host statistics (CPU, memory, optional\nInfiniBand, Omni-Path/Cornelis HFI via host_opa, Lustre, BeeGFS client (beegfs_client), NVIDIA DCGM GPU, AMD\nGPU, etc.).\n\nThe binary is linked with pre-built static libev and rabbitmq-c archives that\nare included in the source tarball from prepare_rpmbuild_dirs.sh, so the RPM does not depend on those distro packages at\nruntime. Shared-only stacks (DCGM, optional IB, etc.) remain dynamic per\nconfigure flags.\n\nOptional features and branch highlights: CPU counters by direct perf_event on every\narch (x86: core, IMC/HBM/DF uncore and RAPL power counters with powercap fallback;\naarch64 arm backend: /proc/stat, cpufreq, core and Grace SCF counters), per-socket hwmon power\n(host_power_socket), NVIDIA GPUs through NVML+GPM with a DCGM fallback (both loaded at\nruntime), stats buffer/file handling, and RabbitMQ robustness.\n",
+        "stderr": ""
+      },
+      "prior_nvra": "hpcperfstatsd-3.0-3.el9.x86_64",
+      "binary_sha256": "3e9d0e0f6204acea10d8516da297d1e46758fe0f0601840879a2bdb6446e627d",
+      "git": {
+        "commit": "7b016d9dc1e6b0cd9b4fac4e23026bc6076ac570",
+        "dirty": false
+      },
+      "build_capabilities": {
+        "capability_slug": "x86_64-ver3.1-hw-ib-ibdyn-nvgpu-intelgpu-lustre-beegfs-opa-opadyn-x86perf-sent1-slowtier1",
+        "package_version": "3.1",
+        "host_cpu": "x86_64",
+        "arch": "x86_64",
+        "configure": {
+          "debug": false,
+          "hardware": true,
+          "infiniband": true,
+          "gpu": true,
+          "amd_gpu": false,
+          "lustre": true,
+          "beegfs": true,
+          "opa": true,
+          "intel_gpu": true,
+          "ib_mad_dlopen": true,
+          "opa_mad_dlopen": true,
+          "shared_node_multi_jid": false,
+          "cpu_backend": "x86",
+          "slow_tier": "slowtier1"
+        },
+        "sentinel_catalog_version": 1,
+        "compile_features": [
+          "BEEGFS",
+          "GPU",
+          "HARDWARE",
+          "INFINIBAND",
+          "INTEL_GPU",
+          "LUSTRE",
+          "OPA"
+        ],
+        "build_dir": "/root/taccstatstesting/HPCPerfStats/monitor/rpmbuild/BUILD/hpcperfstats-3.1/.build-static",
+        "generated_at": "2026-11-25T15:10:53.206371+00:00",
+        "fleet": "stampede3"
+      },
+      "conf_redacted": "server stats.stampede3.tacc.utexas.edu\nqueue stampede3\nport 5672\nuser REDACTED\npassword REDACTED\nbuffer_hours 6\nsample_freq 30\nsample_freq_slow 600\nsend_freq 300\nenable_slow_tier 1\nemit_value_sentinels 1\n",
+      "cadence": {
+        "sample_freq": 30.0,
+        "sample_freq_slow": 600.0,
+        "send_freq": 300.0,
+        "enable_slow_tier": 1,
+        "raw": {
+          "sample_freq": "30",
+          "sample_freq_slow": "600",
+          "send_freq": "300",
+          "enable_slow_tier": "1"
+        },
+        "missing_keys": [],
+        "matches_upstream_defaults": true
+      },
+      "unit_properties": {
+        "Restart": "always",
+        "MainPID": "0",
+        "ExecStart": "{ path=/usr/sbin/hpcperfstatsd ; argv[]=/usr/sbin/hpcperfstatsd -c /etc/hpcperfstats/hpcperfstats.conf ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+        "Environment": "PATH=/usr/libexec/hpcperfstats/stubs:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
+        "EnvironmentFiles": "/etc/sysconfig/hpcperfstatsd (ignore_errors=yes)",
+        "LimitNOFILE": "1048576",
+        "Nice": "10",
+        "IOSchedulingClass": "3",
+        "IOSchedulingPriority": "7",
+        "CPUAffinity": "",
+        "ProtectSystem": "strict",
+        "DropInPaths": ""
+      },
+      "tools": {
+        "python": "3.9.25",
+        "gcc": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-11)",
+        "perf": "perf version 5.14.0-611.24.1.el9_7.x86_64",
+        "ss": "ss utility, iproute2-6.14.0",
+        "rpm": "RPM version 4.16.1.3",
+        "systemd": "systemd 252 (252-55.el9_7.7.rocky.0.1)"
+      }
+    },
+    "harness": {
+      "version": "1.0.0",
+      "schema": 1,
+      "argv": [
+        "--governors",
+        "performance",
+        "--profile-collectors",
+        "--leg-seconds",
+        "1800",
+        "--settle-seconds",
+        "60",
+        "--fwq-seconds",
+        "300",
+        "--blocks",
+        "3",
+        "--max-hours",
+        "20",
+        "--cadence-sweep",
+        "60",
+        "--allocation-user",
+        "sharrell",
+        "--conf",
+        "/root/hps_campaign/measure.conf",
+        "--rpm",
+        "rpmbuild/RPMS/x86_64/hpcperfstatsd-3.1-1.el9.x86_64.rpm",
+        "--build-info",
+        "rpmbuild/build-info",
+        "--out",
+        "measurement/results/v31_c551-001_20261125T1510Z"
+      ],
+      "harness_cpu": 95,
+      "fwq_cpus": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94
+      ],
+      "perf_events": [
+        "task-clock",
+        "cycles",
+        "instructions",
+        "cache-references",
+        "cache-misses",
+        "context-switches",
+        "cpu-migrations",
+        "page-faults"
+      ]
+    }
+  }
+}

@@ -1,0 +1,2 @@
+host,arch,cpu_model,not_idle,daemon_cpu_core_s_per_h,daemon_cpu_pct_node,daemon_cpu_1s_max_pct,daemon_uss_mib,daemon_rss_mib,broker_bytes_acked_per_h,node_busy_cores_delta,node_power_w_delta,fwq_mean_slowdown_pct,fwq_frac_above_off_p99,daemon_perf_event_fds
+c318-005,x86_64,AMD EPYC 9454 48-Core Processor,,1.5798969344106812,0.00045714610370679436,1.1517083363458485,1.6645206318622627,4.011008081665353,3558820.527668197,0.7447149843439542,18.48015515201871,0.4940876370616539,0.2586515663256535,602.0

@@ -1,0 +1,19 @@
+host c318-005  2026-11-26T17:36:17Z  kernel 4.18.0-553.150.1.el8_10.x86_64  CPUs 96
+class: AMD Zen3/Zen4, 6 general counters (fit 6 slots, monitor 7)
+nmi_watchdog=0
+other perf_event holders (process fds):
+governor=performance
+none     interrupts/s        271  per CPU     2.8  irq cores 0.0028
+fit      interrupts/s        313  per CPU     3.3  irq cores 0.0027
+         cycles         running 100.00%
+         instructions   running 100.00%
+         r00c2          running 100.00%
+         r00c3          running 100.00%
+         rff03          running 100.00%
+monitor  interrupts/s      96133  per CPU  1001.4  irq cores 0.7592
+         cycles         running 83.33%
+         instructions   running 83.33%
+         r00c2          running 83.33%
+         r00c3          running 83.33%
+         rff03          running 83.33%
+         r0729          running 83.33%

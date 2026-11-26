@@ -1,0 +1,2 @@
+host,arch,cpu_model,not_idle,daemon_cpu_core_s_per_h,daemon_cpu_pct_node,daemon_cpu_1s_max_pct,daemon_uss_mib,daemon_rss_mib,broker_bytes_acked_per_h,node_busy_cores_delta,node_power_w_delta,fwq_mean_slowdown_pct,fwq_frac_above_off_p99,daemon_perf_event_fds
+c561-009,x86_64,Intel(R) Xeon(R) Platinum 8468,,1.5681088120235416,0.00045373518866421926,1.351867030571231,22.47489004629629,29.30301504629629,3920559.849022269,0.5758192923774936,2.8520622514779745,0.3230454836123775,0.009940338421217198,1476.0

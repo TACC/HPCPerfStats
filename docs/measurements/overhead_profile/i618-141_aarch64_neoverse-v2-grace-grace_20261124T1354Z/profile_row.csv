@@ -1,0 +1,2 @@
+host,arch,cpu_model,not_idle,daemon_cpu_core_s_per_h,daemon_cpu_pct_node,daemon_cpu_1s_max_pct,daemon_uss_mib,daemon_rss_mib,broker_bytes_acked_per_h,node_busy_cores_delta,node_power_w_delta,fwq_mean_slowdown_pct,fwq_frac_above_off_p99,daemon_perf_event_fds
+i618-141,aarch64,Neoverse-V2,,1.622280999588055,0.0003129400076365847,1.5502991190611848,2.7072591230180763,6.044677706058363,4753117.299059527,0.010681545791278897,,-0.1173194878056047,0.008169748436266923,1300.0

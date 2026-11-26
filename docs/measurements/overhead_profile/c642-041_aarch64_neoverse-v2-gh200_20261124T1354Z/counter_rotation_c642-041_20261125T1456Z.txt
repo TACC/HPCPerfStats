@@ -1,0 +1,24 @@
+host c642-041  2026-11-25T14:56:30Z  kernel 5.14.0-687.65.1.el9_8.aarch64+64k  CPUs 72
+class: Grace Neoverse V2, cycle counter + 6 general counters (fit 6 general slots, monitor 8)
+nmi_watchdog=0
+other perf_event holders (process fds):
+governor=performance
+none     interrupts/s        943  per CPU    13.1  irq cores 0.0000
+fit      interrupts/s        889  per CPU    12.4  irq cores 0.0000
+         cycles         running 100.00%
+         r08            running 100.00%
+         r801c          running 100.00%
+         r8018          running 100.00%
+         r8014          running 100.00%
+         r80c1          running 100.00%
+         r80c0          running 100.00%
+monitor  interrupts/s       7923  per CPU   110.0  irq cores 0.0000
+         cycles         running 77.00%
+         r08            running 77.00%
+         r801c          running 77.00%
+         r8018          running 77.00%
+         r8014          running 77.00%
+         r80c1          running 77.00%
+         r80c0          running 77.00%
+         r80e3          running 66.00%
+         r80e7          running 66.00%

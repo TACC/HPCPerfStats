@@ -1,0 +1,25 @@
+host c122-018  2026-11-25T14:10:12Z  kernel 6.12.0-211.61.1.el10_2.aarch64+64k  CPUs 144
+class: Grace Neoverse V2, cycle counter + 6 general counters (fit 6 general slots, monitor 8)
+nmi_watchdog=0
+other perf_event holders (process fds):
+  nvidia-powerd 3168
+governor=ondemand
+none     interrupts/s      15931  per CPU   110.6  irq cores 0.0012
+fit      interrupts/s      16111  per CPU   111.9  irq cores 0.0017
+         cycles         running 24.00%
+         r08            running 24.00%
+         r801c          running 24.00%
+         r8018          running 24.00%
+         r8014          running 24.00%
+         r80c1          running 24.00%
+         r80c0          running 24.00%
+monitor  interrupts/s      16025  per CPU   111.3  irq cores 0.0003
+         cycles         running 22.00%
+         r08            running 22.00%
+         r801c          running 22.00%
+         r8018          running 22.00%
+         r8014          running 22.00%
+         r80c1          running 22.00%
+         r80c0          running 22.00%
+         r80e3          running 19.00%
+         r80e7          running 19.00%

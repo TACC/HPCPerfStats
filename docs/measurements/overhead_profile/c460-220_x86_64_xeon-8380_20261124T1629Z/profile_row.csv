@@ -1,0 +1,2 @@
+host,arch,cpu_model,not_idle,daemon_cpu_core_s_per_h,daemon_cpu_pct_node,daemon_cpu_1s_max_pct,daemon_uss_mib,daemon_rss_mib,broker_bytes_acked_per_h,node_busy_cores_delta,node_power_w_delta,fwq_mean_slowdown_pct,fwq_frac_above_off_p99,daemon_perf_event_fds
+c460-220,x86_64,Intel(R) Xeon(R) Platinum 8380 CPU @ 2.30GHz,,0.8979997052268017,0.0003118054532037506,0.7924801504143509,1.4533228443287038,3.6551457609953704,3208517.7103681886,1.5738715221545643,9.559026235502131,0.41926114811940796,1.0,1252.0

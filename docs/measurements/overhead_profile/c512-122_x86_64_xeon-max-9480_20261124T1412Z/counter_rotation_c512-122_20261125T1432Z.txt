@@ -1,0 +1,35 @@
+host c512-122  2026-11-25T14:32:36Z  kernel 5.14.0-687.66.1.el9_8.x86_64  CPUs 112
+class: Intel server, fixed instructions/cycles/ref-cycles + 8 general counters (HT off) (fit 8 general slots, monitor 12)
+nmi_watchdog=1
+other perf_event holders (process fds):
+  vnfs-collector 164
+governor=performance
+none     interrupts/s       2412  per CPU    21.5  irq cores 0.0035
+fit      interrupts/s     112980  per CPU  1008.7  irq cores 0.8598
+         instructions   running 90.00%
+         cycles         running 81.00%
+         ref-cycles     running 90.00%
+         r01c7          running 90.00%
+         r02c7          running 90.00%
+         r04c7          running 90.00%
+         r08c7          running 90.00%
+         r10c7          running 90.00%
+         r20c7          running 90.00%
+         r40c7          running 90.00%
+         r80c7          running 81.00%
+monitor  interrupts/s     112994  per CPU  1008.9  irq cores 0.8673
+         instructions   running 59.00%
+         cycles         running 59.00%
+         ref-cycles     running 66.00%
+         r01c7          running 66.00%
+         r02c7          running 66.00%
+         r04c7          running 66.00%
+         r08c7          running 66.00%
+         r10c7          running 66.00%
+         r20c7          running 66.00%
+         r40c7          running 66.00%
+         r80c7          running 60.00%
+         r0151          running 53.00%
+         r01d1          running 53.00%
+         r02d1          running 53.00%
+         r04d1          running 53.00%

@@ -1,0 +1,2 @@
+host,arch,cpu_model,not_idle,daemon_cpu_core_s_per_h,daemon_cpu_pct_node,daemon_cpu_1s_max_pct,daemon_uss_mib,daemon_rss_mib,broker_bytes_acked_per_h,node_busy_cores_delta,node_power_w_delta,fwq_mean_slowdown_pct,fwq_frac_above_off_p99,daemon_perf_event_fds
+c512-122,x86_64,Intel(R) Xeon(R) CPU Max 9480,,1.5935783973011441,0.0003952327374258791,1.373932077607388,1.677893842653644,3.8745084259869778,4452409.64036617,0.8876519017778179,5.338584896301086,0.3955347795877251,0.03271512041269132,1810.0

@@ -1,0 +1,2 @@
+host,arch,cpu_model,not_idle,daemon_cpu_core_s_per_h,daemon_cpu_pct_node,daemon_cpu_1s_max_pct,daemon_uss_mib,daemon_rss_mib,broker_bytes_acked_per_h,node_busy_cores_delta,node_power_w_delta,fwq_mean_slowdown_pct,fwq_frac_above_off_p99,daemon_perf_event_fds
+c573-002,x86_64,AMD EPYC 9555 64-Core Processor,,2.7628535080628303,0.0005995775842150239,2.7882629739469054,23.112465963401892,29.85530450506856,4824392.223536597,0.38890847950597346,-5.104110688982416,0.29707359861625426,0.18965025037006158,1074.0

@@ -1,0 +1,2 @@
+host,arch,cpu_model,not_idle,daemon_cpu_core_s_per_h,daemon_cpu_pct_node,daemon_cpu_1s_max_pct,daemon_uss_mib,daemon_rss_mib,broker_bytes_acked_per_h,node_busy_cores_delta,node_power_w_delta,fwq_mean_slowdown_pct,fwq_frac_above_off_p99,daemon_perf_event_fds
+c492-081,x86_64,Intel(R) Xeon(R) Platinum 8160 CPU @ 2.10GHz,,0.8231833236398902,0.0004763792382175291,0.8255913794113988,1.2396116728649977,3.4342731311983314,2048244.3745505384,1.0043181745702556,3.8931014154104417,0.6601546332072844,1.0,748.0
