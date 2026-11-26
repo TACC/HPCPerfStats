@@ -63,14 +63,14 @@ static int fake_capture(char *const argv[], char *out, size_t out_cap)
     return 0;
   }
   if (strcmp(argv[1], "discovery") == 0) {
-    for (i = 0; i < g_disc_count; i++)
+    for (i = 0; i < g_disc_count && pos < out_cap; i++)
       pos +=
           (size_t)snprintf(out + pos, out_cap - pos,
                            "| %d         | Device Name: Intel(R) Data Center GPU Max 1550 |\n", i);
     return 0;
   }
   pos = (size_t)snprintf(out, out_cap, "Timestamp, DeviceId, GPU Utilization (%%)\n");
-  for (i = 0; i < g_disc_count; i++)
+  for (i = 0; i < g_disc_count && pos < out_cap; i++)
     pos += (size_t)snprintf(out + pos, out_cap - pos, "16:34:10.012, %d, %d.00\n", i, 10 + i);
   return 0;
 }
@@ -297,10 +297,30 @@ static void test_libxpum_prepare_failure(void)
   xpum_gpu_dyn_unload();
 }
 
+/* A capture buffer too small for the fake output truncates without writing past out_cap. */
+static void test_fake_capture_truncates_in_bounds(void)
+{
+  char *const disc_argv[] = {"xpumcli", "discovery", NULL};
+  char *const dump_argv[] = {"xpumcli", "dump", NULL};
+  char *const *argvs[] = {disc_argv, dump_argv};
+  char buf[512];
+  size_t a, k;
+
+  start(g_root_pvc, 1);
+  for (a = 0; a < 2; a++) {
+    memset(buf, 'Z', sizeof(buf));
+    assert(fake_capture(argvs[a], buf, 50) == 0);
+    assert(buf[49] == '\0');
+    for (k = 50; k < sizeof(buf); k++)
+      assert(buf[k] == 'Z');
+  }
+}
+
 static const struct {
   const char *name;
   void (*fn)(void);
 } g_tests[] = {
+    {"fake_capture_truncates_in_bounds", test_fake_capture_truncates_in_bounds},
     {"pci_match", test_pci_match},
     {"discovery_failure_sysfs_rows", test_discovery_failure_sysfs_rows},
     {"backoff_after_streak", test_backoff_after_streak},
