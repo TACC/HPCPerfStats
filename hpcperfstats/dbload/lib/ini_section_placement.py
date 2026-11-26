@@ -52,7 +52,6 @@ PORTAL_WEB_TUNING_OPTIONS = frozenset(
   {
     "cors_origin_scheme",
     "gunicorn_workers",
-    "summary_aggregate_prefetch_max_threads",
     "parallel_db_prefetch_max",
     "api_small_executor_max_workers",
     "db_conn_max_age",
@@ -95,7 +94,6 @@ SECTION_OPTION_PREFIX_RULES = (
     "PORTAL",
     (
       "gunicorn_",
-      "summary_aggregate_",
       "parallel_db_",
       "api_small_",
       "db_conn_",

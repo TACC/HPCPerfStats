@@ -1,0 +1,34 @@
+---
+description: Keep docs/DEPLOY_CONCURRENCY_AND_NUMA.md aligned with INI pool/thread/NUMA/archive defaults, compose DB and memory limits, and pipeline concurrency code
+alwaysApply: false
+globs: hpcperfstats/dbload/lib/conf_parser.py,hpcperfstats.ini.example,services-conf/django_startup.sh,services-conf/supervisord.conf,hpcperfstats/site/hpcperfstats_site/settings.py,docker-compose.defaults.yaml,docker-compose.yaml.example
+---
+
+# Deploy concurrency doc sync
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+`docs/DEPLOY_CONCURRENCY_AND_NUMA.md` is the operator reference for how many threads, processes, connections and zstd workers each service runs, how NUMA/cpuset pinning works, and how archive seal / day-close / janitor work is sized and recovered. When a change would make any statement there wrong, update the doc **in the same task**. Write it per `docs-current-state-only.mdc` (current behaviour only, no changelog text).
+
+## Trigger conditions
+
+- `hpcperfstats/dbload/lib/conf_parser.py`: any `INI_OPTION_DEFAULTS` value, `_INI_OPTION_REGISTRY_KEYS` entry, or getter that sizes pools, threads, workers, zstd threads, memory admission, connection lifetime, timeouts, NUMA/cpuset pinning, or `get_effective_cores()` logic.
+- `hpcperfstats.ini.example`: a key or default in `[DEFAULT]` `total_cores` / cpuset, `[PORTAL]`, or `[PIPELINE]` that the doc cites.
+- `docker-compose.defaults.yaml` (and the site `docker-compose.yaml` / `.example`): `db` PostgreSQL GUCs (`max_connections`, parallel workers, `work_mem`, timeouts), `mem_limit` / `shm_size` / cpuset on `pipeline`, `web`, `db`.
+- `services-conf/django_startup.sh` (Gunicorn worker formula, `WEB_CONCURRENCY`), `services-conf/supervisord.conf` (pipeline program set), `settings.py` (`CONN_MAX_AGE`, DB `OPTIONS`).
+- sync_timedb / archive / janitor / day-close / populate-pool code that changes worker counts, slot counts, lock order, log markers the doc quotes, sidecar file names, or recovery scripts (`scripts/*seal*`, `scripts/*archive*`, `scripts/verify_open_tar_matches_zst.py`).
+- `update_metrics` pool sizing or memory admission (`hpcperfstats/analysis/metrics/update_metrics.py` and its `conf_parser` getters).
+- `listend.py` consumer / archive thread counts.
+
+## Required actions
+
+1. Update every table row, default, formula, log marker and script name in the doc that the change affects. Copy values from code, not memory.
+2. Keep `hpcperfstats.ini.example` and the doc in agreement on keys and defaults (`hpcperfstats-ini-format.mdc`).
+3. If the change also affects `docs/SYNC_TIMEDB_STATE_MACHINE.md`, update that per `sync-timedb-state-machine-contract.mdc`; the deploy doc may summarise but must not contradict it.
+4. Run `hpcperfstats/tests/test_core_docs_drift_guard.py` (INI keys/defaults cited in the doc must match `INI_OPTION_DEFAULTS`).
+
+## Overlap
+
+- `docs-current-state-only.mdc` — writing style for this doc.
+- `deploy-ini-with-code-no-phase-zero.mdc`, `immutable-image-ini-policy.mdc`, `hpcperfstats-ini-format.mdc` — INI deployment policy.
+- `readme-installation-sync.mdc` — README links here for pool sizing; README carries only the fresh-install minimum.

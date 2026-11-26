@@ -1,7 +1,11 @@
 """
 Seal prior-day per-host syslog files into one ``YYYY-MM-DD-syslog.tar.gz``.
 
-Runs in the pipeline container (supervisord). Uses ``[DEFAULT] timezone`` and
+Not a supervisord program and not started by ``supervisor_startup.sh``: an
+operator runs ``python3 -m hpcperfstats.seal_syslog_daily`` by hand as
+``hpcperfstats`` in the pipeline container, either with ``--date YYYY-MM-DD``
+to seal one day or with no arguments to poll forever and seal each prior
+day once (``run_loop``). Uses ``[DEFAULT] timezone`` and
 paths under ``data_dir/logs/`` (see ``conf_parser`` syslog helpers). Filenames
 must match syslog-ng: ``$HOST.$R_YEAR$R_MONTH$R_DAY.log`` (YYYYMMDD, no
 separators in the date part).

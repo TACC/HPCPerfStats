@@ -1,7 +1,7 @@
-# Using HPCPerfStats on the Web — Guide for Researchers and HPC Users
+# Using HPCPerfStats on the Web - Guide for Researchers and HPC Users
 
 
-This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-11-17.
+This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-11-26.
 
 
 This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections.
@@ -12,12 +12,12 @@ This document is ordered so the **most decision-relevant ideas come first**. Dee
 
 - [1. Finding jobs and reading the job list](#1-finding-jobs-and-reading-the-job-list)
 - [2. What you should do first on a job page](#2-what-you-should-do-first-on-a-job-page)
-- [3. Job detail - scheduler and accounting fields](#3-job-detail--scheduler-and-accounting-fields)
+- [3. Job detail - scheduler and accounting fields](#3-job-detail---scheduler-and-accounting-fields)
 - [4. Supporting panels on the job page](#4-supporting-panels-on-the-job-page)
 - [5. Job-level metrics catalog](#5-job-level-metrics-catalog)
 - [6. Data/plot surfaces and what they mean diagnostically](#6-dataplot-surfaces-and-what-they-mean-diagnostically)
 - [7. Failure-mode checklist](#7-failure-mode-checklist)
-- [8. Appendix - concept guide with external references](#8-appendix--concept-guide-with-external-references)
+- [8. Appendix - concept guide with external references](#8-appendix---concept-guide-with-external-references)
 - [9. Related references in this repository](#9-related-references-in-this-repository)
 
 ---
@@ -25,52 +25,51 @@ This document is ordered so the **most decision-relevant ideas come first**. Dee
 ## 1. Finding jobs and reading the job list
 
 - **Search home**: Browse by **year** or **date** to reach filtered job lists.
-- **Expanded search**: Use expanded search when you need to find specific jobs quickly (for example by job ID, host, user, **project**, queue, time window, node count, node-hours, or derived metric thresholds), then open the matching row from the filtered results. The **?** help icon next to each field defines the parameter. Derived metric choices match the **Metrics** tab on each job detail page, and those filters search prepared job-level metric summaries. Multiple criteria are combined with **AND** semantics (all active filters must match). **Job end time** fields filter on scheduler end time, not submit or start time alone.
-- **Find Job** (navbar): Enter a job ID to open that job’s detail page directly in the browser. Host-based lookup from the navbar routes to host-centric views in the SPA (there is no separate JSON redirect endpoint for search).
-- **Active filter summary**: When a list is filtered, a summary bar above the table shows the active criteria in plain language. Use **Modify search** to reopen expanded search with the same parameters pre-filled.
-- **Empty results**: When no jobs match the current filters, the list stays on the page with a **No jobs match these filters** message in the table (this is not an error page). Adjust filters via **Modify search** or clear criteria from expanded search.
-- **Job list table**: Typical columns include job ID, **user**, **project**, resource shape (**nodes**, then **cores**), **runtime** as **HH:MM:SS** (hours may exceed 24 for long jobs), start/end times, **queue**, **state**, node hours, and **job name**. After **project**, the next three columns are **nodes**, **cores**, and **runtime**. Row **background color** reflects completion state (e.g. completed vs failed vs other).
-- **Histograms** (where configured): Distribution thumbnails for metrics such as **runtime**, **node count**, and **queue wait** help you see whether your job is typical for that filter.
-- **Performance Data** column: Short status labels indicate readiness for each row. **Metrics & Plots available** means metrics and prewarmed plot/detail artifacts are ready. **Metrics available** means metrics values exist but plots are still preparing. Other labels cover jobs that are too short, have too few samples to complete, or have not yet gone through metrics/plot computation.
+- **Extended search** (navbar): Use **Extended search** when you need to find specific jobs quickly (for example by job ID, host, user, **project**, state, queue, job end time window, runtime, node count, node-hours, or derived metric thresholds), then open the matching row from the filtered results. The **?** help icon next to each field defines the parameter. Derived metric choices match the **Metrics** tab on each job detail page, and those filters search prepared job-level metric summaries. Multiple criteria are combined with **AND** semantics (all active filters must match). **Job end time** fields filter on scheduler end time, not submit or start time alone.
+- **Find Job** (navbar): Enter a job ID to open that job's detail page directly. In **Extended search**, a job ID also opens that one job, and a **host** together with a start of the job end time window opens the host plot for that host (section 4.3) instead of a job list.
+- **Active filter summary**: When a list is filtered, an **Active filters** box above the table shows the active criteria in plain language. Use **Modify search** to reopen **Extended search**.
+- **Empty results**: When no jobs match the current filters, the list stays on the page with a **No jobs match these filters** message in the table (this is not an error page). Adjust filters via **Modify search** or clear criteria from **Extended search**.
+- **Job list table**: Columns are **Job ID**, **Performance data**, **User**, **Project**, **nodes**, **cores**, **run time (HH:MM:SS)** (hours may exceed 24 for long jobs), **start time**, **end time**, **queue**, **status**, **node hrs**, and **name** (job name).
+- **Histograms**: Distribution thumbnails for **runtime**, **node count**, and **queue wait** help you see whether your job is typical for that filter.
+- **Performance data** column: Short status labels indicate readiness for each row. **Metrics & Plots available** means metrics and plots are ready. **Metrics available** means metrics values exist but plots are still preparing. **Too short to complete**, **Too few samples to complete**, and **Metrics & Plots not yet completed** cover jobs that are too short, have too few samples, or have not yet gone through metrics/plot computation.
 
 ---
 
 ## 2. What you should do first on a job page
 
-- **Breadcrumbs** at the top link back to your filtered job list (when you arrived from search) and show where you are in the site. Use them instead of the browser back button when you want to return to the same filter context.
-- **Shareable analysis tabs**: Job data tabs (Summary plots, Roofline, Multiprecision Mix, and related analysis panels) sync to the URL as `?tab=…` so you can bookmark or share a link that opens the same tab. Those three plot tabs load only when Performance Data is **Metrics & Plots available**; otherwise the tab shows **Plots not yet completed.** (still preparing) or **No plots available for this job** (too short / too few samples). Metrics and other non-plot tabs never show plot loading banners. If a plot panel fails to load after it is ready, the page offers **retry** for that section without reloading the whole job.
-- **Print**: Use the **Print** button next to the breadcrumbs to prepare a printable snapshot (Job overview, Resources, Metrics, Summary plots, Roofline, and Multiprecision Mix). The browser print dialog opens so you can **Save as PDF** or print on paper—useful for tickets, design reviews, and offline sharing. Processes, Execution and hosts, and Device data are not included in that snapshot.
+- **Breadcrumbs** at the top (**Browse** > **Job &lt;id&gt;**) show where you are in the site; **Browse** returns to the search home.
+- **Shareable analysis tabs**: Job data tabs (Metrics, Summary plots, Roofline, Multiprecision Mix, Processes, Execution and hosts, Device data) sync to the URL as `?tab=...` so you can bookmark or share a link that opens the same tab. The Summary plots, Roofline, and Multiprecision Mix tabs load only when Performance data is **Metrics & Plots available**; otherwise the tab shows **Plots not yet completed.** (still preparing) or **No plots available for this job** (too short / too few samples). Metrics and other non-plot tabs never show plot loading banners. If a plot panel fails to load after it is ready, the page offers **Retry plots** for that section without reloading the whole job.
+- **Print**: Use the **Print** button next to the breadcrumbs to prepare a printable snapshot (Job overview, Resources, Metrics, Summary plots, Roofline, and Multiprecision Mix). The browser print dialog opens so you can **Save as PDF** or print on paper - useful for tickets, design reviews, and offline sharing. Processes, Execution and hosts, Device data, and the Client / Server log links are not included in that snapshot. When Performance data is **Metrics available** (plots still preparing), the snapshot leaves out the plot tabs; for jobs without metrics, Print says **There is no data to print.**
 
 1. **Read Job overview first** (status, runtime, queue, cores/nodes, user/project, start/end). This frames the run before touching telemetry.
 2. **Open the Summary plots tab** in **Job data**. It is the fastest way to see phase changes and node-to-node divergence across CPU, memory, I/O<sup>[11](#ref-11)</sup>, network, and GPU signals.
 3. **Open the Roofline tab** for performance-ceiling context: it contains **both** CPU roofline and GPU roofline<sup>[1](#ref-1)</sup> (GPU roofline appears when required counters exist).
 4. **Open the Multiprecision Mix tab** to check CPU/GPU precision activity composition.
 5. **Open the Metrics tab** for scalar job-level summaries (averages, peaks, imbalance percentages, detail GPU/FSIO rows). Many rows have a **help icon** for definitions.
-6. **Use Device data tab** to jump into per-type detail pages (`/job/<jid>/<type>/`) for raw event families and type-level plots/tables.
+6. **Use Device data tab** to jump into per-type detail pages (`/machine/job/<jid>/<type>/`) for raw event families and type-level plots/tables.
 7. **Use Processes and Execution and hosts tabs** when you need command-line provenance, XALT library context, and host list verification.
 
-**Shared nodes:** When a job shared a node with other jobs, metrics and plots are filtered to that job’s samples (CPU via affinity-filtered jid payloads, GPU devices from affinity when known). Memory summaries prefer job cgroup memory. Every **?** help popover on that job ends with a **red** note that CPU/GPU/job memory are job-scoped when affinity or cgroup data exists, while some other counters may still be host-wide. Exclusive (sole-occupancy) jobs omit that footer.
+**Shared nodes:** When a job shared a node with other jobs, CPU and GPU metrics and plots are limited to that job's cores and GPU devices when those are known, and memory summaries prefer the job's cgroup memory. On such a job, the **?** help for a counter that stays node-wide ends with a **red** note saying the counter is node-wide and not limited to this job; help for job-scoped CPU, GPU, and cgroup memory signals has no such note. Exclusive (sole-occupancy) jobs never show that note.
 
 ---
 
-## 3. Job detail — scheduler and accounting fields
+## 3. Job detail - scheduler and accounting fields
 
-These fields come from batch accounting (e.g. Slurm) and define the **official** story of the run.
+These fields appear in **Job overview**. They come from batch accounting (e.g. Slurm) and define the **official** story of the run.
 
 
 | Field                  | What it is                | Diagnostic use                                                                                                                             |
 | ---------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Job ID**             | Unique scheduler id       | Cross-reference logs, support tickets, and reproducer scripts.                                                                             |
 | **User**               | Submitter                 | Ownership and fair-share context.                                                                                                          |
-| **Project / account**  | Charge or allocation      | Billing and policy (which allocation was charged).                                                                                         |
-| **Start / end time**   | Scheduler window          | Align with external logs; detect unexpected early end.                                                                                     |
-| **Runtime (s)**        | End − start (as recorded) | Compare to **requested time**: jobs that always use ≪ requested time may be over-requesting; jobs hitting the limit may be **timing out**. |
-| **Requested time (s)** | Time limit requested      | Risk of **preemption / timeout** if runtime approaches this.                                                                               |
+| **Project**            | Charge or allocation      | Billing and policy (which allocation was charged).                                                                                         |
+| **Start / End**        | Scheduler window          | Align with external logs; detect unexpected early end.                                                                                     |
+| **Run time (s)**       | End - start (as recorded) | Compare to the time limit you requested: jobs that always use much less than the limit may be over-requesting; jobs hitting the limit may be **timing out**. |
 | **Queue**              | Partition / class         | Explains hardware policy (GPU vs CPU, debug vs production).                                                                                |
-| **Job name**           | User-provided label       | Often encodes experiment id or binary name—quick sanity check.                                                                             |
-| **Status / state**     | Completion outcome        | **Failed** jobs may still have partial telemetry—still worth opening.                                                                      |
-| **ncores**             | Core count allocated      | Match to how you launched MPI<sup>[9](#ref-9)</sup>/OpenMP<sup>[10](#ref-10)</sup> (miscounts → wrong binding).                                                                          |
-| **nnodes**             | Node count                | Multi-node imbalance metrics and network plots only make sense in this context.                                                            |
+| **Job name**           | User-provided label       | Often encodes experiment id or binary name - quick sanity check.                                                                             |
+| **Status**             | Completion outcome        | **Failed** jobs may still have partial telemetry - still worth opening.                                                                      |
+| **Cores / nodes** (cores) | Core count allocated   | Match to how you launched MPI<sup>[9](#ref-9)</sup>/OpenMP<sup>[10](#ref-10)</sup> (miscounts -> wrong binding).                                                                          |
+| **Cores / nodes** (nodes) | Node count             | Multi-node imbalance metrics and network plots only make sense in this context.                                                            |
 
 
 ---
@@ -80,26 +79,26 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 
 | Panel / tab                     | Content                                                                                           | Diagnostic use                                                                                                                                                 |
 | ------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Print**                       | Browser print / Save as PDF of overview, Resources, Metrics, Summary, Roofline, Multiprecision Mix | Capture a triage packet for support tickets or offline review without copying each tab by hand. |
-| **Job overview**                | Compact high-value fields (jid, status, runtime, queue, user/project, cores/nodes, start/end)    | Fast triage before deeper telemetry checks.                                                                                                                    |
-| **Resources**                   | Rounded Cards in order: watt-hours (when present) → **GPU Information** (aggregate stats as the main line; per-(host,dev) inventory behind a collapsed control) → **Shared File Systems** (`fsio`) → Client/Server log links last. GPU precedence NVIDIA → AMD → Intel PVC. | Validate energy, GPU allocation vs activity (expand inventory for device rows), I/O<sup>[11](#ref-11)</sup> volume, then jump to external logs. |
-| **Metrics (tab)**               | Job-level metrics catalog in rounded Cards per subsection **CPU → GPU → File System → Network → Misc** by monitor/catalog type (Memory/NUMA under CPU; IB/OPA/Ethernet/LNET under Network). Each section shows valued metrics first; metrics without a numeric value sit in a default-collapsed **Metrics not computed** table at the bottom of that section. Empty GPU/File System/Misc omitted; **Network** always appears (empty body: Data not available.) | Faster subsystem triage—scan CPU vs fabric vs GPU scalars without scrolling past unavailable rows; expand **Metrics not computed** when you need to see which signals are missing. |
+| **Print**                       | Browser print / Save as PDF of Job overview, Resources, Metrics, Summary plots, Roofline, Multiprecision Mix | Capture a triage packet for support tickets or offline review without copying each tab by hand. |
+| **Job overview**                | Compact high-value fields (Job ID, status, runtime, queue, user/project, cores/nodes, start/end)    | Fast triage before deeper telemetry checks.                                                                                                                    |
+| **Resources**                   | Cards in order: watt-hours (when present) -> **GPU Information** (aggregate stats as the main line; per-host, per-device inventory behind a collapsed control) -> **Shared File Systems** -> **Client / Server logs** links last. GPU precedence NVIDIA -> AMD -> Intel. | Validate energy, GPU allocation vs activity (expand inventory for device rows), I/O<sup>[11](#ref-11)</sup> volume, then jump to external logs. |
+| **Metrics (tab)**               | Job-level metrics catalog in one card per subsection **CPU -> GPU -> File System -> Network -> Misc** (Memory/NUMA under CPU; IB/OPA/Ethernet/LNET under Network). Each section shows valued metrics first; metrics without a numeric value sit in a default-collapsed **Metrics not computed** table at the bottom of that section. Empty CPU/GPU/File System/Misc omitted; **Network** always appears (empty body: Data not available.) | Faster subsystem triage - scan CPU vs fabric vs GPU scalars without scrolling past unavailable rows; expand **Metrics not computed** when you need to see which signals are missing. |
 | **Summary plots (tab)**          | Host-level timeline plot with CPU, memory/NUMA<sup>[4](#ref-4)</sup>/DRAM, fabric/filesystem, GPU, and node-power traces | Best first visual scan for phase changes, host outliers, and cross-signal coupling (for example GPU drops while fabric spikes).                              |
 | **Roofline (tab)**              | CPU roofline and GPU roofline (Memory BW when available, else PCIe/NVLink<sup>[7](#ref-7)</sup>)                                                        | Distinguish compute-limited vs bandwidth/link-limited behavior and prioritize the right optimization work.                                                     |
 | **Multiprecision Mix (tab)**    | CPU and GPU precision-activity panels over time                                                    | Verify whether the run is using expected mixed-precision paths<sup>[6](#ref-6)</sup> and detect precision mix drift across runs or code versions.                                         |
-| **Processes (tab)**             | Process name first; expandable groups of hosts with average Peak VM/HWM/Stack/Text/Libs/Threads on the group header. Peak VM/HWM/Stack/Text/Libs are shown in **MB** (monitor stores kB; UI converts). Peak VM/HWM (and Stack/Text/Libs) are **job-level high water** for that process name (ingest keeps the max across samples). | Confirm what actually executed and its memory footprint (wrappers, launch depth, wrong env, etc.). |
+| **Processes (tab)**             | Process name first; expandable groups of hosts with average Peak VM/HWM/Stack/Text/Libs/Threads on the group header. Peak VM/HWM/Stack/Text/Libs are shown in **MB** and are the **job-level high water** for that process name (the largest value seen across the job's samples). | Confirm what actually executed and its memory footprint (wrappers, launch depth, wrong env, etc.). |
 | **Execution and hosts (tab)**   | XALT execution path/cwd/libset and host list                                                       | Environment drift, module/library mismatches, and host-level forensics.                                                                                       |
 | **Device data (tab)**           | Device type names and recorded performance events, with links to type-detail pages                  | Discover collected counter families and drill into per-type analysis.                                                                                          |
 
 
 ### 4.1 Device data table (job page)
 
-Lists each monitor **type** name present for the job (for example `host_cpu`, `host_mem`, `nvidia_gpu`, `host_ib`, `llite`, and hardware counter families) and the **event/column names** recorded. Older jobs may still show legacy names such as `cpu` or `mem` alongside or instead of canonical names. **Click the type name** to open the **type detail** page. GPU memory counters may appear as `gpu_mem_util`, `gpu_mem_used_mb`, or legacy `mem_util` depending on when the job ran.
+The **Type Name** column lists each monitor **type** present for the job (for example `host_cpu`, `host_mem`, `nvidia_gpu`, `host_ib`, `lustre_llite`, and hardware counter families) and the **Recorded Performance Events** column lists the event names recorded. Jobs recorded by older monitors list legacy type names such as `cpu` or `mem` alongside or instead of canonical names. **Click the type name** to open the **type detail** page. GPU memory counters appear as `gpu_mem_util` and `gpu_mem_used_mb`; jobs recorded by older monitors show the legacy name `mem_util`.
 
 ### 4.2 Type detail page
 
-- **Plot**: Rates aggregated over devices for that type (Bokeh).
-- **Table** (“Counts aggregated…”): Time-bucketed means across hosts/devices for each column—useful when you want **numeric export-style** inspection without hovering the plot.
+- **Plot** ("Rates Aggregated over devices"): Rates aggregated over devices for that type.
+- **Table** ("Counts Aggregated over devices and hosts"): Means across hosts/devices for each event at each time offset from the first sample-useful when you want **numeric export-style** inspection without hovering the plot.
 
 ### 4.3 Host plot
 
@@ -111,7 +110,7 @@ Lists each monitor **type** name present for the job (for example `host_cpu`, `h
 
 This section lists the metrics shown in the Job detail **Metrics** tab and how to interpret them.
 
-On the page, rows are grouped under source subsections in fixed order **CPU → GPU → File System → Network → Misc**. Memory and NUMA metrics appear under **CPU**. Fabric metrics (InfiniBand, Omni-Path, Ethernet, LNET) appear under **Network**, which stays visible even when no network rows exist. GPU, File System, and Misc headings appear only when that section has at least one row. Within each subsection, order follows the API catalog (valued metrics before insufficient / not-computed).
+On the page, rows are grouped under source subsections in fixed order **CPU -> GPU -> File System -> Network -> Misc**. Memory and NUMA metrics appear under **CPU**. Fabric metrics (InfiniBand, Omni-Path, Ethernet, LNET) appear under **Network**, which stays visible even when no network rows exist. CPU, GPU, File System, and Misc headings appear only when that section has at least one row. Within each subsection, metrics with a value come first; metrics without a value sit in the default-collapsed **Metrics not computed** table at the bottom of that subsection.
 
 **Why a metric has no value.** A row without a value says **Data not available.** unless the page can tell you something you can act on. Two explanations are shown to everyone:
 
@@ -123,9 +122,9 @@ Other causes (a read that failed, counters busy with another tool, a monitor upd
 | Metric key | Short label | What it summarizes | Diagnostic / performance interpretation |
 | ---------- | ----------- | ------------------ | --------------------------------------- |
 | `avg_blockbw` | Average local block-device throughput | Mean local block-device throughput | High values indicate local scratch/checkpoint pressure; unexpected nonzero can reveal spill to local disk. |
-| `avg_cpuusage` | Average CPU cores in use | Job-total busy cores (sum of per-host means from user/system/nice); compare with allocated `ncores`. Rows from older pipelines may still be mean-per-host until metrics recompute. | Low vs allocated cores suggests under-subscription, waiting, serialization, or I/O/network stalls. |
-| `avg_sharedfs_iops` | Average shared filesystem operation rate | Mean shared filesystem metadata/op rate (Lustre + NFS + BeeGFS summed when present). Insufficient Data here is a coverage gate, not “no FSIO”. | High with low MB/s points to small-file metadata bottlenecks. |
-| `avg_sharedfs_bw` | Average shared filesystem read+write bandwidth | Mean shared filesystem bandwidth (Lustre + NFS + BeeGFS summed when present). Insufficient Data here is a coverage gate, not “no FSIO”. | Sustained high values indicate file I/O-heavy phases; correlate with runtime spikes/checkpoint windows. |
+| `avg_cpuusage` | Average CPU cores in use | Job-total busy cores (sum of per-host means from user/system/nice); compare with allocated `ncores`. Jobs whose metrics an older pipeline computed and that have not been recomputed show the mean per host instead. | Low vs allocated cores suggests under-subscription, waiting, serialization, or I/O/network stalls. |
+| `avg_sharedfs_iops` | Average shared filesystem operation rate | Mean shared filesystem metadata/op rate (Lustre + NFS + BeeGFS summed when present). | High with low MB/s points to small-file metadata bottlenecks. |
+| `avg_sharedfs_bw` | Average shared filesystem read+write bandwidth | Mean shared filesystem bandwidth (Lustre + NFS + BeeGFS summed when present). | Sustained high values indicate file I/O-heavy phases; correlate with runtime spikes/checkpoint windows. |
 | `avg_ibbw` | Average high-speed fabric bandwidth | Mean InfiniBand/fabric byte throughput | High values with modest FLOP rate imply communication-heavy behavior<sup>[15](#ref-15)</sup>. |
 | `avg_fabric_mb_per_gflops` | Fabric traffic per floating-point work | Fabric MB per GFLOP | Communication intensity relative to compute; rising with scale often means weaker scaling efficiency. |
 | `avg_tensor_active` | Average GPU tensor-pipe activity | Mean lumped tensor pipeline activity (prefer IMMA/HMMA/DMMA splits when present) | Low on expected tensor workloads suggests kernels not reaching tensor paths. |
@@ -137,7 +136,7 @@ Other causes (a read that failed, counters busy with another tool, a monitor upd
 | `avg_fp32_active` | Average GPU FP32 pipeline activity | Mean GPU FP32 pipeline activity | Tracks single-precision dominant GPU phases and precision-policy drift across runs. |
 | `avg_fp64_active` | Average GPU FP64 pipeline activity | Mean GPU FP64 pipeline activity | Surfaces double-precision-heavy GPU work that may reduce peak throughput. |
 | `avg_integer_active` | Average GPU integer pipeline activity | Mean GPU integer pipe busy fraction (not on A100) | High on integer-heavy kernels (hashing, sorting, graph codes). On Hopper the integer pipe is also busy, about half the time, under floating-point work (address and index math), so a busy integer pipe there does not mean the code did little FP work; on Blackwell it stays near 0 under floating-point work. |
-| `avg_compute_engine_util` | Average Intel PVC compute engine busy | Mean busy percentage of the Intel Data Center GPU Max (PVC) compute engines, highest tile per sample | On PVC nodes this is the GPU busy number to read: until the GPU firmware is updated (to PVC2_1.23423 or later) the EU activity counters (EU Array Active) read N/A ("counter not present") while this one is measured. Low values on a GPU job mean the tiles sat idle (host-side work, data movement, or too little work per launch); near 100 means the compute engines stayed busy. |
+| `avg_compute_engine_util` | Average Intel PVC compute engine busy | Mean busy percentage of the Intel Data Center GPU Max (PVC) compute engines, highest tile per sample | On PVC nodes this is the compute engine busy number. Intel PVC jobs that ran on GPU firmware older than PVC2_1.23423 may show incorrect values. Low values on a GPU job mean the tiles sat idle (host-side work, data movement, or too little work per launch); near 100 means the compute engines stayed busy. |
 | `avg_gpu_mem_bw_gbps` | Average GPU memory bandwidth | Mean GPU memory-bandwidth rate | High with moderate utilization can indicate memory-bound kernels. |
 | `avg_fabric_mb_per_avg_tensor` | Fabric bandwidth per tensor activity | Fabric MB per average tensor activity | Communication intensity normalized by tensor activity for GPU+MPI workloads. |
 | `avg_flops` | Average floating-point throughput | Mean achieved FLOP rate (AMD retired FLOPs, Intel floating-point instructions times vector width, Grace measured FLOPs) | Baseline compute throughput for CPU-side arithmetic; on AMD Zen3 / Zen4 nodes it is the only CPU FLOP number (no split by precision). |
@@ -145,15 +144,15 @@ Other causes (a read that failed, counters busy with another tool, a monitor upd
 | `avg_flops32b` | Average single-precision FLOP rate | Mean FP32 FLOP rate: Intel floating-point instructions times vector width, or AMD Zen5 FLOPs minus double-precision FLOPs | Shows how much single-precision arithmetic the code did; the Multiprecision Mix pie uses `avg_fp32_instr` instead. |
 | `avg_fp64_instr` | Average CPU FP64 instruction rate | Mean double-precision floating-point instructions per second (Ginstr/s), all vector widths, on Grace and Intel nodes; on AMD Zen5 nodes double-precision GFLOP/s, the only precision split those CPUs count | FP64 share of the CPU Multiprecision Mix pie; a large share on code meant to run in lower precision points at a precision-policy or library-choice problem. |
 | `avg_fp32_instr` | Average CPU FP32 instruction rate | Mean single-precision floating-point instructions per second (Ginstr/s), all vector widths, on Grace and Intel nodes; on AMD Zen5 nodes single-precision GFLOP/s (bfloat16 included) | FP32 share of the CPU pie; confirms single-precision paths are actually running. |
-| `avg_fp16_instr` | Average CPU FP16 instruction rate | Mean half-precision floating-point instructions per second (Ginstr/s), all vector widths; Grace nodes today | FP16 share of the CPU pie; shows whether mixed-precision CPU kernels use half precision as intended. |
+| `avg_fp16_instr` | Average CPU FP16 instruction rate | Mean half-precision floating-point instructions per second (Ginstr/s), all vector widths; counted only on Arm (aarch64) nodes such as NVIDIA Grace, since the x86 collectors do not count FP16 instructions | FP16 share of the CPU pie; shows whether mixed-precision CPU kernels use half precision as intended. |
 | `avg_arm_int8_ops` | Average CPU INT8 operation rate | Mean INT8 vector instructions per second (Ginstr/s) | INT8 share of the CPU Multiprecision Mix pie (not in `avg_flops`); useful for quantized inference on the CPU. |
 | `avg_arm_int16_ops` | Average CPU INT16 operation rate | Mean INT16 vector instructions per second (Ginstr/s) | INT16 share of the CPU Multiprecision Mix pie (not in `avg_flops`). |
-| `avg_mbw` | Average DRAM memory bandwidth | Mean DRAM bandwidth. AMD Milan jobs from monitors before per-channel DF rows read about half (only 4 of 8 channels were counted). | High with low FLOPs suggests memory-bound CPU phases. |
+| `avg_mbw` | Average DRAM memory bandwidth | Mean DRAM bandwidth. AMD Milan jobs recorded by monitors without per-channel DF rows read about half (4 of 8 channels counted). | High with low FLOPs suggests memory-bound CPU phases. |
 | `avg_freq` | Average effective CPU frequency | Mean CPU frequency | Drops may indicate power/thermal policy or throttling. |
 | `avg_ethbw` | Average Ethernet bandwidth | Mean Ethernet bandwidth | Useful for TCP/object-store workflows that bypass IB paths<sup>[16](#ref-16)</sup>. |
 | `detail_gpu_active` | GPUs with non-zero utilization | Number of active GPUs | Lower than allocated GPUs usually means mapping/launcher inefficiency. |
-| `detail_gpu_util_max` | Sum of per-GPU peak utilization | Max of per-GPU peaks, shown as value out of GPUs×100 | Peak headroom check; high max with low mean often indicates bursty kernels. |
-| `detail_gpu_util_mean` | Sum of per-GPU mean utilization | Sum of per-GPU means, shown as value out of GPUs×100 | Primary “are GPUs doing work?” scalar for the job. |
+| `detail_gpu_util_max` | Sum of per-GPU peak utilization | Max of per-GPU peaks, shown as value out of GPUs x 100 | Peak headroom check; high max with low mean often indicates bursty kernels. |
+| `detail_gpu_util_mean` | Sum of per-GPU mean utilization | Sum of per-GPU means, shown as value out of GPUs x 100 | Primary "are GPUs doing work?" scalar for the job. |
 | `detail_gpu_count` | Total GPUs on job | Total GPUs allocated | Sanity check against scheduler request and host topology. |
 | `detail_fsio_llite_read_mb` | Total Lustre client read volume | Total Lustre llite read MB | Aggregate client-side read volume for Lustre path. |
 | `detail_fsio_llite_write_mb` | Total Lustre client write volume | Total Lustre llite write MB | Aggregate client-side write volume for Lustre path. |
@@ -167,8 +166,8 @@ Other causes (a read that failed, counters busy with another tool, a monitor upd
 | `detail_fsio_beegfs_write_mb` | Total BeeGFS client write volume | Total BeeGFS write MB | Aggregate client-side write volume for BeeGFS-backed paths. |
 | `detail_fsio_beegfs_peak_mb_s` | Peak BeeGFS client read+write rate | Peak aggregate BeeGFS client MB/s | Short burst BeeGFS throughput versus job-total MB. |
 | `detail_fsio_beegfs_peak_iops` | Peak BeeGFS client metadata operation rate | Peak aggregate BeeGFS metadata IOPS | Burst metadata load (creates, stats, readdirs) on BeeGFS. |
-| `avg_gpuutil` | Job GPU utilization (aggregate) | Same aggregate as `detail_gpu_util_mean` when both exist (duplicate row hidden in UI) | Core accelerator utilization KPI; low values indicate feed/scheduling inefficiency. |
-| `job_cpu_gpu_watt_hours` | CPU+GPU watt-hours for job (CPU watt-hours when no GPUs) | ∫ estimated node power over time, summed across hosts (Wh); GPU included when present | Top of Resources when CPU power fragments exist; title omits +GPU when `gpu_count` is absent/zero; energy budget for the run. |
+| `avg_gpuutil` | Job GPU utilization (aggregate) | Same aggregate as `detail_gpu_util_mean` when both exist | Core accelerator utilization KPI; low values indicate feed/scheduling inefficiency. |
+| `job_cpu_gpu_watt_hours` | CPU+GPU watt-hours for job (CPU watt-hours when no GPUs) | Integral of estimated node power over time, summed across hosts (Wh); GPU included when present | Shown at the top of Resources as **CPU+GPU Watt Hours for Job**, or **CPU Watt Hours for Job** when the job had no GPUs; energy budget for the run and energy-to-solution comparisons across runs. |
 | `avg_packetsize` | Mean fabric packet payload size | Mean network packet size | Small average packet sizes imply metadata/collective chatter overhead. |
 | `max_fabricbw` | Peak fabric data rate | Peak fabric MB/s on the same conversion basis as `avg_ibbw` (not packet-rate scale) | Captures communication bursts that may not appear in averages. |
 | `max_lnetbw` | Peak Lustre LNET client data rate | Peak Lustre LNet bandwidth | Peak parallel file-system network pressure. |
@@ -180,8 +179,8 @@ Other causes (a read that failed, counters busy with another tool, a monitor upd
 | `max_node_power_est_w` | Peak estimated node power | Peak estimated node power: Intel/AMD RAPL plus GPU on x86; on Grace, GH200 module power, else per-socket power summed over sockets plus GPU | Useful for peak power envelope checks and cooling stress. |
 | `avg_node_power_est_w` | Mean estimated node power | Mean estimated node power | Energy-to-solution comparisons across runs/configurations. |
 | `max_gpu_link_gbps` | Peak GPU PCIe and NVLink data rate | Peak GPU link bandwidth (PCIe/NVLink aggregate path) | Host-device/device-device transfer pressure indicator. |
-| `max_gpu_clock_event_reasons` | Peak GPU clock throttling reasons | DCGM clock-event bitmask (Job Detail shows decoded flag names; API/search stay numeric) | Named flags (power cap, thermal, sync boost, …) explain why clocks were limited; correlate with power/temp traces. |
-| `mem_hwm` | Peak process resident memory (high water mark) | Prefers job-scoped cgroup memory (`host_mem_job`) when present; otherwise NUMA host memory (used − slab − file pages), in GiB | Compare with node RAM for host OOM risk<sup>[14](#ref-14)</sup>. On shared nodes this is the job’s cgroup share, not whole-node RAM. |
+| `max_gpu_clock_event_reasons` | Peak GPU clock throttling reasons | DCGM clock-event bitmask (the Metrics tab shows decoded flag names; Extended search filters on the numeric value) | Named flags (power cap, thermal, sync boost, ...) explain why clocks were limited; correlate with power/temp traces. |
+| `mem_hwm` | Peak process resident memory (high water mark) | Prefers job-scoped cgroup memory (`host_mem_job`) when present; otherwise NUMA host memory (used - slab - file pages), in GiB | Compare with node RAM for host OOM risk<sup>[14](#ref-14)</sup>. On shared nodes this is the job's cgroup share, not whole-node RAM. |
 | `node_imbalance` | CPU utilization imbalance across nodes | Node-level CPU rate imbalance | High values indicate decomposition/rank imbalance. |
 | `time_imbalance` | CPU rate imbalance over job timeline | Temporal CPU imbalance across job timeline | Flags long underutilized windows or phase imbalance over time. |
 | `flops_node_imbalance` | Floating-point rate imbalance across nodes | Node-level FLOP rate imbalance | Compute work unevenly distributed across nodes. |
@@ -190,10 +189,10 @@ Other causes (a read that failed, counters busy with another tool, a monitor upd
 | `lnet_node_imbalance` | LNET bandwidth imbalance across nodes | Node-level LNet imbalance | Uneven filesystem/network load distribution. |
 | `gpu_util_node_imbalance` | GPU utilization imbalance across nodes | Node-level GPU utilization imbalance | Multi-node training/inference skew across nodes. |
 | `tensor_node_imbalance` | Tensor-pipe activity imbalance across nodes | Node-level tensor-activity imbalance | Tensor kernels unevenly distributed across participating nodes. |
-| `vecpercent_64b` | Double-precision vector FLOP share (%) | Percent (0–100) of double-precision FLOPs done via vector widths > scalar | Low values on DP-heavy code suggest SIMD/vectorization opportunity<sup>[5](#ref-5)</sup>. |
-| `avg_vector_width_64b` | Effective vector width (double precision) | Average effective DP vector width (UI may combine with SP as one DP/SP row) | Closer to scalar indicates weak SIMD utilization in DP paths. |
-| `vecpercent_32b` | Single-precision vector FLOP share (%) | Percent (0–100) of single-precision FLOPs done via vector widths > scalar | Low values on SP-heavy code suggest vectorization opportunity<sup>[5](#ref-5)</sup>. |
-| `avg_vector_width_32b` | Effective vector width (single precision) | Average effective SP vector width (UI may combine with DP as one DP/SP row) | Low average width indicates scalar/short-vector dominated SP execution. |
+| `vecpercent_64b` | Double-precision vector FLOP share (%) | Percent (0-100) of double-precision FLOPs done via vector widths > scalar | Low values on DP-heavy code suggest SIMD/vectorization opportunity<sup>[5](#ref-5)</sup>. |
+| `avg_vector_width_64b` | Effective vector width (double precision) | Average effective DP vector width (the Metrics tab shows it with SP as one **Effective vector width (DP / SP)** row) | Closer to scalar indicates weak SIMD utilization in DP paths. |
+| `vecpercent_32b` | Single-precision vector FLOP share (%) | Percent (0-100) of single-precision FLOPs done via vector widths > scalar | Low values on SP-heavy code suggest vectorization opportunity<sup>[5](#ref-5)</sup>. |
+| `avg_vector_width_32b` | Effective vector width (single precision) | Average effective SP vector width (the Metrics tab shows it with DP as one **Effective vector width (DP / SP)** row) | Low average width indicates scalar/short-vector dominated SP execution. |
 
 ---
 
@@ -215,10 +214,10 @@ This section covers job-detail surfaces beyond scalar metrics.
 - Recommendation: use `avg_flops`<sup>[3](#ref-3)</sup>, `avg_mbw`, `avg_gpu_mem_bw_gbps`, `max_gpu_link_gbps`, and fabric ratios to validate roofline reading.
 - CPU vs GPU regime quick read:
   - **CPU roofline**: if points sit near the sloped bandwidth line, the phase is memory-bandwidth limited (data movement dominates); if points approach the flat top line, compute throughput dominates.
-  - **GPU roofline**: each coral point is one **host, GPU device, and time** sample (not a sum of all GPUs on the node). The plot title shows which bandwidth axis was used — **GPU Roofline (Memory BW)** when estimated GPU memory bandwidth samples are present (same family of signal as Summary HBM BW), otherwise **GPU Roofline (PCIe/NvLink)** from interconnect byte rates. Apply the same compute vs bandwidth logic; low arithmetic intensity<sup>[2](#ref-2)</sup> phases are often HBM- or link-limited depending on that title, while high-intensity phases can become tensor/core compute limited. Device inventory remains on the Resources panel; this plot is the per-device arithmetic intensity view.
-  - **Interconnect context**: GPU scaling limits can reflect PCIe or NVLink behavior<sup>[7](#ref-7)</sup>, not just kernel math throughput — especially when the PCIe/NvLink title is shown.
-  - **What to do with this**: memory/link-limited phases usually benefit from locality, data-layout, batching, or communication changes; compute-limited phases usually benefit from kernel efficiency, vector/tensor usage, and occupancy improvements.
-- Hovering the theoretical roof line shows **Peak performance (GFLOP/s)** and **Peak bandwidth (GB/s)** used to draw the curve (plain decimals), plus the axis units (**FLOP/byte**, **GFLOP/s**). Job-point hover includes host, device (or — when blank), AI, performance, and time. When one of CPU/GPU is still loading or unavailable, the ready chart appears first on the tab (same stacking on Multiprecision Mix).
+  - **GPU roofline**: each coral point is one **host, GPU device, and time** sample (not a sum of all GPUs on the node). The plot title shows which bandwidth axis was used - **GPU Roofline (Memory BW)** when estimated GPU memory bandwidth samples are present (same family of signal as Summary HBM BW), otherwise **GPU Roofline (PCIe/NvLink)** from interconnect byte rates. Apply the same compute vs bandwidth logic; low arithmetic intensity<sup>[2](#ref-2)</sup> phases are often HBM- or link-limited depending on that title, while high-intensity phases can become tensor/core compute limited. Device inventory is on the Resources panel; this plot is the per-device arithmetic intensity view.
+  - **Interconnect context**: GPU scaling limits can reflect PCIe or NVLink behavior<sup>[7](#ref-7)</sup>, not just kernel math throughput - especially when the PCIe/NvLink title is shown.
+  - **What to do with this**: memory/link-limited phases usually benefit from locality, data-layout, batching, or communication changes; compute-limited phases usually benefit from kernel efficiency, vector/tensor usage, and occupancy improvements<sup>[8](#ref-8)</sup>.
+- Hovering the theoretical roof line shows **Peak performance (GFLOP/s)** and **Peak bandwidth (GB/s)** used to draw the curve (plain decimals), plus the axis units (**FLOP/byte**, **GFLOP/s**). Job-point hover includes host, device (or - when blank), AI, performance, and time. When one of CPU/GPU is still loading or unavailable, the ready chart appears first on the tab (same stacking on Multiprecision Mix).
 
 ### 6.3 Multiprecision Mix tab (CPU and GPU)
 
@@ -228,32 +227,32 @@ This section covers job-detail surfaces beyond scalar metrics.
 - GPU pie: each wedge is a pipe's **busy share** (how much of the time that pipe was working), not its share of FLOPs; a pipe that is busy half the time can still do far fewer operations than another. Hover shows share of busy percent. Wedges, when positive: **Tensor IMMA (INT8/INT4)**, **Tensor HMMA (FP16/BF16/TF32/FP8)**, **Tensor DMMA (FP64)** (Hopper and Blackwell only), **Tensor (unattributed)**, **FP16**, **FP32**, **FP64** and **Integer pipe**.
   - **Tensor (unattributed)** is the tensor-core activity that no split explains: total tensor activity minus HMMA, IMMA and DMMA, shown only when splits exist and the remainder is more than a tiny amount. When no split is reported the whole tensor activity is one **Tensor** wedge instead.
   - HMMA is one counter for FP16, BF16, TF32 and FP8 tensor math, so the pie cannot tell those precisions apart and any tensor FLOP figure derived from it is an estimate.
-  - The former **Tensor DFMA (FP64)** wedge is gone: DFMA is the FP64 pipe itself (it equals FP64 on Hopper and Blackwell), so it counted FP64 work twice. FP64 work now appears as **FP64** (pipe) and **Tensor DMMA (FP64)** (tensor cores).
+  - There is no DFMA wedge: DFMA is the FP64 pipe itself (it equals FP64 on Hopper and Blackwell), so a wedge for it would count FP64 work twice. FP64 work appears as **FP64** (pipe) and **Tensor DMMA (FP64)** (tensor cores).
   - **Integer pipe** is busy under floating-point work on Hopper (address and index math, about half the time) and near 0 on Blackwell, so compare its wedge only between jobs on the same GPU generation.
-  - CPU half/bf16/tf32/fp8 appear only when the monitor emits them.
-- GPU FLOP figures on Blackwell: GB200 (Horizon) and RTX PRO 6000 (Stampede3 amd-rtx) nodes count tensor work in the GPU FLOP rates (the GPU Roofline points) from 2026-11-23 on, using tensor peaks measured on the clusters (GB200: FP16 / BF16 and FP64 tensor work; RTX PRO 6000: FP16 / BF16 only, since its FP64 matrix math does not use tensor cores). Jobs from before that monitor update counted only FP64, FP32 and FP16 pipe work and keep their lower values.
+- GPU FLOP figures on Blackwell: GB200 (Horizon) and RTX PRO 6000 (Stampede3 amd-rtx) nodes count tensor work in the GPU FLOP rates (the GPU Roofline points), using tensor peaks measured on the clusters (GB200: FP16 / BF16 and FP64 tensor work; RTX PRO 6000: FP16 / BF16 only, since its FP64 matrix math does not use tensor cores).
 - Width behavior: each pie includes the precision widths that have usable positive metrics for that job/architecture; missing widths are omitted rather than treated as errors.
 - Recommendation: when model/code changes precision policy, compare this tab first, then check throughput/utilization deltas.
 
 ### 6.4 Resources panel (FSIO + GPU summary + logs)
 
 - Diagnostic use: rapid verification of I/O volume, burst peaks, and GPU occupancy before deep plotting. Lustre, NFS, and BeeGFS resource rows can all appear when each client has data for the job.
-- Recommendation: if FS totals or **Peak MB/s** / **Peak IOPS** are high, check `FS MB/s`, `FS IOPS`, `MDS peak`, and LNET metrics for bottleneck type; this is usually an I/O bottleneck triage path<sup>[11](#ref-11)</sup>. GPU statistics sit above the log buttons so you scan filesystem and accelerator context together before opening logs.
+- Recommendation: if FS totals or **Peak MB/s** / **Peak IOPS** are high, check `avg_sharedfs_bw`, `avg_sharedfs_iops`, `max_mds`, and `max_lnetbw` for bottleneck type; this is usually an I/O bottleneck triage path<sup>[11](#ref-11)</sup>. GPU statistics sit above the log buttons so you scan filesystem and accelerator context together before opening logs.
 
 ### 6.5 Execution and hosts tab
 
 - Diagnostic use: detect environment drift (wrong module/library/container path) and host-specific anomalies.
-- Recommendation: for regressions with “same script,” verify this tab before tuning code.
+- Recommendation: for regressions with "same script," verify this tab before tuning code.
 
 ### 6.6 Device data tab
 
 - Diagnostic use: confirms which counter families/events were actually collected for this job.
 - Recommendation: use this tab to confirm expected telemetry families when interpreting plots/metrics.
-- Note: large jobs with many samples may take a long time to load; report timeouts to support.
 
 ---
 
 ## 7. Failure-mode checklist
+
+Metric names below are the keys from the section 5 catalog; the Metrics tab shows each one under its short label.
 
 ### 7.1 Job did not run intended workload
 
@@ -262,37 +261,37 @@ This section covers job-detail surfaces beyond scalar metrics.
 
 ### 7.2 Timeout/preemption risk
 
-- Signals: runtime near requested time, abrupt trace cutoff.
+- Signals: runtime near the time limit you requested, abrupt trace cutoff.
 - Check: tail-end spikes in FS/fabric/GPU activity; adjust timelimit or checkpoint cadence<sup>[13](#ref-13)</sup>.
 
 ### 7.3 Host memory pressure / OOM risk
 
-- Signals: high `mem_hwm`, elevated `NUMA rem`, imbalance in `DRAM imbal`.
+- Signals: high `mem_hwm`, elevated `max_numa_remote_rate`, imbalance in `dram_bw_node_imbalance`.
 - Check: first-touch policy, rank/thread placement, per-rank memory growth.
 
 ### 7.4 GPU memory or accelerator under-use
 
-- Signals: low `GPU %`, low `Tensor %`, low `GPU mean %` with full `GPU count`.
+- Signals: low `avg_gpuutil`, low `avg_tensor_active`, low `detail_gpu_util_mean` with full `detail_gpu_count`.
 - Check: input staging bottlenecks, wrong device mapping, too-small kernels, launch configuration.
 
 ### 7.5 Communication-dominated scaling
 
-- Signals: high `IB MB/s`, `Fab peak`, `MB/GFLOP`, `MB/tensor`, packet-rate peaks<sup>[15](#ref-15)</sup>.
-- Check: decomposition, collective strategy, message size (`Pkt size`), rank mapping.
+- Signals: high `avg_ibbw`, `max_fabricbw`, `avg_fabric_mb_per_gflops`, `avg_fabric_mb_per_avg_tensor`, `max_packetrate` peaks<sup>[15](#ref-15)</sup>.
+- Check: decomposition, collective strategy, message size (`avg_packetsize`), rank mapping.
 
 ### 7.6 Filesystem/metadata bottlenecks
 
-- Signals: high `FS IOPS`, `MDS peak`, `LNET peak`, large FS totals.
+- Signals: high `avg_sharedfs_iops`, `max_mds`, `max_lnetbw`, large Shared File Systems totals on Resources.
 - Check: file-per-rank patterns, small sync writes, metadata-heavy loops.
 
 ### 7.7 Throttling/power constraints
 
-- Signals: nonzero `GPU clk`, high `GPU W max`, capped `Node W max` with performance dips.
+- Signals: named flags in `max_gpu_clock_event_reasons`, high `max_gpu_power`, capped `max_node_power_est_w` with performance dips.
 - Check: power caps, thermal conditions, cluster policy limits.
 
 ### 7.8 Cross-node imbalance / stragglers
 
-- Signals: elevated `CPU imbal`, `FLOP imbal`, `GPU imbal`, `Tensor imbal`, `Fab imbal`, `LNET imbal`, `DRAM imbal`.
+- Signals: elevated `node_imbalance`, `flops_node_imbalance`, `gpu_util_node_imbalance`, `tensor_node_imbalance`, `fabric_node_imbalance`, `lnet_node_imbalance`, `dram_bw_node_imbalance`.
 - Check: domain decomposition, skewed rank placement, node health differences.
 
 ### 7.9 Data continuity checks
@@ -304,13 +303,13 @@ This section covers job-detail surfaces beyond scalar metrics.
 
 ---
 
-## 8. Appendix — concept guide with external references
+## 8. Appendix - concept guide with external references
 
 Use these numbered references when you want background on terms used throughout sections 1-7.
 
 | Ref | Concept | Why it matters for this guide | Reference |
 | --- | ------- | ----------------------------- | --------- |
-| <span id="ref-1">[1]</span> | Roofline model | Explains the core “bandwidth-limited vs compute-limited” interpretation used in the Roofline tab. | [Roofline model (Wikipedia)](https://en.wikipedia.org/wiki/Roofline_model) |
+| <span id="ref-1">[1]</span> | Roofline model | Explains the core "bandwidth-limited vs compute-limited" interpretation used in the Roofline tab. | [Roofline model (Wikipedia)](https://en.wikipedia.org/wiki/Roofline_model) |
 | <span id="ref-2">[2]</span> | Arithmetic intensity | Defines how much math is done per byte moved; key quantity that places points on a roofline plot. | [Roofline model - Arithmetic Intensity section (Wikipedia)](https://en.wikipedia.org/wiki/Roofline_model#Arithmetic_intensity) |
 | <span id="ref-3">[3]</span> | FLOP/s | Basis for throughput metrics and the vertical axis intuition in CPU/GPU roofline analysis. | [Floating-point operations per second (Wikipedia)](https://en.wikipedia.org/wiki/Floating_point_operations_per_second) |
 | <span id="ref-4">[4]</span> | NUMA | Helps interpret locality penalties and memory-placement effects behind DRAM/imbalance signals. | [Non-uniform memory access (Wikipedia)](https://en.wikipedia.org/wiki/Non-uniform_memory_access) |
@@ -333,52 +332,3 @@ Use these numbered references when you want background on terms used throughout 
 ## 9. Related references in this repository
 
 - **Counter and variable catalog:** `docs/MONITOR_VARIABLES.md`
-
----
-
-## Document history
-
-
-| Date       | Change                                                                                  |
-| ---------- | --------------------------------------------------------------------------------------- |
-| 2026-04-03 | Initial researcher-facing guide aligned with current job detail UI and metrics catalog. |
-| 2026-05-06 | Reorganized the guide for usability (index-first navigation and clearer section flow), aligned job-detail surfaces/metrics with current UI labels, and added paper-style concept citations with an appendix reference catalog for non-CS/HPC readers. |
-| 2026-05-07 | Job Detail summary hardware error overlay, screen-space Bokeh help on Job Detail plots, FSIO peak columns and catalog metrics, Resources layout (GPU summary above log links), expanded-search help note. |
-| 2026-05-07 | Added GPU precision activity catalog entries (`avg_fp16_active`, `avg_fp32_active`, `avg_fp64_active`) and documented that Multiprecision Mix pies render whatever precision widths are available per job/architecture. |
-| 2026-06-04 | Documented unified InfiniBand collector typename `host_ib` (replaces separate `ib_ext` / switch types in schema examples). |
-| 2026-06-05 | Job list filter summary, empty-result UX, expanded-search AND/end-time semantics, navbar Find Job, job-detail breadcrumbs, shareable `?tab=` analysis tabs, partial-load retry behavior, canonical vs legacy device type names in Device data. |
-| 2026-06-05 | Job detail Metrics tab short labels expanded to describe what is measured; units appear only in the bracket suffix beside each row (no unit tokens in label text). |
-| 2026-07-20 | Summary plots GPU tensors: IMMA/HMMA/DFMA split time series preferred over lumped tensor-pipe; lumped fallback when splits absent. |
-| 2026-07-19 | Dual NFS+Lustre Resources/FSIO; Multiprecision Mix busy-FLOPS-only (CPU FP_ARITH shares, GPU tensor splits + hover %); `avg_cpuusage` job-total busy cores vs `ncores`; fabric peak on same basis as `avg_ibbw`; `avg_sharedfs_*` Insufficient = coverage gate. |
-| 2026-07-23 | Job Detail: Grace→CPU labels; GPU util out of GPUs×100; zero-mean activity ≠ missing; CPU+GPU watt-hours atop Resources; Processes multi-column; combined DP/SP vector width; Summary axis help + shorter labels; Multiprecision pie title/clip. |
-| 2026-07-24 | Residuals: pie legend below frame; GPU-link Summary clamp; continuous Summary lines; avg_cpuusage scaled to allocated ncores; TypeDetail 2-col + heading ?; Summary SPA help strip; Processes grouped by name with averages. |
-| 2026-07-30 | Metrics tab: source subsections CPU → GPU → File System → Network → Misc; Memory/NUMA under CPU; always-show Network; hide empty GPU/FS/Misc. |
-| 2026-07-31 | Resources GPU inventory: one row per device when ingest stores `dev`; legacy empty-`dev` jobs show node-aggregate note (not “per GPU”). |
-| 2026-07-31 | Resources/Metrics Card chrome: Watt hours → GPU Information (inventory collapsed) → Shared File Systems → logs; Metrics subsections in Cards. |
-| 2026-08-14 | BeeGFS added to Resources Shared File Systems / `detail_fsio_beegfs_*` / Summary BeeGFS panels; `avg_sharedfs_*` and `max_mds` include BeeGFS when present. |
-| 2026-08-06 | Processes tab columns: Peak VM, HWM, Stack, Text, Libs, Threads (dropped RSS/Size from visible set). |
-| 2026-08-07 | Processes Peak VM/HWM (and Stack/Text/Libs) documented as job-level high water via ingest GREATEST across samples. |
-| 2026-08-07 | Processes tab no longer shows UID (API may still include `uid`; display-only hide). |
-| 2026-08-08 | Processes Peak VM/HWM/Stack/Text/Libs displayed in MB (API kB ÷ 1024); Threads unchanged. |
-| 2026-08-05 | GPU Roofline prefers estimated memory bandwidth when present (title Memory BW); otherwise PCIe/NvLink (or Xe Link) with matching title and peak roof. |
-| 2026-08-05 | Job Detail **Print** button: prepares overview/Resources/Metrics/Summary/Roofline/Multiprecision Mix for the browser print dialog (Save as PDF). |
-| 2026-08-07 | Job Detail plot tabs (Summary, Roofline, Multiprecision Mix) wait for Performance Data **Metrics & Plots available**; plot-tab messages **Plots not yet completed.** / **No plots available for this job**. |
-| 2026-08-12 | Roofline theoretical-line hover shows axis units (FLOP/byte, GFLOP/s); Roofline and Multiprecision Mix stack ready charts above loading/unavailable. |
-| 2026-08-12 | Summary hardware errors: one per-host subplot per non-zero IB/Ethernet/OPA error counter (no job-wide legend overlay); blue `?` on each subplot plus Hardware errors strip help. |
-| 2026-08-13 | Metrics tab: each CPU/GPU/File System/Network/Misc section keeps valued rows visible and moves non-value rows into a default-collapsed **Metrics not computed** table. |
-| 2026-08-07 | Job Detail: removed page h1 and **Full scheduling record**; **Print** sits beside breadcrumbs. `mem_hwm` reads canonical `host_mem` snake_case events (KB→GiB). |
-| 2026-09-08 | Job list: after **Project**, columns are **nodes**, **cores**, then **runtime** as **HH:MM:SS** (not seconds). |
-| 2026-10-19 | Shared-node jobs: metrics/plots job-scoped; `mem_hwm`/Summary mem prefer `host_mem_job`; red host-wide `?` footer when shared. |
-| 2026-10-20 | Shared-node `?` footer: CPU/GPU/job memory job-scoped when affinity/cgroup present; residual counters may still be host-wide. |
-| 2026-11-13 | CPU Multiprecision Mix pie shows the share of FP64 / FP32 / FP16 / INT16 / INT8 instructions (new `avg_fp64_instr`, `avg_fp32_instr`, `avg_fp16_instr`; INT rates now in Ginstr/s); `avg_flops64b` / `avg_flops32b` stay for older jobs only. Idle jobs say the telemetry is present but idle instead of missing. From monitor 3.1 on, Grace instruction and cycle rates are higher than before for the same work, because earlier releases under-counted them: about 3.3× on GB200 nodes (measured). Other Grace nodes have not been measured and may also rise, so compare jobs from before and after the upgrade with care. |
-| 2026-11-16 | Metrics tab no-data rows: everyone sees "collector not found on this node's monitor" and "counter not present (n/N hosts)"; other missing-value causes stay **Data not available.**, and short monitor read gaps no longer lower or zero a value. |
-| 2026-11-05 | Node power estimate on Grace nodes reads per-socket power meters (`host_power_socket`): GH200 module power when present, otherwise whole-socket power summed over sockets plus GPU power (socket power alone on GPU-less Grace/Grace and Vera nodes). Horizon GB200 CPU power read 0 before this monitor release, and GB200 and Grace/Grace estimates are now higher by the SoC and memory share. The retired per-CPU / per-GPU power copies only appear in older jobs, which keep the old estimate. |
-| 2026-11-17 | Summary, roofline and Type Detail plots: a sample where one summed counter could not be read is left out instead of drawn as a partial value; short gaps inside a host's line are filled by straight-line interpolation (edge and long gaps stay empty); peak values use measured samples only; `avg_cpuusage` skips samples where a busy or idle counter could not be read. |
-| 2026-11-18 | x86 nodes (monitor 3.1 direct counters): Intel jobs get `avg_flops64b` / `avg_flops32b`, `avg_fp64_instr` / `avg_fp32_instr` and a CPU Multiprecision Mix pie from floating-point instruction counts; AMD Zen5 jobs get the same metrics from FLOPs by precision; AMD Zen3 / Zen4 jobs get `avg_flops` but no CPU pie. SPR Max HBM bandwidth now uses 32 bytes per HBM access, so it reads about half of what older jobs showed. |
-| 2026-11-18 | GPU Multiprecision Mix: wedges are pipe busy shares, not FLOP shares; the Tensor DFMA wedge is removed because it duplicated FP64; new **Integer pipe** (`avg_integer_active`, busy under FP work on Hopper, near 0 on Blackwell) and **Tensor DMMA (FP64)** (`avg_tensor_dmma_active`, Hopper / Blackwell) wedges; a **Tensor (unattributed)** wedge shows tensor activity no split explains; HMMA is relabelled FP16/BF16/TF32/FP8 (tensor FLOPs are estimates); `avg_tensor_dfma_active` is relabelled FP64 FMA pipe. |
-| 2026-11-18 | New `avg_compute_engine_util` (Average Intel PVC compute engine busy) for Intel PVC GPU jobs: the working GPU busy measure on those nodes, because the EU activity counters (EU Array Active) read N/A ("counter not present") until the GPU firmware reaches PVC2_1.23423. The GPU Multiprecision Mix help text now names every wedge (IMMA, HMMA, DMMA, unattributed tensor, FP16 / FP32 / FP64, Integer pipe) and the Summary FP64 FMA line is described as the FP64 pipe, not a tensor pipe. |
-| 2026-11-18 | AMD memory bandwidth (`avg_mbw`, the CPU roofline bandwidth axis and the Summary memory bandwidth line) now counts 64 B per memory-controller transfer. Earlier values counted one byte per transfer, so AMD bandwidth reads 64x higher than before for every job, old and new, once the job is recomputed. Older AMD nodes that report bandwidth under the historical counter names are unchanged. |
-| 2026-11-18 | GPU FLOP rates (GPU Roofline points) now use each GPU model's own peak speeds. On GB200 (Horizon) and RTX PRO 6000 (Stampede3 amd-rtx), tensor work is not yet counted, so GPU FLOP numbers there cover only FP64 / FP32 / FP16 pipe work and AI or training jobs read low. Temporary until the tensor peaks are measured on those clusters. |
-| 2026-11-21 | InfiniBand `avg_packetsize` and `max_packetrate` now use the operating system's own InfiniBand packet counters. Packet sizes read 4x higher than before (earlier values counted the payload in 4-byte units as bytes), and on Horizon packet sizes and rates no longer read low (the port counters they used are reset by fabric management). Older jobs are recomputed. |
-| 2026-11-23 | GPU FLOP rates on RTX PRO 6000 (Stampede3 amd-rtx) now count FP16 / BF16 tensor work, using a tensor peak measured on the cluster, so AI and training jobs there read much higher than before (up to several hundred times for tensor-bound work). Jobs from before the monitor update keep their old, lower values. |
-| 2026-11-23 | GPU FLOP rates on GB200 (Horizon) now count FP16 / BF16 and FP64 tensor work, using tensor peaks measured on Horizon, so AI, training and FP64 matrix (DGEMM) jobs there read much higher than before. Jobs from before the monitor update keep their old, lower values. |

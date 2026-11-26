@@ -43,7 +43,7 @@ When adding a new tunable whose example value is the registry default, add it **
 | Section | Put keys here when… | Examples |
 |---------|---------------------|----------|
 | **`[DEFAULT]`** | Install/site identity; PostgreSQL connection; **`total_cores`** | `machine`, `server`, `secret_key`, `engine_name`, `dbname`, `host`, `port`, `total_cores` |
-| **`[PORTAL]`** | Gunicorn, Django web stack, CORS, API thread pools, Django session PG timeouts — **not** ingest/archive/metrics | `gunicorn_workers`, `summary_aggregate_prefetch_max_threads`, `db_conn_max_age`, `cors_origin_scheme` |
+| **`[PORTAL]`** | Gunicorn, Django web stack, CORS, API thread pools, Django session PG timeouts — **not** ingest/archive/metrics | `gunicorn_workers`, `parallel_db_prefetch_max`, `db_conn_max_age`, `cors_origin_scheme` |
 | **`[PIPELINE]`** | `sync_timedb`, archive/seal, `update_metrics`, `sync_acct`, `listend` paths and tuning | `sync_ingest_pool_processes`, `metrics_pool_processes`, `sync_*`, `metrics_*`, `archive_*`, `acct_path` |
 | **`[OAUTH2]`** | OAuth2 client/tenant URLs only | `client_id`, `authorize_url`, … |
 | **`[RMQ]`** | RabbitMQ monitor ingest only | `rmq_server`, `rmq_queue` |
@@ -63,7 +63,7 @@ When adding a new tunable whose example value is the registry default, add it **
 - `sync_*`, `metrics_*`, `ingest_*` → **`[PIPELINE]`**
 - `archive_*` → **`[PIPELINE]`**
 - **`sync_pipeline_drop_page_cache`** → **`[PIPELINE]`** (default **`yes`**)
-- `gunicorn_*`, `summary_aggregate_*`, `parallel_db_*`, `api_small_*`, `db_conn_*`, `db_statement_*`, `db_idle_*`, `cors_*` → **`[PORTAL]`**
+- `gunicorn_*`, `parallel_db_*`, `api_small_*`, `db_conn_*`, `db_statement_*`, `db_idle_*`, `cors_*` → **`[PORTAL]`**
 - `xalt_*` → **`[XALT]`**; `rmq_*` → **`[RMQ]`**
 
 When ambiguous, ask the operator/product owner; do not guess.

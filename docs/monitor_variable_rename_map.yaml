@@ -240,9 +240,9 @@ events:
   integer_active: integer_active
   tensor_dmma_active: tensor_dmma_active
   # Additive identity (intel_gpu, PVC): compute engine group busy percent,
-  # max over tiles (XPU Manager). It reads real while the EU metrics
-  # (sm_active) are NOT_PRESENT below GFX firmware PVC2_1.23423; analysis
-  # avg_compute_engine_util.
+  # max over tiles (XPU Manager); analysis avg_compute_engine_util. Intel
+  # PVC jobs that ran on GPU firmware older than PVC2_1.23423 may show
+  # incorrect values.
   compute_engine_util: compute_engine_util
   rx_bytes: sw_rx_bytes
   tx_bytes: sw_tx_bytes

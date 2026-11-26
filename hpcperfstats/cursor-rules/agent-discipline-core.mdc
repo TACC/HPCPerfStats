@@ -115,6 +115,10 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `services-conf/resolve_proxy_ssl_certs_dir.py`, `docker-compose.yaml.example` (TLS settings mount) | `no-production-env-for-ini-config.mdc`, `immutable-image-ini-policy.mdc`, `docker-compose-settings-example-sync.mdc` |
 | `HPCPerfStats/README.md` or workspace-root `README.md` only (not other `README.md` paths); `docs/upgrade.md` | `readme-installation-sync.mdc`, `compose-operator-terminal-commands.mdc`, `minimal-compose-install-footprint.mdc`, `no-production-env-for-ini-config.mdc` |
 | `docs/TESTING.md`, test runners | `testing-doc-sync.mdc`, `compose-operator-terminal-commands.mdc` |
+| `README.md`, `docs/using-the-website-as-a-researcher.md`, `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`, `docs/design-document.md`, `docs/TESTING.md`, `hpcperfstats/tests/test_core_docs_drift_guard.py` | `docs-current-state-only.mdc` (current behaviour only; no changelog / old-version text) |
+| `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`, `conf_parser.py`, `hpcperfstats.ini.example`, `services-conf/django_startup.sh`, `services-conf/supervisord.conf`, `settings.py`, `docker-compose.defaults.yaml`, `docker-compose.yaml.example` | `deploy-concurrency-doc-sync.mdc` |
+| `docs/design-document.md`, `docker-compose.defaults.yaml`, `docker-compose.yaml.example`, `docker-compose.pg18-primary.yaml`, `services-conf/*.Dockerfile`, `services-conf/supervisord.conf`, `pyproject.toml`, `hpcperfstats/site/frontend/package.json` | `design-document-sync.mdc` |
+| `docs/using-the-website-as-a-researcher.md`, SPA views `JobDetail`/`JobList`/`Search`/`HostDetail`/`TypeDetail`, `JobListHeaderFilters`/`LayoutPub`/`NavLink`, `extended-search-*.ts`, `site/lib/machine/job_list_*.py`, `job_detail_artifacts.py`, `job_plot_artifacts.py` | `researcher-job-detail-doc-sync.mdc` |
 | `cursor-hooks/*`, `hpcperfstats/tests/test_cursor_hooks.py` | `testing-best-practices.mdc` |
 
 ### Cursor rules (domain rule authoring)

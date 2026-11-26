@@ -42,7 +42,7 @@ export const MONITOR_EVENT_METADATA = {
   bytes_used: { description: "Tmpfs: bytes used on the tmpfs mount." },
   clocks_event_reasons: { description: "GPU clock throttle reasons bitmask (DCGM on `nvidia_gpu`; same KEY on `amd_gpu` when populated)." },
   collisions: { description: "Ethernet collision counter (half-duplex legacy)." },
-  compute_engine_util: { description: "Compute engine group busy percent on `intel_gpu` (PVC, XPU Manager, max over tiles); the working PVC busy signal while EU Array Active (`sm_active`) reads not present below GFX firmware PVC2_1.23423." },
+  compute_engine_util: { description: "Compute engine group busy percent on `intel_gpu` (PVC, XPU Manager, max over tiles). Intel PVC jobs that ran on GPU firmware older than PVC2_1.23423 may show incorrect values." },
   core_energy: { description: "AMD amd_x86_rapl core energy, a running total in mJ modulo 2^32 (its rate is watts)." },
   counter_select: { description: "IB MAD extended counter query selector field (retired; historical data only)." },
   cpu_clock_est_cycles: { description: "Active cycles (same as aperf under the Grace util-scaled fail-soft estimate); measured core cycles replace it when the cycle counter is open (monitor 3.1, 64-bit)." },

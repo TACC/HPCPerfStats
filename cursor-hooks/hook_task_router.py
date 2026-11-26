@@ -698,6 +698,76 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     ],
   },
   {
+    "id": "core_docs_current_state",
+    "patterns": [
+      "HPCPerfStats/README.md",
+      "docs/using-the-website-as-a-researcher.md",
+      "docs/DEPLOY_CONCURRENCY_AND_NUMA.md",
+      "docs/design-document.md",
+      "docs/TESTING.md",
+      "hpcperfstats/tests/test_core_docs_drift_guard.py",
+    ],
+    "exact_paths": [
+      "README.md",
+    ],
+    "rules": [
+      "docs-current-state-only.mdc",
+    ],
+  },
+  {
+    "id": "deploy_concurrency_doc",
+    "patterns": [
+      "docs/DEPLOY_CONCURRENCY_AND_NUMA.md",
+      "hpcperfstats/dbload/lib/conf_parser.py",
+      "hpcperfstats.ini.example",
+      "services-conf/django_startup.sh",
+      "services-conf/supervisord.conf",
+      "hpcperfstats/site/hpcperfstats_site/settings.py",
+      "docker-compose.defaults.yaml",
+      "docker-compose.yaml.example",
+    ],
+    "rules": [
+      "deploy-concurrency-doc-sync.mdc",
+    ],
+  },
+  {
+    "id": "design_document",
+    "patterns": [
+      "docs/design-document.md",
+      "docker-compose.defaults.yaml",
+      "docker-compose.yaml.example",
+      "docker-compose.pg18-primary.yaml",
+      "services-conf/*.Dockerfile",
+      "services-conf/supervisord.conf",
+      "pyproject.toml",
+      "hpcperfstats/site/frontend/package.json",
+    ],
+    "rules": [
+      "design-document-sync.mdc",
+    ],
+  },
+  {
+    "id": "researcher_website_guide",
+    "patterns": [
+      "docs/using-the-website-as-a-researcher.md",
+      "hpcperfstats/site/frontend/src/views/JobDetail.tsx",
+      "hpcperfstats/site/frontend/src/views/JobList.tsx",
+      "hpcperfstats/site/frontend/src/views/Search.tsx",
+      "hpcperfstats/site/frontend/src/views/HostDetail.tsx",
+      "hpcperfstats/site/frontend/src/views/TypeDetail.tsx",
+      "hpcperfstats/site/frontend/src/components/JobListHeaderFilters.tsx",
+      "hpcperfstats/site/frontend/src/components/LayoutPub.tsx",
+      "hpcperfstats/site/frontend/src/components/NavLink.tsx",
+      "hpcperfstats/site/frontend/src/utils/extended-search-*.ts",
+      "hpcperfstats/site/lib/machine/job_list_*.py",
+      "hpcperfstats/site/lib/machine/job_detail_artifacts.py",
+      "hpcperfstats/site/lib/machine/job_plot_artifacts.py",
+    ],
+    "rules": [
+      "researcher-job-detail-doc-sync.mdc",
+    ],
+  },
+  {
     "id": "cursor_hooks",
     "patterns": [
       "cursor-hooks/*",

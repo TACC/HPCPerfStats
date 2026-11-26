@@ -20,7 +20,7 @@ Use this checklist when touching the listed areas. If any row applies, extend or
 
 | Category | Examples in repo | README impact |
 |----------|------------------|---------------|
-| **Compose services and wiring** | `docker-compose.yaml`, `docker-compose.yaml` (+ `.example`), service names, `depends_on`, networks, images, commands, env defaults | Document how to start/stop, what runs where, new/changed services, ports published to the host. Prefer **`docker compose exec <service>`** over hardcoded `container_name` strings; when `name:` / project naming changes, audit **Useful commands** tables. Settings **`include:`** base compose; use **`-f docker-compose.yaml`** (see **`podman_runtime.sh`**) — no `-f docker-compose.app.yaml`. |
+| **Compose services and wiring** | `docker-compose.yaml`, `docker-compose.yaml` (+ `.example`), service names, `depends_on`, networks, images, commands, env defaults | Document how to start/stop, what runs where, new/changed services, ports published to the host. Write commands as **`podman-compose -p hpcperfstats exec <service>`** (same form as `compose-operator-terminal-commands.mdc` item 7), not hardcoded `container_name` strings or `docker compose`; when `name:` / project naming changes, audit **Useful commands** tables. The site **`docker-compose.yaml`** **`include:`**s **`docker-compose.defaults.yaml`** and is found by default file discovery, so pass no **`-f`** (never `-f docker-compose.app.yaml`). |
 | **Host-visible ports and firewall** | Published ports (`514`, `80`/`443`, DB/Valkey/RMQ only-on-internal-network vs exposed) | Call out inbound firewall / syslog forwarder targets; avoid implying ports that no longer exist |
 | **Volumes and data paths** | Bind mounts under `/data/hpcperfstats_*`, named volumes, `/hpcperfstats/` layout, log/accounting/archive dirs, `ssh_keys` and **`proxy_ssl_source`** devices | Fresh-host directory creation; **existing-volume** moves go in **`docs/upgrade.md`** |
 | **Container resource limits** | `shm_size` for Postgres, `mem_limit`, Valkey `maxmemory`, sysctl overrides in compose | Operator prerequisites or tuning guidance when defaults change (e.g. shared memory, Valkey memory cap; pool sizing cross-reference **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** if README points there) |
@@ -35,8 +35,9 @@ Use this checklist when touching the listed areas. If any row applies, extend or
 1. Identify whether the change touches **operator setup**, **first-boot**, **upgrade**, or **host prerequisites**.
 2. If it is **fresh install / first-boot**, update **`HPCPerfStats/README.md` Installation** so a reader gets correct paths, ports, INI keys, and commands—including **“why”** when a sysctl or volume requirement is non-obvious.
 3. If it is an **existing-stack upgrade** (rebuild, migrate, recreate, legacy layout), update **`docs/upgrade.md`** and keep a one-line pointer from README Installation / Useful commands — do not expand Installation with upgrade procedures.
-4. Prefer **copy-paste-ready** shell snippets and keep numbering/sections consistent with the current README structure.
-5. If behavior is documented in **`docs/*.md`** in detail, README may stay short with a **link**—but README must still list the prerequisite or step operators cannot skip on a **blank** host.
+4. Write README content per **`docs-current-state-only.mdc`**: current behaviour only, no changelog, "previously"/"no longer" text or old defaults (upgrade history belongs in **`docs/upgrade.md`**).
+5. Prefer **copy-paste-ready** shell snippets and keep numbering/sections consistent with the current README structure.
+6. If behavior is documented in **`docs/*.md`** in detail, README may stay short with a **link**—but README must still list the prerequisite or step operators cannot skip on a **blank** host.
 
 ## When README-only edits suffice
 

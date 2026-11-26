@@ -25,6 +25,7 @@ When test behavior, test scope, or test execution workflow changes, update
 - When **`testing-best-practices.mdc`** changes, sync the **Best practices** section in `docs/TESTING.md` in the same task.
 - Keep examples copy-paste ready and consistent with current scripts/config.
 - Include both quick-start commands and any specialized runners when applicable.
+- Describe the current test setup only, per `docs-current-state-only.mdc`: no document history table, no notes on removed tests or old flags, no "previously"/"now" phrasing.
 
 ## Verification
 - Confirm documented commands/paths match current repository files.

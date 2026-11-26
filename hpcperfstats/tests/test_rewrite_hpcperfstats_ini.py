@@ -520,14 +520,6 @@ _DEFAULT_PORTAL_KEYS = [
   (
     "DEFAULT",
     "PORTAL",
-    "summary_aggregate_prefetch_max_threads",
-    "3",
-    "get_summary_aggregate_prefetch_max_threads",
-    3,
-  ),
-  (
-    "DEFAULT",
-    "PORTAL",
     "parallel_db_prefetch_max",
     "6",
     "get_parallel_db_prefetch_max",

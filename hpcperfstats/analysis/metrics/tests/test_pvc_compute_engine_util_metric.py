@@ -226,9 +226,11 @@ def test_summary_dfma_prose_is_the_fp64_fma_pipe_in_both_copies():
   assert _ts_entry(ts, "nv_tensor_dfma_active") == (desc, use)
 
 
-def test_spa_metadata_describes_pvc_firmware_caveat():
-  """Derived-metric tooltip names the firmware floor for the EU metrics."""
+def test_spa_metadata_notes_pvc_firmware_cutoff_for_older_jobs():
+  """Derived-metric tooltip names the firmware cutoff for older PVC jobs."""
   ts = (_UTILS / "variableMetadata.ts").read_text(encoding="utf-8")
   desc, use = _ts_entry(ts, _METRIC)
-  assert "PVC2_1.23423" in desc
+  assert "compute engine busy" in desc
+  assert "older than PVC2_1.23423" in desc
+  assert "until the firmware is updated" not in desc
   assert use

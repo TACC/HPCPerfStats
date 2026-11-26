@@ -336,8 +336,8 @@ DESC: dict[str, str] = {
     "on Blackwell it stays near 0; absent on A100."
   ),
   "compute_engine_util": (
-    "Compute engine group busy percent on `intel_gpu` (PVC, XPU Manager, max over tiles); the working "
-    "PVC busy signal while EU Array Active (`sm_active`) reads not present below GFX firmware PVC2_1.23423."
+    "Compute engine group busy percent on `intel_gpu` (PVC, XPU Manager, max over tiles). "
+    "Intel PVC jobs that ran on GPU firmware older than PVC2_1.23423 may show incorrect values."
   ),
   "fp32_active": "FP32 pipe activity percent (DCGM PROF on NVIDIA; shared KEY on `amd_gpu`).",
   "fp16_active": "FP16 pipe activity percent (DCGM PROF on NVIDIA; shared KEY on `amd_gpu`).",

@@ -1,0 +1,51 @@
+---
+description: Core docs (README, researcher guide, deploy concurrency, design document, TESTING) describe current code only; no changelog, history, or old-version text, and every claim is checked against code when edited
+alwaysApply: false
+globs: README.md,docs/using-the-website-as-a-researcher.md,docs/DEPLOY_CONCURRENCY_AND_NUMA.md,docs/design-document.md,docs/TESTING.md
+---
+
+# Core docs describe the current code only
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+## Scope
+
+These five files are reference documentation for the code as it is at `HEAD`:
+
+| File | Audience | Sync rule for content triggers |
+|------|----------|-------------------------------|
+| `README.md` | Operators doing a fresh install | `readme-installation-sync.mdc` |
+| `docs/using-the-website-as-a-researcher.md` | Researchers using the web UI | `researcher-job-detail-doc-sync.mdc` |
+| `docs/DEPLOY_CONCURRENCY_AND_NUMA.md` | Operators sizing pools, threads, NUMA, archive work | `deploy-concurrency-doc-sync.mdc` |
+| `docs/design-document.md` | Developers and reviewers | `design-document-sync.mdc` |
+| `docs/TESTING.md` | Developers running tests | `testing-doc-sync.mdc` |
+
+This rule governs **how** those files are written. The sync rules in the table govern **when** a code change must update them.
+
+## Don't / Do
+
+| Don't | Do |
+|-------|----|
+| "Document history" / changelog tables, dated change rows | Nothing; `git log -- <file>` is the history |
+| "Previously X, now Y", "no longer", "used to", "was changed to", "since 2026-11-02 X runs …" | "X runs …" (state the current behaviour) |
+| Old defaults, removed options, removed tests, removed scripts or pages | Delete them; if a removed thing is still relevant to operators, it belongs in `docs/upgrade.md` |
+| "After the fix …", "this change makes …", commit or plan IDs explaining why text changed | Describe how the system behaves; put rationale in the commit message |
+| Version numbers copied from memory | Versions read from the pin that sets them (Dockerfile `ARG`, `pyproject.toml`, `package.json`, `docker-compose.defaults.yaml`) |
+| INI keys, defaults, script flags, test paths, log markers, service names written from memory | The exact spelling and value from code (`hpcperfstats/dbload/lib/conf_parser.py` `INI_OPTION_DEFAULTS`, `hpcperfstats.ini.example`, argparse/usage, `grep` for the log string) |
+| Guessing when code is unclear | Leave the claim and ask the user |
+
+Code that still reads an older on-disk format (for example legacy `.tar.gz` archives) is current behaviour: document it as what the code does today, not as history.
+
+## Required actions when editing any of these files
+
+1. Check every claim you add or touch against code before writing it. Cite nothing you have not verified.
+2. Remove changelog / old-version text you find in the section you edit (same task).
+3. Keep bash/sh fences paste-safe: no heredocs, no line over 68 characters.
+4. Write plain ASCII: `-` or ` - ` for dashes (never glue two words with a bare `-` where a dash was meant), `->` / `<->` for arrows, `x`, `>=`, `<=`, `...`, `~`, `section` for the section sign. Write code identifiers in backticks (`day_close`, `host_data`); headings may use plain words.
+5. Run `hpcperfstats/tests/test_core_docs_drift_guard.py`; it fails on non-ASCII characters, changelog headings, old-version phrasing, bash/sh fence lines over 68 characters or with heredocs, INI keys missing from `INI_OPTION_DEFAULTS`, stated INI defaults that disagree with code, and repo paths in `docs/TESTING.md` that do not exist.
+
+## Overlap
+
+- `no-dead-code-or-stale-comments.mdc` — same principle for code comments.
+- `feature-removal-doc-sweep.mdc` — removing a user-visible feature sweeps these docs in the same task.
+- `readme-installation-sync.mdc`, `researcher-job-detail-doc-sync.mdc`, `deploy-concurrency-doc-sync.mdc`, `design-document-sync.mdc`, `testing-doc-sync.mdc` — per-doc content triggers.

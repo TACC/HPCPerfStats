@@ -160,7 +160,7 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   avg_compute_engine_util: {
     description:
-      "Average Intel Data Center GPU Max (PVC) compute engine busy percentage from XPU Manager (compute engine group utilization, max over tiles). It is the working PVC busy signal: EU Array Active and the other EU metrics read N/A on GFX firmware below PVC2_1.23423.",
+      "Average Intel Data Center GPU Max (PVC) compute engine busy percentage from XPU Manager (compute engine group utilization, max over tiles). Intel PVC jobs that ran on GPU firmware older than PVC2_1.23423 may show incorrect values.",
     researcherUse:
       "Low values on a PVC job mean the GPU tiles sat idle (host-side work, data movement, or too little work per launch); near 100 means the compute engines stayed busy.",
   },

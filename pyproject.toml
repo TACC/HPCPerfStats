@@ -96,6 +96,7 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
 markers = [
   "django: marks tests requiring Django (dbs, settings).",
   "machine_unit_mock: site.lib.machine.tests mocks only; no DB (see hpcperfstats/conftest.py).",
+  "compose_db: needs the default PostgreSQL DB; set by hpcperfstats/conftest.py, deselected by scripts/run_tests.py --no-django.",
   "live_valkey: live Valkey cache integration; requires HPCPERFSTATS_PYTEST_LIVE_VALKEY=1 and compose valkey.",
     "stress_host_data: optional Timescale stress in tests/stress_host_data; requires HPCPERFSTATS_STRESS_HOST_DATA=1.",
     "pipeline_e2e: optional full-stack pipeline tests in tests/pipeline_e2e; requires HPCPERFSTATS_PIPELINE_E2E=1 and compose.",

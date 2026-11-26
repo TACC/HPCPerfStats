@@ -1,13 +1,13 @@
 ---
-description: Keep researcher job-detail documentation synchronized with metrics/plots/tabs and include explicit user value rationale for every data surface
+description: Keep the researcher website guide synchronized with the job list, search, navigation and Job Detail metrics/plots/tabs, and include explicit user value rationale for every data surface
 alwaysApply: false
 ---
 
-# Researcher Job Detail Documentation Sync
+# Researcher Website Guide Sync
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-When job-detail data shown to users changes, update:
+When anything a researcher sees on the website changes (job list, search, navigation, Job Detail), update:
 `HPCPerfStats/docs/using-the-website-as-a-researcher.md`
 in the same task.
 
@@ -18,9 +18,14 @@ in the same task.
   - `hpcperfstats/site/lib/machine/job_plot_artifacts.py`
   - `hpcperfstats/site/lib/machine/job_detail_artifacts.py`
 - Changes to Job Detail frontend tabs/panels/labels in:
-  - `hpcperfstats/site/frontend/src/pages/JobDetail.jsx`
-  - `hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.js`
-  - `hpcperfstats/site/frontend/src/utils/variableMetadata*.js`
+  - `hpcperfstats/site/frontend/src/views/JobDetail.tsx`
+  - `hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.ts`
+  - `hpcperfstats/site/frontend/src/utils/variableMetadata*.ts`
+- Changes to job discovery and navigation in:
+  - `hpcperfstats/site/frontend/src/views/JobList.tsx`, `Search.tsx`, `HostDetail.tsx`, `TypeDetail.tsx`
+  - `hpcperfstats/site/frontend/src/components/JobListHeaderFilters.tsx`, `LayoutPub.tsx`, `NavLink.tsx`
+  - `hpcperfstats/site/frontend/src/utils/extended-search-*.ts`
+  - `hpcperfstats/site/lib/machine/job_list_*.py` (filters, filter summary, state groups, queue wait, performance columns)
 - Changes to job metric catalog/meaning in:
   - `hpcperfstats/analysis/metrics/lib/metrics.py` (`job_metrics_catalog_entries`, metric keys/units/no-data behavior)
 - Any new metric, plot, graph, table, tab, field, or unavailable/no-data behavior visible on the Job Detail page.
@@ -28,7 +33,7 @@ in the same task.
 ## Required documentation updates
 
 1. **One-to-one metric map**
-   - Keep section 7 aligned one-for-one with current `jobMetricDisplayLabels` keys and active catalog metrics.
+   - Keep the **Job-level metrics catalog** section aligned one-for-one with current `jobMetricDisplayLabels` keys and active catalog metrics.
    - If a metric key is added/renamed/removed, apply the same change in the doc in the same task.
    - Keep units and names consistent with the current UI/API output.
 
@@ -68,8 +73,8 @@ in the same task.
    - Keep one general availability warning near the top of the document explaining that not all data appears for every job/architecture and that missing data is reported in the UI.
    - Do not repeat per-metric/per-tab “if data is unavailable” warnings throughout the document unless a behavior is unique and materially different from the general policy.
 
-7. **Document history**
-   - Add/update a changelog row in the doc’s history table whenever behavior-visible changes are documented.
+7. **No document history**
+   - Do not keep a document history or changelog table, and do not describe what changed or what the UI used to do; `git log` is the history. Write per `docs-current-state-only.mdc`.
 
 8. **CS/HPC concept annotation policy (paper-style citations)**
    - Any computer-science or HPC concept used in user-facing explanatory prose (sections 1-7) must use paper-style superscript numbered citations that point to the appendix reference table (for example `<sup>[3](#ref-3)</sup>`).
@@ -96,6 +101,7 @@ in the same task.
 - Every currently rendered Job Detail tab/panel is represented in docs.
 - Every documented data source includes an explicit user/researcher usefulness statement.
 - No outdated tab/plot/field names remain.
+- No document history table or changelog prose remains.
 - CS/HPC concepts in explanatory prose use numbered superscripts that resolve to appendix `ref-*` anchors.
 - Index links exist and resolve to all current top-level sections.
 - Intro metadata appears as prose (not a table or label-style metadata block).

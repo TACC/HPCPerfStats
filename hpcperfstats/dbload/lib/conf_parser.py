@@ -55,7 +55,6 @@ _INI_OPTION_REGISTRY_KEYS = (
   # [PORTAL] - Gunicorn / Django web stack tuning
   ("PORTAL", "cors_origin_scheme"),
   ("PORTAL", "gunicorn_workers"),
-  ("PORTAL", "summary_aggregate_prefetch_max_threads"),
   ("PORTAL", "parallel_db_prefetch_max"),
   ("PORTAL", "api_small_executor_max_workers"),
   ("PORTAL", "db_conn_max_age"),
@@ -243,7 +242,6 @@ INI_OPTION_DEFAULTS = {
   "port": "5432",
   "cors_origin_scheme": "",
   "gunicorn_workers": "32",
-  "summary_aggregate_prefetch_max_threads": "2",
   "parallel_db_prefetch_max": "4",
   "api_small_executor_max_workers": None,
   "db_conn_max_age": "90",
@@ -1754,30 +1752,6 @@ def get_effective_cores() -> Any:
     host = 1
   ini_budget = get_ini_total_cores_int()
   return min(ini_budget, host)
-
-
-def get_summary_aggregate_prefetch_max_threads() -> Any:
-  """
-  Absolute ceiling for nested Summary aggregate prefetch threads.
-
-  INI ``[PORTAL] summary_aggregate_prefetch_max_threads`` (default **2**).
-
-  Returns:
-    Any: Positive int thread ceiling.
-
-  Examples:
-    >>> get_summary_aggregate_prefetch_max_threads()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return max(
-    1,
-    int(
-      _ini_get_from_registry(
-        "PORTAL",
-        "summary_aggregate_prefetch_max_threads",
-      )
-    ),
-  )
 
 
 def get_gunicorn_workers() -> Any:
@@ -4128,7 +4102,10 @@ def get_sync_checkpoint_flush_batch_size() -> Any:
 
 def get_sync_timedb_tar_append_batch_size() -> Any:
   """
-  Max raw paths per ``tar -T`` append batch in sync_timedb (default 1024).
+  Max raw paths per daily-tar append batch in sync_timedb.
+
+  INI ``[PIPELINE] sync_timedb_tar_append_batch_size``; the default is its
+  ``INI_OPTION_DEFAULTS`` entry.
 
   Returns:
     Any: Open return polymorphism from

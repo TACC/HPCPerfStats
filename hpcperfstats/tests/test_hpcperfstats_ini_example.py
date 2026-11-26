@@ -118,6 +118,18 @@ def test_dead_day_close_knobs_removed_from_registry_and_example():
     ), f"dead key still documented in example: {key}"
 
 
+def test_summary_aggregate_prefetch_max_threads_removed():
+  """The unread PORTAL prefetch thread ceiling stays out of INI and code."""
+  key = "summary_aggregate_prefetch_max_threads"
+  registry_options = {
+    option for _section, option, _default in cfg.INI_OPTION_REGISTRY
+  }
+  assert key not in registry_options
+  assert key not in cfg.INI_OPTION_DEFAULTS
+  assert not hasattr(cfg, f"get_{key}")
+  assert key not in _repo_ini_example_path().read_text(encoding="utf-8")
+
+
 def test_ini_example_documents_every_registry_option():
   path = _repo_ini_example_path()
   assert path.is_file(), f"missing {path}"

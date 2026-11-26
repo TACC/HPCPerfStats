@@ -58,7 +58,6 @@ def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
   assert cfg.get_metrics_pool_processes() == 32
   assert cfg.get_sync_ingest_hot_days() == 3
   assert cfg.get_gunicorn_workers() == 32
-  assert cfg.get_summary_aggregate_prefetch_max_threads() == 2
   assert cfg.get_listend_db_ingest_pool_processes() == 32
   assert cfg.get_listend_db_ingest_backpressure() == "drop"
   assert cfg.get_listend_db_ingest_flush_max_rows() == 2000
@@ -139,11 +138,7 @@ def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):
     "listend_db_ingest_backpressure = pause\n"
     "metrics_plot_prewarm_mode = inline\n",
   )
-  content += (
-    "\n[PORTAL]\n"
-    "gunicorn_workers = 9\n"
-    "summary_aggregate_prefetch_max_threads = 1\n"
-  )
+  content += "\n[PORTAL]\ngunicorn_workers = 9\n"
   with open(temp_ini, "w") as f:
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
@@ -155,7 +150,6 @@ def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_ingest_pool_processes() == 3
   assert cfg.get_metrics_pool_processes() == 5
   assert cfg.get_gunicorn_workers() == 9
-  assert cfg.get_summary_aggregate_prefetch_max_threads() == 1
   assert cfg.get_listend_db_ingest_pool_processes() == 11
   assert cfg.get_listend_db_ingest_backpressure() == "pause"
   assert cfg.get_metrics_plot_prewarm_mode() == "inline"

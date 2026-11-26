@@ -112,6 +112,16 @@ def pytest_collection_modifyitems(config, items):
     else:
       item.add_marker(pytest.mark.django_db(databases=[]))
 
+  # ``compose_db`` lets ``scripts/run_tests.py --no-django`` deselect these
+  # by marker; the shadow below gives them a ``databases=[]`` django_db mark.
+  db_items = [
+    item
+    for item in items
+    if not item.get_closest_marker("machine_unit_mock")
+    and _django_db_needs_default_database(item)
+  ]
+  for item in db_items:
+    item.add_marker(pytest.mark.compose_db)
   if _compose_network_enabled():
     return
 
@@ -124,11 +134,7 @@ def pytest_collection_modifyitems(config, items):
   # pytest-django sizes the session DB setup from every item's closest
   # django_db marker, skipped or not: shadow it so a skipped default-DB test
   # cannot make the host session try (and fail) to create a test database.
-  for item in items:
-    if item.get_closest_marker("machine_unit_mock"):
-      continue
-    if not _django_db_needs_default_database(item):
-      continue
+  for item in db_items:
     item.add_marker(skip_compose)
     item.add_marker(pytest.mark.django_db(databases=[]), append=False)
 

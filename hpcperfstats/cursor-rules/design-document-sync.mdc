@@ -1,0 +1,39 @@
+---
+description: Keep docs/design-document.md aligned with the system architecture (compose services, image pins, pipeline processes, data design, Valkey roles, web/API layers, monitor contract)
+alwaysApply: false
+globs: docker-compose.defaults.yaml,docker-compose.yaml.example,docker-compose.pg18-primary.yaml,services-conf/*.Dockerfile,services-conf/supervisord.conf,pyproject.toml,hpcperfstats/site/frontend/package.json
+---
+
+# Design document sync
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+`docs/design-document.md` describes the system as it is built today: data flow, compose containers, component inventory, pipeline processes, archive layout, database and metrics, the `host_data.type` contract, Valkey key namespaces, web/API layers, security/config, and in-repo references. When a change would make any statement there wrong, update the doc **in the same task**. Write it per `docs-current-state-only.mdc` (current behaviour only, no changelog text).
+
+## Trigger conditions
+
+| Change | Design doc section to check |
+|--------|-----------------------------|
+| Service added, removed or renamed in `docker-compose.defaults.yaml` / `docker-compose.yaml.example` / `docker-compose.pg18-primary.yaml`; image, network or volume role changed | 3.1 Data flow, 3.2 Compose containers, 5.2 Compose services |
+| Version pin changed in `services-conf/*.Dockerfile`, `pyproject.toml`, `hpcperfstats/site/frontend/package.json` (PostgreSQL, TimescaleDB, Python, Django, React/Next, nginx, Valkey, RabbitMQ, Codon, zstd) when the doc names that version | Wherever the version is cited |
+| Pipeline program added/removed/renamed in `services-conf/supervisord.conf`, or a long-running process's role changes (`listend`, `sync_timedb`, `update_metrics`, rsync, syslog) | 6 Runtime processes |
+| Top-level package moved/added under `hpcperfstats/`, or `hpcperfstats-tools/` scope changes | 5.3 Python package layout, 5.4 External API client |
+| Archive directory layout or file naming written by `listend` / `sync_timedb` | 7.2 Archive layout |
+| Core tables, hypertables, or metrics storage changed (Django models / migrations under `hpcperfstats/site/lib/machine/`) | 7.3 Database and metrics |
+| `host_data.type` names or monitor collector set changed (`monitor-analysis-architecture-sync.mdc`) | 5.1 Monitor, 7.4 Monitor <-> analysis contract |
+| Valkey key namespaces or Valkey roles changed | 7.5 Valkey roles |
+| Web/API layering changed (Django API, OpenAPI/Orval, SPA, nginx allowlist) | 8 Web application and APIs |
+| Auth, secrets, INI or operations model changed | 9 Security, configuration, and operations |
+| A doc or rule listed in section 13 is added, moved or removed | 13 References |
+
+## Required actions
+
+1. Update every affected section; copy names and versions from code, not memory.
+2. Keep section 13 links valid (each path exists).
+3. Cross-check against `README.md` and `docs/DEPLOY_CONCURRENCY_AND_NUMA.md` for the same fact; they must agree.
+
+## Overlap
+
+- `docs-current-state-only.mdc` — writing style for this doc.
+- `monitor-analysis-architecture-sync.mdc` — `host_data.type` contract details.
+- `readme-installation-sync.mdc` — operator setup facts that also appear here.

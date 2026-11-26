@@ -86,9 +86,6 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Absolute Gunicorn worker count when WEB_CONCURRENCY is unset (default 32).
 # gunicorn_workers = 32
 
-# Nested summary-plot aggregate prefetch thread ceiling (default 2).
-# summary_aggregate_prefetch_max_threads = 2
-
 # Max threads for API prefetch and default small executor (default 4).
 # parallel_db_prefetch_max = 4
 
