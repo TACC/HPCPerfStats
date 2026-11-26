@@ -272,6 +272,81 @@ def test_proc_rows_match_cpython(typ: str) -> None:
   assert [dict(f) for f in pf] == want
 
 
+def _spaced_dev_corpus(tiered: bool) -> list[str]:
+  full, fast = ("@full ", "@fast ") if tiered else ("", "")
+  return [
+    "!beegfs_client vfs_read_bytes,E,U=B fs_size,U=B",
+    "!host_proc uid vm_rss threads",
+    "1710000000.0 9 hosta",
+    f"beegfs_client /mnt/my fs {full}100 5000",
+    f"host_proc gunicorn: worker/41/0-3/0 {full}1000 2048 4",
+    f"host_proc kworker/u8:2/77/0-3/0 {full}0 16 1",
+    "1710000010.0 9 hosta",
+    f"beegfs_client /mnt/my fs {fast}300 5000",
+    f"host_proc gunicorn: worker/41/0-3/0 {fast}1000 4096 5",
+  ]
+
+
+@pytest.mark.parametrize("tiered", [True, False])
+def test_device_with_spaces_and_slashes_matches_cpython(tiered: bool) -> None:
+  """Regression: the monitor does not escape spaces in a device (host_proc
+  comm ``gunicorn: worker``, a BeeGFS mount path) and a comm may contain
+  ``/``. Both engines used to take the device as one token (the BeeGFS row
+  was dropped for its value count, the proc row's values shifted by one) and
+  the proc name up to the first ``/``."""
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+    IncrementalStatsParser,
+  )
+
+  lines = _spaced_dev_corpus(tiered)
+  mod = _load_feed_collapse()
+  want = _cpython_rows(lines)
+  _assert_rows_match(_codon_rows(mod, lines), want)
+  reads = sorted((k[4], v) for k, v in want.items() if k[3] == "vfs_read_bytes")
+  assert [r[1][0] for r in reads] == [100.0, 300.0]
+  assert reads[1][1][1] == 200.0
+
+  parser = IncrementalStatsParser(0)
+  parser.feed_lines(list(lines))
+  procs = {p["proc"]: p for p in parser.finish()[1]}
+  assert set(procs) == {"gunicorn: worker", "kworker/u8:2"}
+  assert procs["gunicorn: worker"]["device"] == "gunicorn: worker/41/0-3/0"
+  assert (
+    procs["gunicorn: worker"]["vm_rss"],
+    procs["kworker/u8:2"]["uid"],
+  ) == (
+    4096,
+    0,
+  )
+  _cols, proc = mod.feed_delta_collapse_arc(lines, {}, {})[:2]
+  pp, pf, pd = proc[2:]
+  assert sorted(pp) == sorted(procs)
+  assert sorted(pd) == sorted(p["device"] for p in procs.values())
+  by_name = dict(zip(pp, pf, strict=True))
+  for name, row in procs.items():
+    assert by_name[name]["vm_rss"] == row["vm_rss"]
+    assert by_name[name]["threads"] == row["threads"]
+
+
+def test_schemaless_malformed_proc_row_keeps_one_token_device() -> None:
+  """A row with no ``!`` schema keeps a one-token device in both engines, so
+  non-numeric values stay values (NULL), not device words."""
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+    IncrementalStatsParser,
+  )
+
+  lines = ["1709123456 job1 cn001", "proc foo garbage x 3 4 5 6 7 8 9"]
+  parser = IncrementalStatsParser(0)
+  parser.feed_lines(list(lines))
+  procs = parser.finish()[1]
+  assert [(p["proc"], p["device"], p["uid"]) for p in procs] == [
+    ("foo", "foo", None)
+  ]
+  proc = _load_feed_collapse().feed_delta_collapse_arc(lines, {}, {})[1]
+  assert (proc[2], proc[4]) == (["foo"], ["foo"])
+  assert "uid" not in proc[3][0]
+
+
 def test_leading_whitespace_and_non_alpha_types_match_cpython() -> None:
   mod = _load_feed_collapse()
   lines = [
@@ -327,6 +402,21 @@ def test_pyext_file_session_gate_and_window_arm_match_source(
       c = ln.split("\t")
       got[(c[3], c[4], c[5])] += 1
   assert got == _source_shape(lines, start_idx)
+
+
+@pytest.mark.parametrize("tiered", [True, False])
+def test_pyext_spaced_device_matches_source(pyext: Any, tiered: bool) -> None:
+  """The baked kernel keeps a spaced device and a ``/`` comm whole."""
+  lines = _spaced_dev_corpus(tiered)
+  out = pyext.parse_stats_lines_codon(lines, 0)
+  stats = out["stats"]
+  got = Counter(zip(stats["type"], stats["dev"], stats["event"], strict=True))
+  assert got == _source_shape(lines, 0)
+  assert ("beegfs_client", "vfs_read_bytes") in {(t, e) for t, _d, e in got}
+  assert sorted(set(out["procs"]["proc"])) == [
+    "gunicorn: worker",
+    "kworker/u8:2",
+  ]
 
 
 def test_pyext_line_batch_carry_keys_survive_round_trip(pyext: Any) -> None:

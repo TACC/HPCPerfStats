@@ -1,0 +1,56 @@
+---
+description: Any change to what the monitor prints updates RAW_DATA_FORMAT.md, the hpcperfstats_raw reader, metric_descriptions.tsv and the generated METRICS_REFERENCE.md in the same change
+globs:
+  - HPCPerfStats/monitor/src/stats_text_format.*
+  - HPCPerfStats/monitor/src/stats_buffer.c
+  - HPCPerfStats/monitor/src/stats_buffer_rows.*
+  - HPCPerfStats/monitor/src/stats_sentinel.h
+  - HPCPerfStats/monitor/src/schema*.c
+  - HPCPerfStats/monitor/src/schema.h
+  - HPCPerfStats/monitor/src/collect_tier.c
+  - HPCPerfStats/monitor/src/monitor_daemon.c
+  - HPCPerfStats/monitor/src/job_shared_emit.c
+  - HPCPerfStats/monitor/src/job_emit_filter.c
+  - HPCPerfStats/monitor/src/*.h
+  - HPCPerfStats/monitor/docs/RAW_DATA_FORMAT.md
+  - HPCPerfStats/monitor/docs/METRICS_REFERENCE.md
+  - HPCPerfStats/monitor/docs/metric_descriptions.tsv
+  - HPCPerfStats/monitor/python/**
+  - HPCPerfStats/monitor/scripts/gen_metrics_reference.py
+  - HPCPerfStats/monitor/scripts/lib/keys_catalog.py
+  - HPCPerfStats/monitor/tests/test_raw_data_reader.sh
+alwaysApply: false
+---
+
+# Monitor: raw data format docs and reader stay in lockstep with the emitter
+
+**Activation:** `alwaysApply: false` - when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional. The globs cover the emit path; any other collector `.c` that adds, removes, renames or reorders a key, or changes a device format, triggers this rule too (its `KEYS` usually live in a `src/*.h`, which is globbed).
+
+## What must stay in sync
+
+| Artifact | Role |
+|----------|------|
+| `docs/RAW_DATA_FORMAT.md` | Human guide: every line kind, `$` banner property, `!` schema option, sample header field, `%` mark, row/device rule, value rule, sentinel code, tier behavior, shared-node split, Python usage. |
+| `python/hpcperfstats_raw/` | Reader library (stdlib, Python 3.8+). `wire.py` mirrors constants and the sentinel catalog; `reader.py` the line grammar; `schema.py` the option grammar. |
+| `docs/metric_descriptions.tsv` | One human description per `(type, key)` plus `@type` and `@dev` rows per type. |
+| `docs/METRICS_REFERENCE.md` | **Generated** by `scripts/gen_metrics_reference.py` from the `KEYS` macros (`scripts/lib/keys_catalog.py`) and the TSV. Never hand-edit. |
+
+## Law
+
+In the **same change** as any edit that alters monitor output:
+
+1. **Line grammar / wire** (new or changed line prefix, banner `$` property, sample header shape, `%` mark kind or field, tier token, schema option, row layout, sentinel code or catalog version, slow-tier rule): update `RAW_DATA_FORMAT.md`, the matching `hpcperfstats_raw` module and its tests, and the drift constants in `python/tests/test_wire_drift.py` (`MARK_SITES`, `BANNER_PROPERTIES`, `SCHEMA_OPTIONS`).
+2. **Types and keys** (add, remove, rename, reorder a key; change `E` / `U=` / `W=` / `R=S`; new or retired `st_name`; new `#if` build condition): edit `docs/metric_descriptions.tsv` (every key needs a verified description; delete rows for removed keys), run `.venv/bin/python3 HPCPerfStats/monitor/scripts/gen_metrics_reference.py`, and commit the regenerated `METRICS_REFERENCE.md`.
+3. **Device field format** (new `dev` shape, separator, characters such as spaces): update the type's `@dev` TSV row, the Data rows section of the doc, and `parse_row` / `parse_proc_dev` if the reader's splitting assumption changes.
+4. **Descriptions are claims about code.** Verify each against the collector source (and kernel / vendor field it reads); ASCII only, one line, no tabs.
+5. **Run** `sh HPCPerfStats/monitor/tests/test_raw_data_reader.sh` (also part of `make check`); it must pass. It runs the reader unit tests, the C-vs-reader-vs-doc drift tests, every python block in `RAW_DATA_FORMAT.md`, and `gen_metrics_reference.py --check`.
+
+A failing `test_raw_data_reader` is fixed by updating the docs / reader / TSV, never by loosening the drift test, unless the test itself mis-parses the C (then fix the parser and say so).
+
+## Not a substitute for
+
+- **`monitor-consumer-schema-migration.mdc`** - breaking renames still need the rename map and consumer rollout.
+- **`monitor-value-sentinel-contract.mdc`** - sentinel codes stay append-only; this rule adds the doc table and `wire.py` to its list.
+- **`monitor-schema-keys-headers.mdc`** - KEYS headers and contract tests.
+
+Cross-links: **monitor-readme-maintenance**, **monitor-emitted-variable-naming**, **shared-node-affinity-monitor-contract**, **monitor-collect-tier-gating**.

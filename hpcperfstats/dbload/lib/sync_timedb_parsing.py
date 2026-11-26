@@ -2420,6 +2420,40 @@ def tail_window_timestamps_all_present_streaming(
   return True
 
 
+def _row_dev_end(parts: list[str], n_values: int) -> int:
+  """
+  Return the index just past a stats row's device tokens.
+
+  The monitor does not escape whitespace in a device (a ``host_proc`` comm
+  such as ``gunicorn: worker``, a BeeGFS mount path), so the device runs to
+  the ``@fast`` / ``@full`` tier marker. An untiered row takes its last
+  ``n_values`` tokens as values; with no schema (``n_values`` 0) or too few
+  tokens the device is one token.
+
+  Args:
+    parts (list[str]): Whitespace-split row: type, device tokens, values.
+    n_values (int): Key count of the type's ``!`` schema, 0 when unknown.
+
+  Returns:
+    int: Index of the first non-device token (2 for a one-token device).
+
+  Examples:
+    >>> _row_dev_end(["cpu", "0", "@fast", "1"], 1)
+    2
+    >>> _row_dev_end(["host_proc", "Web", "Content/4/0-3/0", "@full", "9"], 1)
+    3
+    >>> _row_dev_end(["host_proc", "Web", "Content/4/0-3/0", "9"], 1)
+    3
+    >>> _row_dev_end(["proc", "foo", "garbage", "x", "3"], 0)
+    2
+  """
+  for i in range(2, len(parts)):
+    if parts[i] in _TIER_MARKERS:
+      return i
+  end = len(parts) - n_values
+  return end if n_values and end > 2 else 2
+
+
 def _shared_row_dev(dev: str, typ: str, jid: Any, shared: bool) -> str:
   """
   Stamp shared-node non-GPU rows with ``j:<jid>`` before collapse.
@@ -2966,17 +3000,18 @@ class IncrementalStatsParser:
       return
 
     if s[0].isalpha() and self.insert:
-      parts = s.split(maxsplit=2)
+      parts = s.split()
       if len(parts) < 3:
         return
-      typ, dev, vals = parts
-      vals = vals.split()
+      typ = parts[0]
+      end = _row_dev_end(parts, len(self.schema.get(typ, ())))
+      dev, vals = " ".join(parts[1:end]), parts[end:]
       if typ in self.exclude_types_list:
         return
 
       if typ in ("proc", "host_proc"):
-        # device = full monitor token (name/pid/cmask/mmask); proc = name only.
-        proc_name = dev.split("/", 1)[0]
+        # device = name/pid/cmask/mmask; the name (comm) may contain "/".
+        proc_name = dev.rsplit("/", 3)[0]
         full_schema_keys = (
           self.schema.get(typ)
           or self.schema.get("host_proc")

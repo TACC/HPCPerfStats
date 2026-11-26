@@ -1,0 +1,29 @@
+$hpcperfstats 3.1
+$hostname g301-002.example.org
+$uname Linux aarch64 6.4.0-150600.23.25-default #1 SMP PREEMPT_DYNAMIC Tue Oct 1 00:00:00 UTC 2026
+$uptime 4000
+$build aarch64-ver3.1-hw-ib-nvgpu-arm-sent1-slowtier1
+$sentinels 1
+!host_cpu user,E,U=cs nice,E,U=cs system,E,U=cs idle,E,U=cs iowait,E,U=cs irq,E,U=cs softirq,E,U=cs
+!host_mem mem_total,U=KB mem_free,U=KB
+!host_mem_job mem_used,U=KB mem_peak,U=KB
+!nvidia_gpu gpu_util power_usage,U=W
+
+1767225600.000000 100 g301-002.example.org
+%jobs jids=100,200
+%affinity jid=100 cpus=0-1 gpus=0 cg=sched
+host_cpu 0 @full 10 0 5 900 0 0 0
+host_cpu 1 @full 11 0 5 900 0 0 0
+host_mem_job j:100 @full 524288 1048576
+nvidia_gpu 0 @full 97 410
+
+1767225600.000000 200 g301-002.example.org
+%jobs jids=100,200
+%affinity jid=200 cpus=2 gpus=- cg=sched
+host_cpu 2 @full 12 0 5 900 0 0 0
+host_mem_job j:200 @full 1024 -2
+
+1767225600.000000 - g301-002.example.org
+host_cpu 3 @full 1 0 1 990 0 0 0
+host_mem 0 @full 500000000 400000000
+nvidia_gpu 1 @full 0 85

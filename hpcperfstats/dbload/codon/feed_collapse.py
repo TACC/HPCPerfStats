@@ -479,6 +479,31 @@ def build_e6_payload_lines(n_samples: int) -> list[str]:
   return lines
 
 
+def _row_dev_end(parts: list[str], n_values: int) -> int:
+  """Index past a row's device tokens (``IncrementalStatsParser`` twin).
+
+  A device may contain spaces (host_proc comm, BeeGFS mount path): it runs to
+  the tier marker; an untiered row keeps its last ``n_values`` (schema key
+  count, 0 when unknown) tokens as values.
+  """
+  for i in range(2, len(parts)):
+    if parts[i] == "@fast" or parts[i] == "@full":
+      return i
+  end = len(parts) - n_values
+  return end if n_values > 0 and end > 2 else 2
+
+
+def _proc_name(dev: str) -> str:
+  """host_proc name: the device minus its last three ``/`` fields."""
+  cut = len(dev)
+  for _ in range(3):
+    slash = dev.rfind("/", 0, cut)
+    if slash < 0:
+      break
+    cut = slash
+  return dev[:cut]
+
+
 def _shared_row_dev(dev: str, typ: str, jid: str, shared: bool) -> str:
   """Stamp shared-node / host_mem_job rows; keep GPU hardware ``dev``."""
   for g in GPU_TYPES:
@@ -770,8 +795,9 @@ def feed_lines_full(
       typ = parts[0]
       if typ in excl:
         continue
-      dev = parts[1]
-      vals = parts[2:]
+      end = _row_dev_end(parts, len(schema[typ]) if typ in schema else 0)
+      dev = " ".join(parts[1:end])
+      vals = parts[end:]
       tier = ""
       if vals[0] == "@fast" or vals[0] == "@full":
         tier = vals[0]
@@ -801,11 +827,10 @@ def feed_lines_full(
             nulls.append(bare)
             continue
           fields[bare] = int(fv)
-        slash = dev.find("/")
         _merge_proc(
           tag_jid,
           tag_host,
-          dev[:slash] if slash >= 0 else dev,
+          _proc_name(dev),
           dev,
           fields,
           nulls,

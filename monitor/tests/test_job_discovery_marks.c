@@ -311,6 +311,11 @@ static void test_job_shared_emit_env_named_multi_keeps_split(void)
   assert(keep(&c, "nvidia_gpu", "1") == 0);
   assert(keep(&c, "host_proc", "a.out/6001/f/1") == 1);
   assert(keep(&c, "host_proc", "a.out/7/f/1") == 0);
+  /* comm may contain '/': the pid is the third field from the end */
+  assert(keep(&c, "host_proc", "kworker/u8:2/6001/f/1") == 1);
+  assert(keep(&c, "host_proc", "w/7/6001/f/1") == 1);
+  assert(keep(&c, "host_proc", "w/6001/7/f/1") == 0);
+  assert(keep(&c, "host_proc", "6001/f/1") == 0);
   assert(keep(&c, "ib", "mlx5_0.1") == 0);
   assert(keep(&c, "host_power_socket", "0") == 0); /* D38: never in a jid payload */
   assert(keep(&c, "host_mem_job", "j:111") == 1);

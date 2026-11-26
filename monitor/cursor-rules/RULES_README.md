@@ -14,7 +14,7 @@ Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` f
 | `workspace-single-cursor-directory.mdc` | Exactly one `<workspace_root>/.cursor/`; no nested `.cursor/` under git paths |
 | `out-of-monitor-hpcperfstats-rules.mdc` | Authorized non-monitor work loads `hpcperfstats/cursor-rules/` |
 
-## Domain rules (57 files — `alwaysApply: false`)
+## Domain rules (59 files — `alwaysApply: false`)
 
 **Mandatory when triggered**, not optional. Agents must use the **Read** tool on matching rules from the router in `agent-discipline-core.mdc` before editing trigger paths.
 
@@ -28,6 +28,7 @@ Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 - **`monitor-workspace-contract.mdc`** — scope and listend consumer contract
 - **`monitor-consumer-side-plan.mdc`** — secondary consumer plan when emit changes need ingest work
 - **`monitor-shm-validation-probe-parity.mdc`** — collector `dev` enumeration must match `host_live_probes.py`
+- **`monitor-raw-data-format-docs.mdc`** — any change to what the daemon prints updates `docs/RAW_DATA_FORMAT.md`, the `python/hpcperfstats_raw` reader, `docs/metric_descriptions.tsv` and the generated `docs/METRICS_REFERENCE.md` in the same change; `make check` (`tests/test_raw_data_reader.sh`) fails on drift
 - **`monitor-beegfs-procfs.mdc`** — BeeGFS client detect + I/O bytes from the client's storage TCP counters (no server query); capacity via `statvfs`
 - **`monitor-security-hardening.mdc`** — privileged dump/shm/`dlopen`/exec/conf hardening
 - **`monitor-systemd-service-contract.mdc`** — root-daemon sandbox invariants, required device access, and unit/package/test coupling

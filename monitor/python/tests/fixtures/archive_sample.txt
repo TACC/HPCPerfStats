@@ -1,0 +1,82 @@
+$hpcperfstats 3.1
+$hostname c401-001.example.org
+$uname Linux x86_64 5.14.0-570.el9.x86_64 #1 SMP PREEMPT_DYNAMIC Tue Jan 7 00:00:00 UTC 2026
+$uptime 86400
+$build x86_64-ver3.1-hw-ib-nvgpu-lustre-beegfs-x86perf-sent1-slowtier1
+$sentinels 1
+!host_block rd_ios,E rd_merges,E rd_sectors,E,U=512B rd_ticks,E,U=ms wr_ios,E wr_merges,E wr_sectors,E,U=512B wr_ticks,E,U=ms in_flight io_ticks,E,U=ms time_in_queue,E,U=ms
+!host_cpu user,E,U=cs nice,E,U=cs system,E,U=cs idle,E,U=cs iowait,E,U=cs irq,E,U=cs softirq,E,U=cs
+!host_ib excessive_buffer_overrun_errors,E,W=32,R=S link_downed,E,W=32,R=S port_rcv_data,E,U=4B port_xmit_data,E,U=4B
+!host_mem mem_total,U=KB mem_free,U=KB mem_used,U=KB dirty,U=KB,R=S
+!host_proc uid,R=S vm_rss,U=kB threads
+!intel_x86_rapl pkg_energy,E,W=32,U=mJ
+
+1767225600.000000 - c401-001.example.org
+host_block nvme0n1 @full 1000 0 81000 500 2000 0 160000 900 0 1400 1400
+host_cpu 0 @full 1000 0 500 100000 10 1 2
+host_cpu 1 @full 1005 0 500 100000 10 1 2
+host_ib mlx5_0.1 @full 0 0 1000000 900000
+host_mem 0 @full 263000000 200000000 63000000 1024
+host_proc python3/4121/0-127/0 @full 812345 1048576 8
+host_proc Web Content/4200/0-127/0 @full 812345 204800 30
+intel_x86_rapl 0 @full 4294967000
+
+1767225630.000412 - c401-001.example.org
+host_block nvme0n1 @fast 1000 0 81300 500 2000 0 160000 900 0 1400 1400
+host_cpu 0 @fast 1300 0 650 100000 10 1 2
+host_cpu 1 @fast 1305 0 650 100000 10 1 2
+host_ib mlx5_0.1 @fast -7 -7
+host_mem 0 @fast 263000000 199000000 64000000
+host_proc python3/4121/0-127/0 @fast 1048576 8
+intel_x86_rapl 0 @fast 200
+
+1767225660.000107 12345 c401-001.example.org
+%begin 12345
+host_block nvme0n1 @fast 1000 0 81900 500 2000 0 160000 900 0 1400 1400
+host_cpu 0 @fast 1900 0 950 100000 10 1 2
+host_cpu 1 @fast 1905 0 950 100000 10 1 2
+host_ib mlx5_0.1 @fast -7 -7
+host_mem 0 @fast 263000000 199000000 64000000
+host_proc python3/4121/0-127/0 @fast 1048576 8
+intel_x86_rapl 0 @fast 1200
+
+1767225690.000221 12345 c401-001.example.org
+host_block nvme0n1 @fast 1000 0 82500 500 2000 0 160000 900 0 1400 1400
+host_cpu 0 @fast 2500 0 1250 100000 10 1 2
+host_cpu 1 @fast 2505 0 1250 100000 10 1 2
+host_ib mlx5_0.1 @fast 2500000 2250000
+host_mem 0 @fast 263000000 199000000 64000000
+host_proc python3/4121/0-127/0 @fast 1048576 8
+intel_x86_rapl 0 @fast 2200
+
+1767225720.000031 12345 c401-001.example.org
+host_block nvme0n1 @fast 1000 0 83100 500 2000 0 160000 900 0 1400 1400
+host_cpu 0 @fast 3100 0 1550 100000 10 1 2
+host_cpu 1 @fast 3105 0 1550 100000 10 1 2
+host_ib mlx5_0.1 @fast -7 -7
+host_mem 0 @fast 263000000 199000000 64000000
+host_proc python3/4121/0-127/0 @fast 1048576 8
+intel_x86_rapl 0 @fast -3
+
+$hpcperfstats 3.1
+$hostname c401-001.example.org
+$uname Linux x86_64 5.14.0-570.el9.x86_64 #1 SMP PREEMPT_DYNAMIC Tue Jan 7 00:00:00 UTC 2026
+$uptime 86400
+$build x86_64-ver3.1-hw-ib-nvgpu-lustre-beegfs-x86perf-sent1-slowtier1
+$sentinels 1
+!host_block rd_ios,E rd_merges,E rd_sectors,E,U=512B rd_ticks,E,U=ms wr_ios,E wr_merges,E wr_sectors,E,U=512B wr_ticks,E,U=ms in_flight io_ticks,E,U=ms time_in_queue,E,U=ms
+!host_cpu user,E,U=cs nice,E,U=cs system,E,U=cs idle,E,U=cs iowait,E,U=cs irq,E,U=cs softirq,E,U=cs
+!host_ib excessive_buffer_overrun_errors,E,W=32,R=S link_downed,E,W=32,R=S port_rcv_data,E,U=4B port_xmit_data,E,U=4B
+!host_mem mem_total,U=KB mem_free,U=KB mem_used,U=KB dirty,U=KB,R=S
+!host_proc uid,R=S vm_rss,U=kB threads
+!intel_x86_rapl pkg_energy,E,W=32,U=mJ
+1767225750.000550 12345 c401-001.example.org
+%end 12345
+host_block nvme0n1 @full 1000 0 83700 500 2000 0 160000 900 0 1400 1400
+host_cpu 0 @full 3700 0 1850 100000 10 1 2
+host_cpu 1 @full 3705 0 1850 100000 10 1 2
+host_ib mlx5_0.1 @full 0 0 3700000 3330000
+host_mem 0 @full 263000000 200000000 63000000 1024
+host_proc python3/4121/0-127/0 @full 812345 1048576 8
+host_proc Web Content/4200/0-127/0 @full 812345 204800 30
+intel_x86_rapl 0 @full 4200

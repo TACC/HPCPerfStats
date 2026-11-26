@@ -52,12 +52,15 @@ _SP = "hpcperfstats.analysis.metrics.lib.sentinel_profile"
 
 PARITY_FEATURES: tuple[ParityFeature, ...] = (
   ParityFeature(
-    "stats line feed (schema, @fast/@full, value count, whitespace)",
+    "stats line feed (schema, @fast/@full, value count, whitespace, spaced dev)",
     f"{_P}:IncrementalStatsParser.feed_line",
-    ("feed_lines_full", "_append_stats"),
+    ("feed_lines_full", "_append_stats", "_row_dev_end"),
     (
       f"{_T}/test_codon_feed_delta_collapse_arc.py::test_feed_delta_collapse_arc_matches_cpython_broad_corpus",
       f"{_T}/test_codon_canonical_parity.py::test_leading_whitespace_and_non_alpha_types_match_cpython",
+      f"{_T}/test_codon_canonical_parity.py::test_device_with_spaces_and_slashes_matches_cpython",
+      f"{_T}/test_codon_canonical_parity.py::test_pyext_spaced_device_matches_source",
+      f"{_T}/test_codon_canonical_parity.py::test_schemaless_malformed_proc_row_keeps_one_token_device",
     ),
   ),
   ParityFeature(
@@ -180,8 +183,11 @@ PARITY_FEATURES: tuple[ParityFeature, ...] = (
   ParityFeature(
     "proc / host_proc rows (alias, key set, null last-write, peaks)",
     f"{_P}:IncrementalStatsParser._merge_proc_row_online",
-    ("_merge_proc",),
-    (f"{_T}/test_codon_canonical_parity.py::test_proc_rows_match_cpython",),
+    ("_merge_proc", "_proc_name"),
+    (
+      f"{_T}/test_codon_canonical_parity.py::test_proc_rows_match_cpython",
+      f"{_T}/test_codon_canonical_parity.py::test_device_with_spaces_and_slashes_matches_cpython",
+    ),
   ),
   ParityFeature(
     "dynamic exclude types",

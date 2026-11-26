@@ -73,6 +73,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 |---------------|------------------|
 | `HPCPerfStats/monitor/src/stats*.c`, `rabbitmq*.c`, `KEYS*.h`, schema emit | `monitor-workspace-contract.mdc`, `monitor-collect-tier-gating.mdc`, `monitor-schema-keys-headers.mdc`, `monitor-rabbitmq-integration-required.mdc`, `monitor-emitted-variable-naming.mdc` |
 | Breaking output / rename / tier markers | `monitor-consumer-schema-migration.mdc`, `monitor-consumer-side-plan.mdc` |
+| Anything that changes what the daemon prints: `src/stats_text_format.*`, `stats_buffer.c`, `stats_buffer_rows.*`, `stats_sentinel.h`, `schema*`, `collect_tier.c`, `monitor_daemon.c`, `job_shared_emit.c`, `job_emit_filter.c`, `src/*.h` (KEYS), any collector key/device change; `docs/RAW_DATA_FORMAT.md`, `docs/METRICS_REFERENCE.md`, `docs/metric_descriptions.tsv`, `python/**`, `scripts/gen_metrics_reference.py`, `scripts/lib/keys_catalog.py`, `tests/test_raw_data_reader.sh` | `monitor-raw-data-format-docs.mdc` |
 
 ### Build, configure, packaging, scripts
 

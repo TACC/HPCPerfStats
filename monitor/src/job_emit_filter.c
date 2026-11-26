@@ -29,20 +29,21 @@ static int is_cpu_type(const char *st_name)
 
 static int proc_dev_pid(const char *dev, int *pid_out)
 {
-  /* host_proc device: name/pid/cmask/mmask */
-  const char *slash;
+  /* host_proc device: name/pid/cmask/mmask; the name (comm) may itself contain '/',
+   * so the pid is the third '/'-field from the end. */
   const char *p;
   char *end;
   long pid;
+  int slashes = 0;
 
   if (dev == NULL)
     return -1;
-  slash = strchr(dev, '/');
-  if (slash == NULL)
+  for (p = dev + strlen(dev); p > dev && slashes < 3;)
+    slashes += *--p == '/';
+  if (slashes < 3)
     return -1;
-  p = slash + 1;
-  pid = strtol(p, &end, 10);
-  if (end == p || (*end != '/' && *end != '\0'))
+  pid = strtol(++p, &end, 10);
+  if (end == p || *end != '/')
     return -1;
   *pid_out = (int)pid;
   return 0;
