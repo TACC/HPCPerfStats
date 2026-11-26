@@ -79,7 +79,7 @@ services:
           - pipeline
 
   valkey:
-    image: docker.io/valkey/valkey:9.1.3-alpine3.24
+    image: docker.io/valkey/valkey:9.2.0-alpine3.24
     logging: *hpc-logging
     # command[0] must stay valkey-server: the image entrypoint drops root to
     # the valkey user only for that argv[0].
@@ -369,7 +369,7 @@ services:
 
   rabbitmq:
     # Management plugin (HTTP API on 15672) for Admin Monitor stats.
-    image: docker.io/library/rabbitmq:4.4.0-management-alpine
+    image: docker.io/library/rabbitmq:4.4.1-management-alpine
     restart: always
     logging: *hpc-logging
     hostname: rabbitmq-prod

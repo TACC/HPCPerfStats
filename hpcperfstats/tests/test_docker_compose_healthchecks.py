@@ -120,9 +120,9 @@ def test_docker_compose_registry_images_are_fully_qualified_for_podman():
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.defaults.yaml").read_text()
 
-  assert "image: docker.io/valkey/valkey:9.1.3-alpine3.24" in content
+  assert "image: docker.io/valkey/valkey:9.2.0-alpine3.24" in content
   assert "image: docker.io/timescale/timescaledb:2.28.3-pg15" in content
-  assert "image: docker.io/library/rabbitmq:4.4.0-management-alpine" in content
+  assert "image: docker.io/library/rabbitmq:4.4.1-management-alpine" in content
 
 
 def test_docker_compose_network_name_is_parameterized_with_production_default():
@@ -695,10 +695,10 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   """Regression: proxy must SHA-pin source nginx/jemalloc/zlib-ng/OpenSSL/brotli; no apk edge nginx."""
   repo_root = Path(__file__).resolve().parents[2]
   dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
-  assert "ARG NGINX_VERSION=1.31.9" in dockerfile
-  assert dockerfile.count("ARG NGINX_VERSION=1.31.9") == 2
+  assert "ARG NGINX_VERSION=1.31.10" in dockerfile
+  assert dockerfile.count("ARG NGINX_VERSION=1.31.10") == 2
   assert (
-    "ARG NGINX_SHA256=a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad"
+    "ARG NGINX_SHA256=a9b690957fca84abdae8a9b52d66b1bb459282d7f01fe4b94b498ed8e977bdb3"
     in dockerfile
   )
   assert "ARG PCRE2_VERSION=10.49" in dockerfile
@@ -761,9 +761,9 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "LD_PRELOAD=/opt/jemalloc/lib/libjemalloc.so.2" in dockerfile
 
   # Hybrid compression: pin Facebook zstd + GetPageSpeed (tokers fork) module.
-  assert "ARG ZSTD_VERSION=1.5.7" in dockerfile
+  assert "ARG ZSTD_VERSION=1.6.0" in dockerfile
   assert (
-    "ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3"
+    "ARG ZSTD_SHA256=2ba599ae2a257976278e7e71e998433a387bfd18aa7b78678229fd5d84f5e9b8"
     in dockerfile
   )
   assert "ARG ZSTD_NGINX_MODULE_VERSION=0.2.2" in dockerfile

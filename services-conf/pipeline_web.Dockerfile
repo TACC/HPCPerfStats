@@ -5,7 +5,7 @@
 FROM node:26.13.1-alpine3.24 AS frontend-builder
 # Pin npm 12+ before package install: dependency lifecycle scripts are opt-in
 # (allowScripts) so wormed preinstall hooks cannot run by default.
-ARG NPM_VERSION=12.2.2
+ARG NPM_VERSION=12.2.3
 RUN apk add --no-cache bash git \
     && npm install -g "npm@${NPM_VERSION}" \
     && npm --version
@@ -57,7 +57,7 @@ RUN /bin/bash -o pipefail -c "\
 # GIL: --without-mimalloc so jemalloc owns process + object-arena malloc.
 # FT: keep mimalloc for objects; still force-link jemalloc for side allocation.
 # Jemalloc both ways: DT_NEEDED here + runtime LD_PRELOAD + /etc/ld.so.preload for wheels.
-FROM debian:trixie-20261104 AS python-build
+FROM debian:trixie-20261123 AS python-build
 ENV PYTHON_VERSION=3.14.10 \
     MAKEFLAGS=-j40 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -181,13 +181,13 @@ RUN \
   ldconfig; \
   rm -rf /usr/src/zlib-ng'
 
-# zstd 1.5.7 (lib + CLI). Link gzip/zlib support to /opt/zlib-ng; no apt zstd.
+# zstd 1.6.0 (lib + CLI). Link gzip/zlib support to /opt/zlib-ng; no apt zstd.
 RUN \
   /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  curl -fsSL "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz" \
+  curl -fsSL "https://github.com/facebook/zstd/releases/download/v1.6.0/zstd-1.6.0.tar.gz" \
     -o /tmp/zstd.tar.gz; \
-  echo "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3  /tmp/zstd.tar.gz" | sha256sum -c -; \
+  echo "2ba599ae2a257976278e7e71e998433a387bfd18aa7b78678229fd5d84f5e9b8  /tmp/zstd.tar.gz" | sha256sum -c -; \
   mkdir -p /usr/src/zstd; \
   tar -xzf /tmp/zstd.tar.gz -C /usr/src/zstd --strip-components=1; \
   rm -f /tmp/zstd.tar.gz; \
@@ -235,13 +235,13 @@ RUN \
   ldconfig; \
   rm -rf /usr/src/mpdecimal'
 
-# libffi 3.8.0 (--with-gcc-arch=native).
+# libffi 3.8.1 (--with-gcc-arch=native).
 RUN \
   /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  curl -fsSL "https://github.com/libffi/libffi/releases/download/v3.8.0/libffi-3.8.0.tar.gz" \
+  curl -fsSL "https://github.com/libffi/libffi/releases/download/v3.8.1/libffi-3.8.1.tar.gz" \
     -o /tmp/libffi.tar.gz; \
-  echo "7da3e2d9a171eb0a038f592ecad3ff2bb2550f3496d87b3b29ad0cf4430c0db4  /tmp/libffi.tar.gz" | sha256sum -c -; \
+  echo "81e879c094cc5ec3186c48510c6385ac6b3e866192e8bc71a35245703757ee40  /tmp/libffi.tar.gz" | sha256sum -c -; \
   mkdir -p /usr/src/libffi; \
   tar -xzf /tmp/libffi.tar.gz -C /usr/src/libffi --strip-components=1; \
   rm -f /tmp/libffi.tar.gz; \
@@ -316,7 +316,7 @@ RUN \
   test -n "$zstd_so"; \
   ldd "$zstd_so" | grep '/opt/zstd/.*libzstd'; \
   /opt/python3.14/bin/python3.14 -c "import zlib; v=getattr(zlib,\"ZLIB_RUNTIME_VERSION\",zlib.ZLIB_VERSION); assert \"zlib-ng\" in str(v).lower(), v"; \
-  /opt/python3.14/bin/python3.14 -c "import _zstd, compression.zstd as z; assert _zstd.zstd_version.startswith(\"1.5.\"), _zstd.zstd_version"; \
+  /opt/python3.14/bin/python3.14 -c "import _zstd, compression.zstd as z; assert _zstd.zstd_version.startswith(\"1.6.\"), _zstd.zstd_version"; \
   find /opt/python3.14 -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   mkdir -p /usr/local/bin /usr/local/lib; \
   ln -sfn /opt/python3.14/bin/python3 /usr/local/bin/python3; \
@@ -383,7 +383,7 @@ RUN \
   test -n "$zstd_so"; \
   ldd "$zstd_so" | grep '/opt/zstd/.*libzstd'; \
   /opt/python3.14t/bin/python3.14t -c "import zlib; v=getattr(zlib,\"ZLIB_RUNTIME_VERSION\",zlib.ZLIB_VERSION); assert \"zlib-ng\" in str(v).lower(), v"; \
-  /opt/python3.14t/bin/python3.14t -c "import _zstd, compression.zstd as z; assert _zstd.zstd_version.startswith(\"1.5.\"), _zstd.zstd_version"; \
+  /opt/python3.14t/bin/python3.14t -c "import _zstd, compression.zstd as z; assert _zstd.zstd_version.startswith(\"1.6.\"), _zstd.zstd_version"; \
   find /opt/python3.14t -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   echo "/opt/python3.14t/lib" > /etc/ld.so.conf.d/python314t.conf; \
   ldconfig; \
@@ -740,8 +740,8 @@ RUN /bin/bash -o pipefail -c '\
 # bundle Codon runtime next to $ORIGIN. Runtime copies only /opt/hpcperfstats/codon_parse
 # (no /opt/codon in the slim image).
 FROM python-build AS codon-build
-ENV CODON_VERSION=0.20.6 \
-    CODON_TARBALL_SHA256=688772b279465e6d6ad7269741844f17dc5834eef4333f8a7851b6446f7143b6
+ENV CODON_VERSION=0.20.8 \
+    CODON_TARBALL_SHA256=523e59e9cd9dc55c08eccf478214968aa1c71f93455ae502c2658c08040e7672
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   apt-get update -y; \
@@ -784,7 +784,7 @@ RUN chmod +x /tmp/codon-metrics-src/build_codon_metrics_ext.sh \
   && rm -rf /tmp/codon-metrics-src /opt/codon
 
 # Slim runtime: COPY only /opt install prefixes (never /usr/src or cmake build dirs).
-FROM debian:trixie-20261104-slim AS hpcperfstats-base
+FROM debian:trixie-20261123-slim AS hpcperfstats-base
 
 RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
     && mkdir -p /hpcperfstats /home/hpcperfstats/.ssh \
@@ -873,7 +873,7 @@ RUN /bin/bash -o pipefail -c '\
   _zstd_usr=$(readlink -f /usr/local/bin/zstd); \
   _zstd_opt=$(readlink -f /opt/zstd/bin/zstd); \
   test $_zstd_usr = $_zstd_opt; \
-  /usr/local/bin/zstd --version | grep -F 1.5.7 \
+  /usr/local/bin/zstd --version | grep -F 1.6.0 \
 '
 
 # Codon pyext lands via COPY --from=codon-build (above). Own for pipeline uid.

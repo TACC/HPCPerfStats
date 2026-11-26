@@ -105,12 +105,12 @@ def test_dockerfile_uses_debian_trixie_builder_and_slim_runtime():
   ).read_text()
   assert "FROM python:3.14.7-trixie" not in dockerfile
   assert re.search(
-    r"^FROM debian:trixie-20261104 AS python-build\s*$",
+    r"^FROM debian:trixie-20261123 AS python-build\s*$",
     dockerfile,
     flags=re.MULTILINE,
   )
   assert re.search(
-    r"^FROM debian:trixie-20261104-slim AS hpcperfstats-base\s*$",
+    r"^FROM debian:trixie-20261123-slim AS hpcperfstats-base\s*$",
     dockerfile,
     flags=re.MULTILINE,
   )
@@ -131,17 +131,17 @@ def test_compiled_library_pins_are_latest_known():
   assert (
     "96d33abb4bb0070c7be0fed4246cd38416188325f820468214471938545b1ac8" in build
   )
-  assert "libffi-3.8.0.tar.gz" in build
+  assert "libffi-3.8.1.tar.gz" in build
   assert (
-    "7da3e2d9a171eb0a038f592ecad3ff2bb2550f3496d87b3b29ad0cf4430c0db4" in build
+    "81e879c094cc5ec3186c48510c6385ac6b3e866192e8bc71a35245703757ee40" in build
   )
   assert "zlib-ng/archive/refs/tags/2.3.3.tar.gz" in build
   assert (
     "f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1" in build
   )
-  assert "zstd-1.5.7.tar.gz" in build
+  assert "zstd-1.6.0.tar.gz" in build
   assert (
-    "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3" in build
+    "2ba599ae2a257976278e7e71e998433a387bfd18aa7b78678229fd5d84f5e9b8" in build
   )
   assert "PYTHON_VERSION=3.14.10" in build
   _py314_8_sha = (
@@ -224,7 +224,7 @@ def test_zstd_opt_direct_link_replaces_system_cli_enables_cpython_zstd():
     build,
   )
   zstd_run = build[
-    build.index("zstd-1.5.7.tar.gz") : build.index("mpdecimal-4.0.1")
+    build.index("zstd-1.6.0.tar.gz") : build.index("mpdecimal-4.0.1")
   ]
   assert "-I/opt/zlib-ng/include" in zstd_run
   assert "-L/opt/zlib-ng/lib" in zstd_run
@@ -325,7 +325,7 @@ def test_libmpdec_and_libffi_native_flags():
   assert "-DASM" in build
   assert "hpcperfstats_configure_cflags web/shared/mpdecimal" in build
   mpd = build[
-    build.index("mpdecimal-4.0.1.tar.gz") : build.index("libffi-3.8.0.tar.gz")
+    build.index("mpdecimal-4.0.1.tar.gz") : build.index("libffi-3.8.1.tar.gz")
   ]
   assert "hpcperfstats_bake_cflags web/shared/mpdecimal" in mpd
   assert "_cf_bake=" in mpd
@@ -399,10 +399,10 @@ def test_runtime_jemalloc_both_ways_preload_and_ld_so_preload():
       base,
       flags=re.MULTILINE | re.DOTALL,
     )
-    if "/etc/ld.so.preload" in body and "grep -F 1.5.7" in body
+    if "/etc/ld.so.preload" in body and "grep -F 1.6.0" in body
   )
   assert '"' not in symlink_run
-  assert "grep -F 1.5.7" in symlink_run
+  assert "grep -F 1.6.0" in symlink_run
   assert "_zstd_usr=$(readlink -f /usr/local/bin/zstd)" in symlink_run
   # trixie-slim has no `file` package; ELF checks stay in python-build only.
   assert "file -b" not in symlink_run

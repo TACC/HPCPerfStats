@@ -220,7 +220,7 @@ def test_pyproject_dependencies_write_valid_pip_requirements_file():
   deps = _pyproject_runtime_requirements()
   requirements_text = "\n".join(deps) + "\n"
 
-  assert "Django>=6.1.2,<6.2" in requirements_text
+  assert "Django>=6.1.3,<6.2" in requirements_text
   assert "'Django" not in requirements_text
   assert '"Django' not in requirements_text
 
@@ -299,12 +299,12 @@ def test_dockerfile_pins_dual_cpython_prefixes_from_python_build():
   assert stages[-1] == "hpcperfstats-full"
 
   assert re.search(
-    r"^FROM debian:trixie-20261104 AS python-build\s*$",
+    r"^FROM debian:trixie-20261123 AS python-build\s*$",
     dockerfile,
     flags=re.MULTILINE,
   )
   assert re.search(
-    r"^FROM debian:trixie-20261104-slim AS hpcperfstats-base\s*$",
+    r"^FROM debian:trixie-20261123-slim AS hpcperfstats-base\s*$",
     dockerfile,
     flags=re.MULTILINE,
   )

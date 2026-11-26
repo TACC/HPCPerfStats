@@ -56,13 +56,13 @@ def test_db_dockerfile_apk_includes_bzip2_for_source_tarballs() -> None:
 
 def test_db_dockerfile_pins_postgres_18_sha_and_timescale() -> None:
   text = _dockerfile()
-  assert "ARG PG_VERSION=18.6" in text
+  assert "ARG PG_VERSION=18.7" in text
   assert (
-    "555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f" in text
+    "441dfae4280cae3e0425e5f876f80559fb0731c140f1aae22b3e5a54d0411bfd" in text
   )
-  assert "ARG TIMESCALEDB_VERSION=2.31.0" in text
+  assert "ARG TIMESCALEDB_VERSION=2.32.1" in text
   assert (
-    "7a0135283240abb64c87713e3280d70461954028d6426374b7e4e59f7dca6a56" in text
+    "c49c9615b2b6623f1c3ad2813b850d4c577d6c65c43bb8eee4b255e1e1af4a9f" in text
   )
 
 
@@ -80,9 +80,9 @@ def test_db_dockerfile_pins_jemalloc_lz4_zlib_ng_zstd() -> None:
   assert (
     "f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1" in text
   )
-  assert "ARG ZSTD_VERSION=1.5.7" in text
+  assert "ARG ZSTD_VERSION=1.6.0" in text
   assert (
-    "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3" in text
+    "2ba599ae2a257976278e7e71e998433a387bfd18aa7b78678229fd5d84f5e9b8" in text
   )
   assert "jemalloc-${JEMALLOC_VERSION}.tar.bz2" in text
   assert "hpcperfstats_configure_cflags db/jemalloc" in text

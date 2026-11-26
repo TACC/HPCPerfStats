@@ -35,7 +35,7 @@ repos:
   # Shell scripts (by extension or shebang); policy in .shellcheckrc. The
   # shellcheck-py mirror bundles the binary, so every host runs the same version.
   - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.10.0.1
+    rev: v0.11.0.1
     hooks:
       - id: shellcheck
 

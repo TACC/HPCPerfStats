@@ -97,10 +97,10 @@ set -eux
 _cflags="$(hpcperfstats_bake_cflags db/zlib-ng)"; curl -fsSL "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" -o /tmp/zlib-ng.tar.gz; echo "${ZLIB_NG_SHA256}  /tmp/zlib-ng.tar.gz" | sha256sum -c -; mkdir -p /usr/src/zlib-ng; tar -xzf /tmp/zlib-ng.tar.gz -C /usr/src/zlib-ng --strip-components=1; cd /usr/src/zlib-ng; cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/zlib-ng -DCMAKE_INSTALL_LIBDIR=lib -DZLIB_COMPAT=ON -DZLIB_ENABLE_TESTS=OFF -DZLIBNG_ENABLE_TESTS=OFF -DWITH_GTEST=OFF -DWITH_OPTIM=ON -DWITH_NEW_STRATEGIES=ON -DWITH_NATIVE_INSTRUCTIONS=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_AR="${AR}" -DCMAKE_RANLIB="${RANLIB}" -DCMAKE_NM="${NM}" -DCMAKE_EXE_LINKER_FLAGS="${HPC_THINLTO_LDFLAGS}" -DCMAKE_SHARED_LINKER_FLAGS="${HPC_THINLTO_LDFLAGS}" -DCMAKE_C_FLAGS="${_cflags}"; cmake --build build -j"$(nproc)"; cmake --install build; test -f /opt/zlib-ng/lib/libz.so || test -f /opt/zlib-ng/lib/libz.so.1; rm -rf /usr/src/zlib-ng /tmp/zlib-ng.tar.gz
 BASH
 
-ARG ZSTD_VERSION=1.5.7
-ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
+ARG ZSTD_VERSION=1.6.0
+ARG ZSTD_SHA256=2ba599ae2a257976278e7e71e998433a387bfd18aa7b78678229fd5d84f5e9b8
 ENV ZSTD_VERSION=${ZSTD_VERSION} ZSTD_SHA256=${ZSTD_SHA256}
-# --- zstd (match Python image /opt/zstd 1.5.7 pin; gzip→zlib-ng, .lz4→/opt/lz4) ---
+# --- zstd (match Python image /opt/zstd 1.6.0 pin; gzip→zlib-ng, .lz4→/opt/lz4) ---
 RUN \
   /bin/bash -o pipefail -s <<'BASH'
 set -eux
@@ -114,8 +114,8 @@ ENV PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig:/opt/lz4/lib/pkgconfig:/opt/zstd
   CFLAGS="${OPT_CFLAGS_PG}" \
   CXXFLAGS="${OPT_CFLAGS_PG}"
 
-ARG PG_VERSION=18.6
-ARG PG_SHA256=555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f
+ARG PG_VERSION=18.7
+ARG PG_SHA256=441dfae4280cae3e0425e5f876f80559fb0731c140f1aae22b3e5a54d0411bfd
 ENV PG_VERSION=${PG_VERSION} PG_SHA256=${PG_SHA256}
 # --- PostgreSQL 18 ---
 RUN \
@@ -157,8 +157,8 @@ strip --strip-unneeded /usr/local/bin/postgres /usr/local/bin/psql || true
 postgres --version
 BASH
 
-ARG TIMESCALEDB_VERSION=2.31.0
-ARG TIMESCALEDB_SHA256=7a0135283240abb64c87713e3280d70461954028d6426374b7e4e59f7dca6a56
+ARG TIMESCALEDB_VERSION=2.32.1
+ARG TIMESCALEDB_SHA256=c49c9615b2b6623f1c3ad2813b850d4c577d6c65c43bb8eee4b255e1e1af4a9f
 ENV TIMESCALEDB_VERSION=${TIMESCALEDB_VERSION} TIMESCALEDB_SHA256=${TIMESCALEDB_SHA256}
 # --- TimescaleDB (not APACHE_ONLY). timescaledb.so must NOT DT_NEEDED jemalloc
 # (or lz4/zstd): the extension is loaded into the postgres process, which
@@ -296,7 +296,7 @@ RUN set -eux; \
   postgres --version
 
 ENV PG_MAJOR=18 \
-  PG_VERSION=18.6 \
+  PG_VERSION=18.7 \
   PGDATA=/var/lib/postgresql/18/docker \
   TIMESCALEDB_TELEMETRY=off \
   LD_PRELOAD=/opt/jemalloc/lib/libjemalloc.so.2 \
