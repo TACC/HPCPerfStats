@@ -434,6 +434,24 @@ def test_no_dead_code_rules_are_dual_registered():
     assert lib.rule_dual_registration_issues([str(path)]) == [], path
 
 
+def test_measurement_records_rule_routes_and_is_dual_registered():
+  """Committed measurement records and the harness both load the records rule."""
+  for path in (
+    "HPCPerfStats/docs/measurements/README.md",
+    "docs/measurements/overhead_profile/host_x86_64_cpu_stamp/profile.json",
+    "monitor/measurement/bin/aggregate_profiles.py",
+  ):
+    rules = triggered_rules_for_paths([path])
+    assert "monitor-measurement-records.mdc" in rules, path
+  rule = (
+    RULES_DIR.parents[1]
+    / "monitor"
+    / "cursor-rules"
+    / "monitor-measurement-records.mdc"
+  )
+  assert lib.rule_dual_registration_issues([str(rule)]) == []
+
+
 def test_triggered_rules_for_cursor_hooks_path():
   rules = triggered_rules_for_paths([HOOK_LIB_PATH])
   assert "testing-best-practices.mdc" in rules

@@ -1020,6 +1020,18 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
     ],
   },
   {
+    "id": "monitor_measurement_records",
+    "patterns": [
+      "HPCPerfStats/monitor/measurement/**",
+      "HPCPerfStats/docs/measurements/**",
+      "monitor/measurement/**",
+      "docs/measurements/**",
+    ],
+    "rules": [
+      "monitor-measurement-records.mdc",
+    ],
+  },
+  {
     "id": "monitor_systemd_service_contract",
     "patterns": [
       "HPCPerfStats/monitor/src/hpcperfstats.service",

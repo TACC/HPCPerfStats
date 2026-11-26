@@ -160,3 +160,4 @@ Statistics use fixed seeds; parsers use fixtures captured from a real `/proc`.
 - **`monitor-version-and-packaging.mdc`** — spec `build-info/` stash, `Release:` bumps.
 - **`monitor-workspace-contract.mdc`** — listend consumes only configured queues; `_measure` is never ingested.
 - **`test-runs-output-directory.mdc`** — trial-run logs under `test_runs/`; committed profiles under `docs/measurements/`.
+- **`monitor-measurement-records.mdc`** — what gets committed under `docs/measurements/`, when, and how it stays consistent with the plans.

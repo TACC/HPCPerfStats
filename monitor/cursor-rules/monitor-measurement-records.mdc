@@ -1,0 +1,71 @@
+---
+description: Every monitor measurement the paper or a plan cites is committed under docs/measurements in the same task, in the README layout, and kept consistent with the plans when numbers or interpretations change
+globs:
+  - HPCPerfStats/monitor/measurement/**
+  - HPCPerfStats/docs/measurements/**
+alwaysApply: false
+---
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+# Monitor measurement records
+
+`HPCPerfStats/docs/measurements/` is the committed record of every monitor measurement that a paper,
+report or plan cites. The raw data stays outside git (campaign archives under
+`<workspace_root>/paper_data/<campaign>/`, trial logs under `test_runs/`); the committed files are what
+someone reading the paper later can check every number against. Layout and file names are defined in
+`docs/measurements/README.md`.
+
+## Laws
+
+1. **Same task, not later.** When measurement data arrives (an overhead profile run, a
+   `counter_rotation_check.sh` output, a counterfactual or accuracy check, a `compare_runs.py`
+   report, any other measured number a plan records), commit it under `docs/measurements/` in the
+   same task that analyzes it. A number in a plan with no committed source file is incomplete work.
+2. **README layout.** One directory per node run:
+   `overhead_profile/<host>_<arch>_<cpu-slug>_<UTC stamp>/` with `profile.json`, `report.md`,
+   `profile_row.csv` and every `counter_rotation_<host>_<UTC>.txt` for that node. `<cpu-slug>` is
+   the CPU model plus the accelerator when one distinguishes the node type. Never commit `raw/`,
+   `restore.sh` or run logs. A campaign also commits its `compare_runs.py` report as
+   `overhead_profile/campaign_<name>_compare.md` and one summary record
+   `monitor_overhead_campaign_<name>_<date>.md` with the sections of the existing records: Summary
+   (table, including where the raw data lives), What this supports, Limits, Suggested citation
+   wording. Add a README index row for every new record.
+3. **Tables are rebuilt, not edited.** After adding or replacing a profile, rerun
+   `monitor/measurement/bin/aggregate_profiles.py --out docs/measurements/overhead_profile
+   docs/measurements/overhead_profile/*/profile.json` and copy each `profile.json` into
+   `tests/site_measurement/results/` (gitignored, for `emit_paper_facts.py`). Never hand-edit
+   `profile.json`, `report.md`, `profile_row.csv` or the generated `profiles.*`.
+4. **Harness changes that move a reported number.** When a change under `monitor/measurement/lib/`
+   (report, collector matrix, counter rotation, leg summary) changes a value or field in
+   `profile.json` / `report.md`, rebuild the committed profiles from their raw tree with
+   `bin/summarize_profile.py` when the raw tree is available, refresh the tables and the summary
+   record, and say so in the commit. When the raw tree is not available, leave the profile as
+   produced and add a Limits line naming the harness version it came from.
+5. **One set of numbers.** The summary record, the README and the plan that cites them carry the
+   same values, taken from the committed files. When a later finding changes a number or its
+   reading (a holder identified, a check rerun, a correction), update the summary record and the
+   plan in the same task. State the current fact; history goes in the commit message, not in
+   planning IDs (`no-dead-code-or-stale-comments.mdc`, row 9).
+6. **No credentials.** Before committing, check that every committed conf copy shows
+   `user REDACTED` / `password REDACTED`
+   (`grep -L "password REDACTED" docs/measurements/overhead_profile/*/profile.json` prints nothing).
+7. **What is excluded.** Profiles flagged `not_idle` (smoke runs) and runs that fail
+   `compare_runs.py` for their campaign are not committed as campaign results. A superseded campaign
+   stays, with its README row marked superseded and pointing at the newer record.
+
+## Checks before close
+
+- `ls docs/measurements/overhead_profile/` shows one directory per run of the campaign, each with the
+  three profile files.
+- `aggregate_profiles.py` ran after the last profile change (`profiles.md` lists every directory).
+- The summary record's numbers match the plan's tables for the same runs.
+- The law 6 grep prints nothing.
+
+## Overlap
+
+- **`monitor-overhead-measurement.mdc`** — how measurements are produced (laws 1-19); law 18 requires
+  the `compare_runs.py` report to be committed with the profiles.
+- **`test-runs-output-directory.mdc`** — trial and run logs stay under `test_runs/`; only records go
+  under `docs/measurements/`.
+- **`no-dead-code-or-stale-comments.mdc`** — doc prose rules for `docs/**/*.md` (ASCII, no planning IDs).

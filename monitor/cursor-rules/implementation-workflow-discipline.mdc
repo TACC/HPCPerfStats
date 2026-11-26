@@ -57,6 +57,7 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [python-venv-enforcement.mdc](python-venv-enforcement.mdc) | Python tooling: repo `.venv` |
 | [workspace-single-cursor-directory.mdc](workspace-single-cursor-directory.mdc) | Single `<workspace_root>/.cursor/`; real-file `hooks.json` (not symlink) |
 | [monitor-overhead-measurement.mdc](monitor-overhead-measurement.mdc) | Overhead profile harness (`measurement/`, `--measure-overhead`): release RPM only, paired blocks, NOT_MEASURED |
+| [monitor-measurement-records.mdc](monitor-measurement-records.mdc) | Every cited measurement committed under `docs/measurements/` in the same task; README layout; tables rebuilt; plan and record agree |
 | [test-first-discipline.mdc](test-first-discipline.mdc) | Test-first workflow |
 | [logic-change-checklist.mdc](logic-change-checklist.mdc) | Runtime logic changes |
 | [test-runs-output-directory.mdc](test-runs-output-directory.mdc) | Run logs under `test_runs/` |
