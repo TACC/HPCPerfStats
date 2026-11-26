@@ -21,7 +21,7 @@ set -euo pipefail
 # Optional env:
 #   INSTALL_ROOT (default: $HOME/.cache/hpcperfstats-rmq)
 #   ERLANG_HOME, RABBITMQ_HOME
-#   ERLANG_VERSION (default: 26.2.5.9)
+#   ERLANG_VERSION (default: 26.2.5.21)
 #   RABBITMQ_VERSION (default: 3.13.7)
 #   ERLANG_ARCHIVE_SHA256
 #   RABBITMQ_ARCHIVE_SHA256
@@ -34,7 +34,7 @@ if [[ -z "${ACTION}" ]]; then
 fi
 
 INSTALL_ROOT="${INSTALL_ROOT:-$HOME/.cache/hpcperfstats-rmq}"
-ERLANG_VERSION="${ERLANG_VERSION:-26.2.5.9}"
+ERLANG_VERSION="${ERLANG_VERSION:-26.2.5.21}"
 RABBITMQ_VERSION="${RABBITMQ_VERSION:-3.13.7}"
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 

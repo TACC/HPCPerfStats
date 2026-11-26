@@ -14,9 +14,9 @@ readonly REPO_ROOT
 
 # Keep pins aligned with scripts/build_static_bundle.sh where applicable.
 LIBEV_VER="${LIBEV_VER:-4.33}"
-RABBITMQ_VER="${RABBITMQ_VER:-0.17.0}"
-LIBBPF_VER="${LIBBPF_VER:-1.7.0}"
-QEMU_VER="${QEMU_VER:-11.0.1}"
+RABBITMQ_VER="${RABBITMQ_VER:-0.18.1}"
+LIBBPF_VER="${LIBBPF_VER:-1.8.0}"
+QEMU_VER="${QEMU_VER:-11.1.3}"
 
 LIBEV_URL_FMT="${LIBEV_URL_FMT:-http://dist.schmorp.de/libev/libev-%s.tar.gz}"
 RABBITMQ_C_URL_FMT="${RABBITMQ_C_URL_FMT:-https://github.com/alanxz/rabbitmq-c/archive/refs/tags/v%s.tar.gz}"

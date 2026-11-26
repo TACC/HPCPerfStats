@@ -661,7 +661,7 @@ Build, configure and validation changes in the same release:
   `MONITOR_CPU_BACKEND_X86` (Automake conditional `CPU_BACKEND_X86`); `likwid` is
   now rejected as a bad value. `--with-monitor-arch` and its Intel / AMD macros are gone: the
   vendor is read at runtime from the processor table.
-- **Static bundle.** `build_static_bundle.sh` pins only libev 4.33 and rabbitmq-c 0.17.0, plus
+- **Static bundle.** `build_static_bundle.sh` pins only libev 4.33 and rabbitmq-c 0.18.1, plus
   libbpf for the eBPF metric profiler.
 - **Capabilities.** `monitor-build-capabilities.json` carries `configure.cpu_backend: "x86"` and
   the slug token `x86perf` (for example
@@ -1300,7 +1300,7 @@ Foreign prerequisites:
 1. Install host build tooling: `make`, `cmake`, `pkg-config`, plus downloader (`curl` or `wget`).
    QEMU source bootstrap may also install Python `tomli` and `ninja` in user space via `python3 -m pip --user`.
 2. Provide a sysroot per target triplet, or allow script auto-generation via Rocky rootfs tarball download.
-3. No target builds LIKWID (removed in 3.1 Phases 2+3) or DCGM at build time (`libdcgm` is loaded at runtime); the static bundle pins only libev 4.33 and rabbitmq-c 0.17.0 (plus libbpf for the eBPF metric profiler). Foreign cross smoke builds the production backend of the target (`--with-cpu-counter-backend=auto`: `x86` on x86_64, `arm` on aarch64).
+3. No target builds LIKWID (removed in 3.1 Phases 2+3) or DCGM at build time (`libdcgm` is loaded at runtime); the static bundle pins only libev 4.33 and rabbitmq-c 0.18.1 (plus libbpf for the eBPF metric profiler). Foreign cross smoke builds the production backend of the target (`--with-cpu-counter-backend=auto`: `x86` on x86_64, `arm` on aarch64).
 4. Export one of:
    - `SYSROOT_<TRIPLET_SLUG>` (preferred), e.g. `SYSROOT_AARCH64_LINUX_GNU=/opt/sysroots/aarch64`
    - `SYSROOT` as a fallback for all foreign targets.

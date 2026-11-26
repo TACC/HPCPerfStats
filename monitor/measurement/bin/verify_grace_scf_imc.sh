@@ -71,7 +71,7 @@ save_daemon_evidence() { # copy the shm mirror and a filtered daemon log into OU
   grep -vE "${NOISE}" "${DAEMON_LOG}" > "${OUT}/daemon_journal_filtered.txt" 2>/dev/null
   [ -d "${SHM}" ] && cp -a "${SHM}" "${OUT}/shm" 2>/dev/null
 }
-# shellcheck disable=SC2317  # invoked via trap
+# shellcheck disable=SC2317,SC2329  # invoked via trap
 cleanup() {
   systemctl stop "${UNIT}" >/dev/null 2>&1
   systemctl reset-failed "${UNIT}" >/dev/null 2>&1

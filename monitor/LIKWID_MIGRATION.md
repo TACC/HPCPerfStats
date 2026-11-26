@@ -24,7 +24,7 @@
   backend defines `MONITOR_CPU_BACKEND_X86` (Automake conditional `CPU_BACKEND_X86`).
 - **Vendor:** `--with-monitor-arch` and `MONITOR_ARCH_INTEL` / `MONITOR_ARCH_AMD` are removed;
   the vendor (Intel or AMD) is read at runtime from `processor_t`.
-- **Static bundle:** `build_static_bundle.sh` pins only libev 4.33 and rabbitmq-c 0.17.0, plus
+- **Static bundle:** `build_static_bundle.sh` pins only libev 4.33 and rabbitmq-c 0.18.1, plus
   libbpf for the eBPF metric profiler. No LIKWID, hwloc or Lua archives.
 - **Capabilities:** `configure.cpu_backend: "x86"` and slug token `x86perf` (for example
   `x86_64-ver3.1-hw-ib-nvgpu-intelgpu-lustre-beegfs-x86perf-sent1-slowtier1`) replace the

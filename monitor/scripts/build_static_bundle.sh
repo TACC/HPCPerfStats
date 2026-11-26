@@ -71,8 +71,8 @@ readonly REPO_ROOT
 # =============================================================================
 # Release tarballs: upstream version strings exactly as used in URLs and paths.
 STATIC_PIN_LIBEV_VERSION="4.33"
-STATIC_PIN_RABBITMQ_C_VERSION="0.17.0"
-STATIC_PIN_LIBBPF_VERSION="1.7.0"
+STATIC_PIN_RABBITMQ_C_VERSION="0.18.1"
+STATIC_PIN_LIBBPF_VERSION="1.8.0"
 # Optional: override tarball base URLs (must contain a single %s for version where used).
 STATIC_PIN_LIBEV_URL_FMT="http://dist.schmorp.de/libev/libev-%s.tar.gz"
 # rabbitmq-c: source-of-truth repo is alanxz/rabbitmq-c; github.com/rabbitmq/rabbitmq-c archive URLs return 404.
