@@ -38,9 +38,6 @@ export const BOKEH_VENDOR_SCRIPT_CANDIDATES = [
   "/vendor/bokeh.min.js",
 ] as const;
 
-/** Canonical production path (asserted by Vitest / Playwright static serve). */
-export const BOKEH_VENDOR_SCRIPT_PATH = BOKEH_VENDOR_SCRIPT_CANDIDATES[0];
-
 let loadPromise: Promise<HpcperfstatsBokehRuntime> | null = null;
 
 function resolveWindowBokeh(): HpcperfstatsBokehRuntime | null {

@@ -93,15 +93,16 @@ def test_frontend_package_json_allowscripts_covers_esbuild():
   assert allow.get("esbuild@0.28.2") is True
 
 
-def test_js_yaml_override_stays_on_v4_for_orval_default_import():
-  """Orval does `import jsYaml from "js-yaml"`; js-yaml 5 has no default export."""
-  package_json = _frontend_json("package.json")
-  override = (package_json.get("overrides") or {}).get("js-yaml")
-  assert override is not None, (
-    "js-yaml override required (GHSA-h67p-54hq-rp68 floor)"
-  )
-  assert re.fullmatch(r"\^?4\.\d+\.\d+", override), (
-    f"js-yaml override must stay on 4.x for Orval ESM default import; got {override!r}"
+def test_js_yaml_lock_copies_stay_on_v4_for_orval_default_import():
+  """Orval does `import jsYaml from "js-yaml"`; js-yaml 5 has no default export.
+
+  Orval pins js-yaml 4.3.2 itself, so there is no override; a 5.x copy or one
+  below the GHSA-h67p-54hq-rp68 fix fails.
+  """
+  _assert_lock_copies_meet_floor(
+    "js-yaml",
+    {4: (4, 2, 0)},
+    reason="Orval default import / GHSA-h67p-54hq-rp68",
   )
 
 
@@ -136,6 +137,28 @@ def _assert_npm_override_floor(
   )
 
 
+def _assert_lock_copies_meet_floor(
+  package: str,
+  floors: dict[int, tuple[int, int, int]],
+  *,
+  reason: str,
+) -> None:
+  """Every lockfile copy of ``package`` must meet the floor of its major line.
+
+  For advisories on packages without an override: absence passes, a copy on a
+  major line with no listed floor fails, and a copy below its floor fails.
+  """
+  lock = _frontend_json("package-lock.json")
+  for name, pkg in (lock.get("packages") or {}).items():
+    if name.endswith(f"node_modules/{package}"):
+      version = _semver_triple(pkg.get("version") or "")
+      floor = floors.get(version[0])
+      assert floor is not None and version >= floor, (
+        f"lock {name}@{pkg.get('version')} is not on an allowed line "
+        f"at or above its floor {floors} ({reason})"
+      )
+
+
 def test_dompurify_override_meets_dependabot_117_floor():
   """Dependabot #117 / GHSA-p98j-92pf-mc4p: dompurify <= 3.4.15 is vulnerable."""
   _assert_npm_override_floor(
@@ -145,48 +168,54 @@ def test_dompurify_override_meets_dependabot_117_floor():
   )
 
 
-def test_nanoid_override_meets_dependabot_109_floor():
-  """Dependabot #109 / GHSA-2v37-7h3g-55p8: nanoid < 3.3.18 is vulnerable (DoS on size 0)."""
-  _assert_npm_override_floor(
+def test_nanoid_lock_copies_meet_dependabot_109_floor():
+  """Dependabot #109 / GHSA-2v37-7h3g-55p8: nanoid < 3.3.18 is vulnerable (DoS on size 0).
+
+  postcss asks for ``^3`` and @scalar/types for ``^5``, both at patched
+  releases without an override (5.x fixed in 5.1.16, GHSA-28wg-ghj8-5hjv).
+  """
+  _assert_lock_copies_meet_floor(
     "nanoid",
-    (3, 3, 18),
-    reason="GHSA-2v37-7h3g-55p8 / Dependabot #109",
+    {3: (3, 3, 18), 5: (5, 1, 16)},
+    reason="GHSA-2v37-7h3g-55p8 / GHSA-28wg-ghj8-5hjv / Dependabot #109",
   )
 
 
-def test_minimatch_override_meets_dependabot_122_floor():
-  """Dependabot #122 / GHSA-g3hv-75wg-m249: minimatch < 11.0.1 globParts DoS.
+def test_minimatch_lock_copies_meet_dependabot_122_floor():
+  """Dependabot #122 / GHSA-g3hv-75wg-m249: minimatch 7.0.0-11.0.0 globParts DoS.
 
-  eslint, typescript-eslint and ts-morph still declare ``^10``; the fix is
-  11.x only (upstream will not backport), so the override forces the major.
+  The fix is 11.x only. Every consumer now accepts 11.x, so there is no
+  override; any copy on an older line fails.
   """
-  _assert_npm_override_floor(
+  _assert_lock_copies_meet_floor(
     "minimatch",
-    (11, 0, 1),
+    {11: (11, 0, 1)},
     reason="GHSA-g3hv-75wg-m249 / Dependabot #122",
   )
 
 
-def test_hono_override_meets_dependabot_125_129_floor():
+def test_hono_lock_copies_meet_dependabot_125_129_floor():
   """Dependabot #125-#129: hono <= 4.13.15 (csrf ping, mount, css, form, router).
 
-  Dev-only via shadcn -> @modelcontextprotocol/sdk; fixed in 4.13.16.
+  Not in the tree since shadcn 4.23 (``@modelcontextprotocol/server`` has no
+  hono dependency), so there is no override. Fixed in 4.13.16.
   """
-  _assert_npm_override_floor(
+  _assert_lock_copies_meet_floor(
     "hono",
-    (4, 13, 16),
+    {4: (4, 13, 16)},
     reason="GHSA-46wx-v44x-9hh2 et al. / Dependabot #125-#129",
   )
 
 
-def test_hono_node_server_override_meets_dependabot_123_floor():
+def test_hono_node_server_lock_copies_meet_dependabot_123_floor():
   """Dependabot #123 / GHSA-jpvv-r467-5p4w: @hono/node-server < 2.1.6.
 
   Backslash in the request path parsed as a separator (proxy ACL bypass).
+  Not in the tree since shadcn 4.23, so there is no override.
   """
-  _assert_npm_override_floor(
+  _assert_lock_copies_meet_floor(
     "@hono/node-server",
-    (2, 1, 6),
+    {2: (2, 1, 6)},
     reason="GHSA-jpvv-r467-5p4w / Dependabot #123",
   )
 
@@ -207,29 +236,66 @@ def test_next_meets_dependabot_130_floor():
   )
 
 
-def test_fast_uri_override_meets_dependabot_113_116_floor():
-  """fast-uri <= 4.2.2 is vulnerable (Dependabot #113-#116 plus 2026-10 GHSA host/scheme)."""
-  _assert_npm_override_floor(
+def test_fast_uri_lock_copies_meet_dependabot_113_116_floor():
+  """fast-uri: Dependabot #113-#116 plus the 2026-10 host/scheme GHSAs.
+
+  ajv asks for ``^3``; the 3.x line is fixed in 3.1.9 and 4.x in 4.2.3, so
+  there is no override forcing ajv onto 4.x.
+  """
+  _assert_lock_copies_meet_floor(
     "fast-uri",
-    (4, 2, 3),
+    {3: (3, 1, 9), 4: (4, 2, 3)},
     reason="GHSA-w74x-v6f9-j3xg / GHSA-5jgf-p345-68v8",
   )
 
 
-def test_body_parser_override_meets_audit_floor():
-  """body-parser 2.0.0-2.3.0: GHSA-27r3-jxmh-p828 (trailing bytes DoS)."""
-  _assert_npm_override_floor(
+def test_postcss_lock_copies_meet_ghsa_fxqj_floor():
+  """postcss <= 8.5.22: GHSA-fxqj-rqcc-2cmp; next pins 8.5.23 without an override."""
+  _assert_lock_copies_meet_floor(
+    "postcss",
+    {8: (8, 5, 23)},
+    reason="GHSA-fxqj-rqcc-2cmp",
+  )
+
+
+def test_undici_lock_copies_meet_2026_10_floor():
+  """undici 2026-10 GHSAs (GHSA-4w7w-5xrc-9h26 et al.): fixed in 7.30.1 and 8.12.2."""
+  _assert_lock_copies_meet_floor(
+    "undici",
+    {7: (7, 30, 1), 8: (8, 12, 2)},
+    reason="GHSA-4w7w-5xrc-9h26 et al.",
+  )
+
+
+def test_babel_core_lock_copies_meet_ghsa_4x5r_floor():
+  """@babel/core <= 7.29.0: GHSA-4x5r-pxfx-6jf8; shadcn and the plugins ask for ``^7``."""
+  _assert_lock_copies_meet_floor(
+    "@babel/core",
+    {7: (7, 29, 6)},
+    reason="GHSA-4x5r-pxfx-6jf8",
+  )
+
+
+def test_body_parser_lock_copies_meet_audit_floor():
+  """body-parser 2.0.0-2.3.0: GHSA-27r3-jxmh-p828 (trailing bytes DoS).
+
+  Not in the tree since shadcn 4.23, so there is no override.
+  """
+  _assert_lock_copies_meet_floor(
     "body-parser",
-    (2, 4, 0),
+    {2: (2, 4, 0)},
     reason="GHSA-27r3-jxmh-p828",
   )
 
 
-def test_qs_override_meets_dependabot_111_112_floor():
-  """Dependabot #111-#112 / GHSA-*-qs: qs <= 6.15.3 is vulnerable."""
-  _assert_npm_override_floor(
+def test_qs_lock_copies_meet_dependabot_111_112_floor():
+  """Dependabot #111-#112 / GHSA-*-qs: qs <= 6.15.3 is vulnerable.
+
+  Not in the tree since shadcn 4.23, so there is no override.
+  """
+  _assert_lock_copies_meet_floor(
     "qs",
-    (6, 16, 0),
+    {6: (6, 16, 0)},
     reason="GHSA-x5fp-wj9c-mxmx / Dependabot #111-#112",
   )
 
@@ -244,19 +310,16 @@ def test_xmldom_override_meets_dependabot_110_floor():
 
 
 def test_mcp_sdk_lock_meets_dependabot_119_floor():
-  """Dependabot #119 / GHSA-6qxp-vccf-f47h: MCP SDK < 1.31.0 is vulnerable."""
-  lock = _frontend_json("package-lock.json")
-  versions = [
-    pkg.get("version")
-    for name, pkg in (lock.get("packages") or {}).items()
-    if name.endswith("node_modules/@modelcontextprotocol/sdk")
-  ]
-  assert versions, "package-lock.json missing @modelcontextprotocol/sdk"
-  for version in versions:
-    assert _semver_triple(version) >= (1, 31, 0), (
-      f"lock @modelcontextprotocol/sdk@{version} must be >= 1.31.0 "
-      "(GHSA-6qxp-vccf-f47h / Dependabot #119)"
-    )
+  """Dependabot #119 / GHSA-6qxp-vccf-f47h: MCP SDK < 1.31.0 is vulnerable.
+
+  shadcn 4.23 depends on ``@modelcontextprotocol/server`` instead; any SDK
+  copy in the lock must still meet the floor.
+  """
+  _assert_lock_copies_meet_floor(
+    "@modelcontextprotocol/sdk",
+    {1: (1, 31, 0)},
+    reason="GHSA-6qxp-vccf-f47h / Dependabot #119",
+  )
 
 
 def test_deepmerge_stays_dev_only_for_dependabot_121():

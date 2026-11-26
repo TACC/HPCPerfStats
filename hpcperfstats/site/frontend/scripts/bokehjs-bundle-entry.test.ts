@@ -43,7 +43,6 @@ describe("bokehjs-bundle Turbopack entry (Bokeh 3.10+)", () => {
     expect(bundle).not.toMatch(
       /from\s+['"]@bokeh\/bokehjs\/build\/js\/bokeh\.esm\.min\.js['"]/,
     );
-    expect(bundle).toContain('BOKEH_VENDOR_SCRIPT_PATH = BOKEH_VENDOR_SCRIPT_CANDIDATES[0]');
     expect(bundle).toContain('"/static/frontend/vendor/bokeh.min.js"');
     expect(bundle).toContain('"/vendor/bokeh.min.js"');
     expect(bundle).toContain("export function loadBokehRuntime");
