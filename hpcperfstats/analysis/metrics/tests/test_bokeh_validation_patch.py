@@ -1,12 +1,13 @@
 """
-Regression tests for the thread-safe Bokeh property-validation shim.
+Regression tests for the Bokeh free-threaded hot-path shim.
 
-The free-threaded update_metrics pool stopped scaling because Bokeh's
+The free-threaded update_metrics pool stopped scaling on two Bokeh sites:
 ``validate`` toggled validation through a class-attribute write on
-``Property`` for every model instantiated (type-cache invalidation under the
-interpreter-wide type lock; version budget exhausted at import). These tests
-pin the shim: no class-attribute write, per-thread scope, idempotent install,
-and import order ahead of ``bokeh.models`` in the scheduler.
+``Property`` (fixed upstream in Bokeh 3.10.2 with a ``ContextVar``), and
+``PropertyDescriptor.is_unstable`` imports on every call (still patched).
+These tests pin the upstream fix (no class-attribute write, per-thread
+scope, ``set_validation_default`` honoured), the ``is_unstable`` shim, and
+the import order ahead of ``bokeh.models`` in the scheduler.
 """
 
 from __future__ import annotations
@@ -44,11 +45,23 @@ PATCH_IMPORT = (
 )
 
 
-def test_install_is_idempotent_and_replaces_bokeh_hooks():
-  assert patch.install_threadsafe_bokeh_property_validation() is False
-  assert bases.validation_on is patch.validation_on
-  assert validation.validate.__init__ is patch._validate_init
-  assert validation.validate.__exit__ is patch._validate_exit
+def test_install_is_idempotent_and_leaves_stock_validation():
+  assert patch.install_bokeh_is_unstable_shim() is False
+  assert bases.validation_on.__module__ == "bokeh.core.property.bases"
+  assert validation.validate.__init__.__module__ == (
+    "bokeh.core.property.validation"
+  )
+
+
+def test_set_validation_default_is_honoured():
+  try:
+    validation.set_validation_default(False)
+    assert bases.validation_on() is False
+    with validation.validate(True):
+      assert bases.validation_on() is True
+  finally:
+    validation.set_validation_default(True)
+  assert bases.validation_on() is True
 
 
 def test_is_unstable_is_hoisted_and_keeps_bokeh_semantics():
@@ -94,7 +107,7 @@ def test_nested_validate_restores_outer_value():
   assert bases.validation_on() is True
 
 
-def test_without_property_validation_decorator_uses_shim():
+def test_without_property_validation_decorator_disables_validation():
   seen = []
 
   @validation.without_property_validation
@@ -132,7 +145,7 @@ def test_validate_false_in_one_thread_does_not_leak_to_another():
 def test_update_metrics_installs_shim_before_django_and_bokeh_models():
   src = UPDATE_METRICS_SRC.read_text(encoding="utf-8")
   patch_pos = src.find(PATCH_IMPORT)
-  assert patch_pos > 0, "update_metrics.py must import the validation shim"
+  assert patch_pos > 0, "update_metrics.py must import the Bokeh shim"
   assert patch_pos < src.find("ensure_django()")
   first_bokeh_models = re.search(r"^\s*(from|import) bokeh\.models", src, re.M)
   assert first_bokeh_models is None or patch_pos < first_bokeh_models.start()
@@ -143,9 +156,9 @@ def test_fresh_interpreter_installs_shim_before_bokeh_models_load():
     "import hpcperfstats.analysis.metrics.update_metrics\n"
     "from hpcperfstats.analysis.metrics.lib.plot import "
     "bokeh_validation_patch as p\n"
-    "from bokeh.core.property import bases\n"
-    "print(int(p.INSTALLED_BEFORE_BOKEH_MODELS), "
-    "int(bases.validation_on is p.validation_on))\n"
+    "from bokeh.core.property import descriptors\n"
+    "f = descriptors.PropertyDescriptor.__dict__['is_unstable'].__func__\n"
+    "print(int(p.INSTALLED_BEFORE_BOKEH_MODELS), int(f is p._is_unstable))\n"
   )
   proc = subprocess.run(
     [sys.executable, "-c", code],

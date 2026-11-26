@@ -74,9 +74,10 @@ def work_paths_for_payload(payload: dict) -> list[str]:
     for plan_path in paths_from_plan_markdown(plan_text):
       if plan_path not in work_paths:
         work_paths.append(plan_path)
-  elif edited_path := edited_path_from_payload(payload):
-    if edited_path not in work_paths:
-      work_paths.append(edited_path)
+  elif (
+    edited_path := edited_path_from_payload(payload)
+  ) and edited_path not in work_paths:
+    work_paths.append(edited_path)
   return work_paths
 
 

@@ -26,17 +26,17 @@ If Bokeh regressions reappear in the browser console after upgrades, prefer fixi
 
 ## Python-side runtime shim (free-threaded pipeline) — re-verify on every bump
 
-`hpcperfstats/analysis/metrics/lib/plot/bokeh_validation_patch.py` monkeypatches three Bokeh internals at import (installed by `update_metrics.py` **before** any `bokeh.models` import, and first in `hpcperfstats/analysis/metrics/lib/plot/__init__.py`):
+`hpcperfstats/analysis/metrics/lib/plot/bokeh_validation_patch.py` monkeypatches one Bokeh internal at import (installed by `update_metrics.py` **before** any `bokeh.models` import, and first in `hpcperfstats/analysis/metrics/lib/plot/__init__.py`):
 
 | Patched | Why (hpcperfstats-dev, 3.14t, Bokeh 3.10.1, 2026-10-31) |
 |---------|------|
-| `bokeh.core.property.validation.validate.__init__` / `__exit__` and `bokeh.core.property.bases.validation_on` | Stock `validate()` writes the **class attribute** `Property._should_validate` per `HasProps._initialize`; each write invalidates the type cache of `Property` and all subclasses under the interpreter-wide type lock, and after 1000 writes (reached during `import bokeh.models`) every Bokeh property lookup is permanently uncacheable. The metrics pool was flat at 1.4–1.7 jobs/min for 1–4 threads and collapsed at 8+. The shim keeps the flag in a per-thread `ContextVar` (also removes a cross-thread race). |
+| `bokeh.core.property.validation.validate` / `bases.validation_on` (**fixed upstream in Bokeh 3.10.2**, shim removed 2026-11-25) | Through 3.10.1 stock `validate()` wrote the **class attribute** `Property._should_validate` per `HasProps._initialize`, invalidating the type cache of `Property` and its subclasses under the interpreter-wide type lock; after 1000 writes every Bokeh property lookup was uncacheable (metrics pool flat at 1.4-1.7 jobs/min). 3.10.2 keeps the override in a `ContextVar` (`bases._validation_override`) plus `set_validation_default`; stock Bokeh handles it now. |
 | `bokeh.core.property.descriptors.PropertyDescriptor.is_unstable` | Stock version runs two `import` statements per call; on the FT build every import takes the shared `sys.modules` dict lock (34% of contended lock acquisitions at 28 threads). Shim resolves `FunctionType` / `InstanceDefault` once. |
 
 **On every `bokeh==` bump, in the same task:**
 
-1. `grep -rn "_should_validate\|validation_on\|def is_unstable" <site-packages>/bokeh/` — the shim covers readers in `bases.py` (`prepare_value`) and the writer in `validation.py`. A **new** reader of `Property._should_validate`, a new writer, or a moved/renamed `InstanceDefault` means the shim must be extended (it fails at import if `InstanceDefault` moved; it silently misses a new reader).
-2. Run `hpcperfstats/analysis/metrics/tests/test_bokeh_validation_patch.py` (no class write inside `validate(False)`, per-thread isolation, hoisted `is_unstable` parity, fresh-interpreter ordering before `bokeh.models`).
+1. `grep -rn "_should_validate\|_validation_override\|def is_unstable" <site-packages>/bokeh/` — a returning class-attribute write (`_should_validate`) means the validation patch must come back; a moved/renamed `InstanceDefault` breaks the shim at import; `is_unstable` without per-call imports means the shim can be deleted.
+2. Run `hpcperfstats/analysis/metrics/tests/test_bokeh_validation_patch.py` (upstream: no class write inside `validate(False)`, per-thread isolation, `set_validation_default` honoured; shim: hoisted `is_unstable` parity, fresh-interpreter ordering before `bokeh.models`).
 3. Inside the FT image, re-run the version-tag probe: `tp_versions_used` of `bokeh.core.property.bases.Property` must stay far below 1000 after importing `update_metrics` and a prewarm (`test_runs/scaling/type_version_scan.py` style; offsets 400/426 are for the 3.14t `PyTypeObject` layout and move with CPython bumps).
 4. If upstream Bokeh fixes either site, delete the corresponding patch function, keep the import-order contract, and record the fixed version here.
 

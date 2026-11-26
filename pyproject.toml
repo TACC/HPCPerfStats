@@ -26,22 +26,22 @@ classifiers = [
   "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-  "numpy==2.5.4",
+  "numpy==2.5.5",
   "numexpr==2.14.2",
-  "psycopg==3.3.6",
-  "pandas==3.1.0",
-  "python-dateutil==2.9.0.post0",
-  "bokeh==3.10.1",
-  "Django>=6.1.2,<6.2",
+  "psycopg==3.3.9",
+  "pandas==3.1.1",
+  "python-dateutil==4.0.0",
+  "bokeh==3.10.2",
+  "Django>=6.1.3,<6.2",
   "python-hostlist==2.3.0",
-  "pika==1.4.4",
-  "mysqlclient==2.3.0",
-  "gunicorn==26.2.0",
+  "pika==1.5.0",
+  "mysqlclient==2.3.2",
+  "gunicorn==27.0.1",
   "requests>=2.34.2",
   "cryptography>=50.0.2",
   "pillow>=13.0.0",
-  "tzdata==2026.5",
-  "django-valkey==0.4.1",
+  "tzdata==2026.6",
+  "django-valkey==0.5.0",
   "valkey==6.2.0",
   "djangorestframework==3.18.3",
   "drf-spectacular>=0.30.0",
@@ -52,15 +52,15 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
-  "pytest>=9.1.1",
+  "pytest>=9.2.0",
   "pytest-django>=4.14.0",
   "pytest-cov>=7.1.0",
-  "playwright>=1.64.0",
-  "psycopg[binary]==3.3.6",
+  "playwright>=1.65.2",
+  "psycopg[binary]==3.3.9",
 ]
 dev = [
-  "ruff>=0.17.3",
-  "pylint>=4.1.3",  # optional; Ruff is the primary linter (see docs/TESTING.md)
+  "ruff>=0.17.6",
+  "pylint>=4.1.4",  # optional; Ruff is the primary linter (see docs/TESTING.md)
   "vulture>=2.16",
   "pre-commit>=4.7.0",
   "memray>=1.20.0",  # commit-hook memory-leak smoke (scripts/run_commit_memory_leak_check.py)
@@ -73,12 +73,12 @@ dev = [
 # uses --no-build-isolation (official python images may omit setuptools).
 # versioneer: pandas generate_version.py imports it during meson setup.
 image-build = [
-  "mkl==2026.2.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
-  "mkl-devel==2026.2.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "mkl==2026.2.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "mkl-devel==2026.2.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
   "meson-python==0.22.1",
   "meson==1.12.1",
   "ninja==1.13.2",
-  "cython==3.3.0",
+  "cython==3.3.2",
   "setuptools>=80",
   "wheel",
   "versioneer[toml]==0.29",

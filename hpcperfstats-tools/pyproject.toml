@@ -21,13 +21,13 @@ classifiers = [
 ]
 dependencies = [
   "requests>=2.34.2",
-  "python-dateutil==2.9.0.post0",
-  "pandas==3.1.0",
+  "python-dateutil==4.0.0",
+  "pandas==3.1.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=9.0",
+  "pytest>=9.2.0",
 ]
 
 [project.scripts]

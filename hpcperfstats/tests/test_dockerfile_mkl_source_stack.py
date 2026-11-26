@@ -438,7 +438,7 @@ def test_writer_run_payload_executes_against_real_pyproject(
   assert "numpy" not in {_pep508_name(d) for d in rest}
   assert "brotli" not in {_pep508_name(d) for d in rest}
   assert any(_pep508_name(d) == "python-dateutil" for d in rest)
-  assert "bokeh==3.10.1" in rest
+  assert "bokeh==3.10.2" in rest
   assert any(_pep508_name(d) == "mkl" for d in build)
   assert any(_pep508_name(d) == "meson-python" for d in build)
   assert any(_pep508_name(d) == "setuptools" for d in build)

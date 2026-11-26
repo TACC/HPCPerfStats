@@ -1,7 +1,7 @@
 """Playwright + real BokehJS: job-list json_item fixtures must not log known failure strings.
 
 Loads committed fixtures from ``site/frontend/test/fixtures/`` (generated from
-Django ``json_item`` after range fixes). Uses the public Bokeh 3.10.1 CDN so
+Django ``json_item`` after range fixes). Uses the public Bokeh 3.10.2 CDN so
 Chromium has a real canvas (jsdom/Vitest cannot run ``embed_item``).
 
 A second test serves the **Next static export** (``npm run build`` ->
@@ -38,7 +38,7 @@ except ModuleNotFoundError:
 
 # Pin to the same major.minor as package.json @bokeh/bokehjs.
 _BOKEH_CDN_JS = (
-  "https://cdn.jsdelivr.net/npm/@bokeh/bokehjs@3.10.1/build/js/bokeh.min.js"
+  "https://cdn.jsdelivr.net/npm/@bokeh/bokehjs@3.10.2/build/js/bokeh.min.js"
 )
 
 _FAILURE_SUBSTRINGS = (
