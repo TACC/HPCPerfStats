@@ -12292,9 +12292,10 @@ def test_salvage_aborts_without_change_when_backup_mismatch_or_low_space(
 
   tar_p, _ = _truncated_day(tmp_path)
   original = Path(tar_p).read_bytes()
-  free = helpers.free_bytes_for_path(tar_p)
+  # A reserve above any real free space, so parallel tests freeing disk
+  # between setup and the check cannot flip the result.
   monkeypatch.setattr(
-    helpers.cfg, "get_sync_archive_min_free_bytes", lambda: free
+    helpers.cfg, "get_sync_archive_min_free_bytes", lambda: 2**62
   )
   assert helpers.salvage_truncated_tar_prefix(tar_p, log_fn=None).status == (
     "space_denied"
@@ -12319,9 +12320,8 @@ def test_salvage_skipped_when_free_space_below_backup_need(
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_p, _ = _truncated_day(tmp_path)
-  free = helpers.free_bytes_for_path(tar_p)
   monkeypatch.setattr(
-    helpers.cfg, "get_sync_tar_salvage_min_free_bytes", lambda: free
+    helpers.cfg, "get_sync_tar_salvage_min_free_bytes", lambda: 2**62
   )
   monkeypatch.setattr(helpers.cfg, "get_sync_archive_min_free_bytes", lambda: 0)
   res = helpers.salvage_truncated_tar_prefix(tar_p, log_fn=None)

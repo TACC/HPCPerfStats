@@ -13,6 +13,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "retired" / "collapse_percore_parallel.sh"
+# Generous: the fake jobs run in the background, and a 16-way pytest -n run
+# starves them for well over 30 s; a real hang still fails.
+_WAIT_S = 180
 
 # Stands in for `podman exec` into the db and pipeline containers. In the db
 # container the command runs as given (the script's sh -c wrapper included),
@@ -128,7 +131,7 @@ def _calls(env):
 
 def _wait_finished(env, n_jobs):
   logs = Path(env["COLLAPSE_RUN_DIR"]) / "current" / "logs"
-  deadline = time.monotonic() + 30
+  deadline = time.monotonic() + _WAIT_S
   while time.monotonic() < deadline:
     done = [p for p in logs.glob("*.log") if "\nrc=" in p.read_text()]
     if len(done) == n_jobs:
@@ -192,7 +195,7 @@ def test_auto_waits_for_the_merge_then_repairs_the_skipped_day(env):
     stderr=subprocess.STDOUT,
     text=True,
   )
-  deadline = time.monotonic() + 30
+  deadline = time.monotonic() + _WAIT_S
   while (
     "waiting to retry days the merge holds"
     not in "".join(

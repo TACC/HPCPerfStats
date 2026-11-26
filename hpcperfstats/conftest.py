@@ -171,6 +171,21 @@ def _space_pressure_off_by_default(monkeypatch):
   space.reset_for_tests()
 
 
+@pytest.fixture(autouse=True)
+def _log_role_unset():
+  """Start each test with no log role and restore it after.
+
+  ``set_log_role`` writes the current context, so a test that sets a role on
+  the main thread (``set_daemon_thread_title``, ``_CompletionReporter._run``)
+  would change the ``[script:role]`` prefix for later tests on that worker.
+  """
+  from hpcperfstats.dbload.lib.print_utils import _log_role
+
+  token = _log_role.set(None)
+  yield
+  _log_role.reset(token)
+
+
 # conf_parser module globals that hold the loaded INI.
 _CONF_PARSER_STATE = (
   "cfg",

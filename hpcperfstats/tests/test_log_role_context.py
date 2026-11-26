@@ -1,7 +1,9 @@
 """Tests for log role context wired from process_title hooks."""
 
 import io
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -173,3 +175,41 @@ def test_ingest_body_prefix_main_only(monkeypatch):
   assert writes[-1] == (
     "[sync_timedb:worker:ingest-pool] File successfully added to DB\n"
   )
+
+
+def test_log_role_leak_probe_sets_role():
+  set_log_role("thread:leak-probe")
+  assert get_log_role() == "thread:leak-probe"
+
+
+def test_log_role_starts_unset():
+  assert get_log_role() is None
+
+
+def test_log_role_does_not_leak_between_tests():
+  """A role set by one test is gone in the next (conftest ``_log_role_unset``).
+
+  Runs the probe then the reader in one serial pytest process, the order an
+  xdist worker can hit them in.
+  """
+  root = Path(__file__).resolve().parents[2]
+  rel = "hpcperfstats/tests/test_log_role_context.py"
+  proc = subprocess.run(
+    [
+      sys.executable,
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:xdist",
+      "-p",
+      "no:cacheprovider",
+      f"{rel}::test_log_role_leak_probe_sets_role",
+      f"{rel}::test_log_role_starts_unset",
+    ],
+    cwd=root,
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+  assert proc.returncode == 0, proc.stdout[-2000:]

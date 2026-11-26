@@ -4,6 +4,10 @@ import pytest
 
 from hpcperfstats.site.hpcperfstats_site import settings
 
+# The validator skips CLI-style argv; an xdist worker runs as ``python -c``
+# (``argv == ['-c']``), so production-path tests pin a gunicorn argv.
+_GUNICORN_ARGV = ["/usr/local/bin/gunicorn", "hpcperfstats_site.wsgi"]
+
 
 def test_parse_cors_allowed_origins_uses_env_list(monkeypatch):
   monkeypatch.setenv(
@@ -17,6 +21,7 @@ def test_parse_cors_allowed_origins_uses_env_list(monkeypatch):
 
 def test_validate_cors_allowed_origins_rejects_empty_in_production(monkeypatch):
   monkeypatch.setattr(settings, "DEBUG", False)
+  monkeypatch.setattr(settings.sys, "argv", _GUNICORN_ARGV)
   with pytest.raises(ValueError):
     settings._validate_cors_allowed_origins([])
 
@@ -40,6 +45,7 @@ def test_validate_cors_allowed_origins_rejects_dev_hosts_in_production(
   monkeypatch,
 ):
   monkeypatch.setattr(settings, "DEBUG", False)
+  monkeypatch.setattr(settings.sys, "argv", _GUNICORN_ARGV)
   with pytest.raises(ValueError):
     settings._validate_cors_allowed_origins(["http://localhost:5173"])
 
