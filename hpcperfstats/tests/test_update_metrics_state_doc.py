@@ -37,8 +37,8 @@ def test_state_doc_lists_backfill_states_and_storage(doc):
 
 def test_state_doc_census_and_knobs_cover_the_lane(doc):
   for token in (
-    "backfill_remaining_stale=",
-    "backfill_slots=",
+    "backfill=v:,slots:k/n,",
+    "backfill_db(hourly)=dirty:,stale:,",
     "`metrics_backfill_enabled`",
     "`metrics_backfill_min_slots`",
     "`metrics_backfill_fresh_reserve_slots`",
