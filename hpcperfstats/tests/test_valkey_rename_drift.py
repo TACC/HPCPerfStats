@@ -45,6 +45,8 @@ _ALLOWED_PATHS = {
   "docs/artifacts/update_metrics_stall_audit_2026-05-12.md",
   "docs/SECURITY_AUDIT.md",
   "docs/SECURITY_REMEDIATION_BACKLOG.md",
+  # Style guide names Redis as the banned term that Vale rewrites to Valkey.
+  "docs/reference/documentation-style.md",
   "hpcperfstats/cursor-rules/operator-command-lessons-learned.mdc",
   "hpcperfstats/cursor-rules/compose-operator-terminal-commands.mdc",
   "hpcperfstats/cursor-rules/python-image-interpreter-contract.mdc",
