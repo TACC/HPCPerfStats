@@ -99,6 +99,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | Trigger paths | Read these rules |
 |---------------|------------------|
 | `HPCPerfStats/monitor/README.md`, `tests/README.md` | `monitor-readme-maintenance.mdc` |
+| `HPCPerfStats/monitor/README.md`, `docs/**/*.md` (incl. `docs/how-to/**`, `docs/explanation/**`, `docs/reference/**`), `tests/**/README.md`, `measurement/**/*.md` | `monitor-docs-structure-and-style.mdc` (placement, templates, `EXTRA_DIST` + `make check` on moves); evergreen quadrant pages also follow `HPCPerfStats/hpcperfstats/cursor-rules/docs-current-state-only.mdc` |
 
 ### Cursor rules (domain rule authoring)
 

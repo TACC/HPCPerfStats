@@ -701,6 +701,14 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     "id": "core_docs_current_state",
     "patterns": [
       "HPCPerfStats/README.md",
+      "docs/index.md",
+      "docs/tutorials/*",
+      "docs/how-to/*",
+      "docs/reference/*",
+      "docs/explanation/*",
+      "monitor/docs/how-to/*",
+      "monitor/docs/explanation/*",
+      "monitor/docs/reference/*",
       "docs/using-the-website-as-a-researcher.md",
       "docs/DEPLOY_CONCURRENCY_AND_NUMA.md",
       "docs/design-document.md",
@@ -712,6 +720,28 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     ],
     "rules": [
       "docs-current-state-only.mdc",
+    ],
+  },
+  {
+    # Container docs tree. fnmatch `*` crosses `/`, so `docs/*.md` covers
+    # every quadrant and record directory. README patterns stay off
+    # `monitor/` paths: the monitor copy governs those.
+    "id": "docs_structure_and_style",
+    "patterns": [
+      "HPCPerfStats/README.md",
+      "docs/*.md",
+      "hpcperfstats/*/README.md",
+      "hpcperfstats-tools/README.md",
+      "HPCPerfStats/hpcperfstats-tools/README.md",
+      "cursor-hooks/README.md",
+      "HPCPerfStats/cursor-hooks/README.md",
+      "tests/*/README.md",
+    ],
+    "exact_paths": [
+      "README.md",
+    ],
+    "rules": [
+      "docs-structure-and-style.mdc",
     ],
   },
   {
@@ -1480,6 +1510,22 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
     ],
     "rules": [
       "monitor-readme-maintenance.mdc",
+    ],
+  },
+  {
+    "id": "monitor_docs_structure_and_style",
+    "patterns": [
+      "HPCPerfStats/monitor/README.md",
+      "HPCPerfStats/monitor/docs/*.md",
+      "HPCPerfStats/monitor/tests/*README.md",
+      "HPCPerfStats/monitor/measurement/*.md",
+      "monitor/README.md",
+      "monitor/docs/*.md",
+      "monitor/tests/*README.md",
+      "monitor/measurement/*.md",
+    ],
+    "rules": [
+      "monitor-docs-structure-and-style.mdc",
     ],
   },
   {

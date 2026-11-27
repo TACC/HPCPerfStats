@@ -524,6 +524,87 @@ def test_readme_install_triggered_for_operator_readme_paths():
   assert "readme-installation-sync.mdc" in root_rules
 
 
+def test_docs_index_pages_do_not_trigger_install_rules():
+  """The docs map is ``docs/index.md``: it must not route like the install README."""
+  for path in (
+    "/repo/HPCPerfStats/docs/index.md",
+    "/repo/HPCPerfStats/docs/how-to/index.md",
+  ):
+    rules = triggered_rules_for_paths([path])
+    assert "readme-installation-sync.mdc" not in rules, path
+    assert "minimal-compose-install-footprint.mdc" not in rules, path
+
+
+@pytest.mark.parametrize(
+  "path",
+  [
+    "docs/index.md",
+    "docs/tutorials/install-hpcperfstats.md",
+    "docs/how-to/operate/upgrade-the-stack.md",
+    "docs/how-to/develop/run-tests.md",
+    "docs/reference/release-notes.md",
+    "docs/explanation/architecture.md",
+  ],
+)
+def test_evergreen_doc_dirs_trigger_docs_rules(path):
+  rules = triggered_rules_for_paths([f"/repo/HPCPerfStats/{path}"])
+  assert "docs-structure-and-style.mdc" in rules
+  assert "docs-current-state-only.mdc" in rules
+
+
+@pytest.mark.parametrize(
+  "path",
+  [
+    "docs/history/sync-timedb-incidents.md",
+    "docs/measurements/README.md",
+    "docs/plans/PLAN_TEMPLATE.md",
+  ],
+)
+def test_record_doc_dirs_get_structure_rule_but_not_current_state(path):
+  rules = triggered_rules_for_paths([f"/repo/HPCPerfStats/{path}"])
+  assert "docs-structure-and-style.mdc" in rules
+  assert "docs-current-state-only.mdc" not in rules
+
+
+def test_package_readmes_trigger_docs_structure_rule():
+  for path in (
+    "/repo/HPCPerfStats/README.md",
+    "/repo/HPCPerfStats/hpcperfstats/site/frontend/README.md",
+    "/repo/HPCPerfStats/hpcperfstats-tools/README.md",
+    "/repo/HPCPerfStats/cursor-hooks/README.md",
+    "/repo/HPCPerfStats/tests/site_measurement/README.md",
+  ):
+    assert "docs-structure-and-style.mdc" in triggered_rules_for_paths(
+      [path]
+    ), path
+
+
+@pytest.mark.parametrize(
+  "path",
+  [
+    "monitor/README.md",
+    "monitor/docs/how-to/build-the-rpm.md",
+    "monitor/docs/explanation/design.md",
+    "monitor/docs/reference/legacy-formats.md",
+    "monitor/tests/README.md",
+  ],
+)
+def test_monitor_docs_trigger_monitor_rule_not_container_rule(path):
+  rules = triggered_rules_for_paths([f"/repo/HPCPerfStats/{path}"])
+  assert "monitor-docs-structure-and-style.mdc" in rules
+  assert "docs-structure-and-style.mdc" not in rules
+
+
+def test_monitor_quadrant_docs_trigger_current_state_rule():
+  for path in (
+    "monitor/docs/how-to/build-the-rpm.md",
+    "monitor/docs/explanation/design.md",
+    "monitor/docs/reference/legacy-formats.md",
+  ):
+    rules = triggered_rules_for_paths([f"/repo/HPCPerfStats/{path}"])
+    assert "docs-current-state-only.mdc" in rules, path
+
+
 def test_readme_install_triggered_for_upgrade_doc():
   rules = triggered_rules_for_paths(["/repo/HPCPerfStats/docs/upgrade.md"])
   assert "readme-installation-sync.mdc" in rules

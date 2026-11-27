@@ -29,7 +29,7 @@ Before operator commands touch archive, accounting, logs, or other on-disk data:
 2. **First block (pipeline service)** — read paths from production INI inside the container via **`conf_parser` getters** (not raw ConfigParser), then use those variables in all later commands in the plan:
 
 ```bash
-docker compose exec pipeline su hpcperfstats -c 'python3 -c "
+podman-compose -p hpcperfstats exec pipeline su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
 print(\"data_dir\", cfg.get_data_dir_path())
 print(\"archive_dir\", cfg.get_archive_dir_path())
@@ -43,7 +43,7 @@ print(\"acct_path\", cfg.get_accounting_path())
 
 **Anti-pattern — production `.env` / `HPCPERFSTATS_SSL_CERTS_DIR` for proxy TLS (hpcperfstats04 2026-08-29):** site TLS path is **`proxy_ssl_source.device`** in **`docker-compose.yaml`**. Do **not** require operators to `export HPCPERFSTATS_SSL_CERTS_DIR=…` or maintain a Compose **`.env`** for proxy startup (`no-production-env-for-ini-config.mdc`). PEMs materialize at container start via **`resolve_proxy_ssl_certs_dir.py`** in **`proxy_entrypoint.sh`**. Fail-closed `${VAR:?…}` also broke bare **`compose down`** when unset.
 
-**Anti-pattern — bind only Let’s Encrypt `live/hostname` or `rm -rf` on a symlink into it (hpcperfstats04 2026-08-29):** mount parent **`/etc/letsencrypt`** with optional **`HPCPERFSTATS_SSL_CERTS_REL=live/hostname`**; never bind the leaf alone (archive symlinks break). Never **`rm -rf`** paths that might be symlinks into **`/etc/letsencrypt/live/...`**. After renew: **`docker compose restart proxy`** (no image rebuild).
+**Anti-pattern — bind only Let’s Encrypt `live/hostname` or `rm -rf` on a symlink into it (hpcperfstats04 2026-08-29):** mount parent **`/etc/letsencrypt`** with optional **`HPCPERFSTATS_SSL_CERTS_REL=live/hostname`**; never bind the leaf alone (archive symlinks break). Never **`rm -rf`** paths that might be symlinks into **`/etc/letsencrypt/live/...`**. After renew: **`podman-compose -p hpcperfstats restart proxy`** (no image rebuild).
 
 **Anti-pattern — sync_timedb checkpoint path:** Do **not** assume checkpoint lives at `{data_dir}/.sync_timedb_state.json`. The supervisor checkpoint is **`os.path.join(conf_parser.get_archive_dir_path(), '.sync_timedb_state.json')`** (same **`archive_dir`** as sealed archive root from INI). Resolve **`archive_dir`** from INI first, then grep/stat that path.
 
@@ -83,7 +83,7 @@ day = calendar_date_from_daily_tar_path(tar) if tar else None
 **Anti-pattern — inventing unparsable-raw `manifest.json`:** do **not** probe `os.path.join(archive_dir, ".sync_timedb_unparsable_raw", "manifest.json")`. Quarantine **files** live under **`.sync_timedb_unparsable_raw/`**; the JSON sidecar is **`{archive_dir}/.sync_timedb_unparsable_raw.json`** via **`manifest_path_for_archive(archive_dir)`** (`sync_timedb_archive_helpers`). Wrong path prints `manifest_exists False` even when quarantine moves are happening (hpcperfstats03, 2026-07-17).
 
 ```bash
-docker compose exec pipeline su hpcperfstats -c 'python3 -c "
+podman-compose -p hpcperfstats exec pipeline su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     manifest_path_for_archive,
@@ -110,7 +110,7 @@ if os.path.isfile(mf):
 | Populate workers | `[thread:populate-pool]` titles |
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
+podman-compose -p hpcperfstats exec pipeline \
   su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
 import os
@@ -331,7 +331,7 @@ When backends are exhausted, `psql` itself is refused with **`FATAL: sorry, too 
 
 ### Anti-pattern — heredoc SQL in a pasted block (hpcperfstats01 2026-11-17)
 
-A `psql -f - <<'SQL' … SQL` block pasted with leading spaces never ends: the indented `  SQL` is not the terminator, the shell sits at `>`, the operator presses Ctrl-C, and nothing runs. The indent is not the operator's doing: **copying a code block out of the Claude Code TUI adds 2 leading spaces to every line, every time** (hpcperfstats04 2026-11-21, the `schema_rows_near_bounds` EXPLAIN block failed the same way). Every heredoc in a chat block is therefore broken; `<<-` does not help (it strips tabs only). One long `-c "…"` line instead breaks the 70-character paste limit (copy/paste hard-wraps it). The Claude Code Stop hook (`.claude/hooks/hpc_claude_hooks.py`, `shell_block_issues`) rejects a final message whose `bash`/`sh` fence has a heredoc or a line over 70 characters. A double-quoted `Q="…"` built over several short lines also works when the SQL needs shell variables: use `'…'` SQL literals inside it, never `$$` (bash expands it to the PID).
+A `psql -f - <<'SQL' … SQL` block pasted with leading spaces never ends: the indented `  SQL` is not the terminator, the shell sits at `>`, the operator presses Ctrl-C, and nothing runs. The indent is not the operator's doing: **copying a code block out of the Claude Code TUI adds 2 leading spaces to every line, every time** (hpcperfstats04 2026-11-21, the `schema_rows_near_bounds` EXPLAIN block failed the same way). Every heredoc in a chat block is therefore broken; `<<-` does not help (it strips tabs only). One long `-c "…"` line instead breaks the 68-character paste limit (copy/paste hard-wraps it). The Claude Code Stop hook (`.claude/hooks/hpc_claude_hooks.py`, `shell_block_issues`) rejects a final message whose `bash`/`sh` fence has a heredoc or a line over 68 characters (`PASTE_LINE_MAX`). A double-quoted `Q="…"` built over several short lines also works when the SQL needs shell variables: use `'…'` SQL literals inside it, never `$$` (bash expands it to the PID).
 
 | Do | Don't |
 |----|-------|
@@ -341,7 +341,7 @@ A `psql -f - <<'SQL' … SQL` block pasted with leading spaces never ends: the i
 
 The query shape matters as much as the quoting. The same `Q=` block with a host picked by `WHERE type = … AND event = … ORDER BY time DESC LIMIT 1` over every host hit **`canceling statement due to statement timeout`** at 120 s (hpcperfstats01 2026-11-17): `host_data` has no index that leads with `type`/`event`. Pick the job (and its window) from `job_data`, which is small, then read `host_data` by **`host` + time window** (the `(host, time)` index). Do not key on `jid`: host rows often carry no accounting jid (see the `host_data.filter(jid=…)` GPU anti-pattern), so a jid lookup can come back empty with data present. `job_data.host_list` may hold short names while `host_data.host` stores the FQDN; add the suffix (taken here from one newest `host_data` row) before comparing.
 
-Corrected pattern (indentation-safe, every line ≤ 70 chars, indexed):
+Corrected pattern (indentation-safe, every line ≤ 68 chars, indexed):
 
 ```bash
 Q='SET statement_timeout = 120000;
@@ -810,7 +810,7 @@ for hosts, mins in ((h[:1], 15), (h[:1], 60), (h, 15), (h, 60)):
 '
 ```
 
-(Every line ≤ 70 chars: longer lines lost their middle on paste, see the long-line row under **Podman-compose sites**.)
+(Every line ≤ 68 chars: longer lines lost their middle on paste, see the long-line row under **Podman-compose sites**.)
 
 `exec -u hpcperfstats … python3 -c '…'` with a single-quoted outer string keeps the inner double quotes intact (no nested `su`/`sh`). Keep the Python free of single quotes: use `make_interval(days => 7)` instead of `interval '7 days'`.
 
@@ -1071,7 +1071,7 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | Nested `sh -lc` + `awk "/[s]ync_timedb.py \\[main\\]/"` + `for … done` census | **`syntax error near unexpected token \`done'`** through podman-compose (hpcperfstats03 2026-08-26 post-boot silence) — bracket/`done` quoting breaks the outer shell | **One** `su hpcperfstats -c 'python3 -c "…"'` that runs `ps` via `subprocess`, selects ingest/populate-pool parents, and calls `py-spy dump` (same shape as the Good ingest-pool-parent block). No nested `sh -lc` / `awk` / `for done` |
 | `grep -o "day_skip.: *{.kind.: *…"` (or any grep that assumes JSON field **insertion** order) on sync_timedb sidecars | **Empty histogram** (hpcperfstats01 2026-10-25 members census): `save_persistence_document` defaults to `compact=True` → `json.dump(…, separators=(",", ":"), sort_keys=True)`, so keys are **alphabetical with no spaces** (`"day_skip":{"detail":…,"kind":…}`; dead-letter entries `attempt, identity, kind, reason, recorded_at`) | Match the whole object, e.g. `grep -ho "day_skip.:{[^}]*}" "$A"/.sync_timedb_archive_members/*.json \| cut -c1-240 \| sort \| uniq -c`, or anchor on **alphabetical** neighbours (`identity.:.[^,]*,.kind.:.ingest.,.reason.:.X`). Never assume code insertion order for sidecar JSON |
 | Bucketing queue dead-letter **ingest** identities with `grep -o "/[0-9]\{9,\}[\|]"` (assuming `path\|size\|mtime`) | **Empty** ingest-by-day buckets on hpcperfstats01/02 (2026-10-25) while append buckets worked: `ingest_identity()` returns the **bare normalized path** (`sync_timedb_job_store.py`), the same as append | Anchor on the alphabetical neighbour instead: `grep -o "/[0-9]\{9,\}.,.kind.:.ingest.,.reason.:.[A-Za-z_]*" "$DL" \| sed "s/^.\([0-9]*\).*reason.:.\(.*\)$/\1 \2/" \| while read e r; do echo "$(date -d @$e +%F) $r"; done \| sort \| uniq -c` |
-| Very long **single-line** `sh -c '…'` census (1300+ chars) copied from chat or a plan into a terminal | The copy path **hard-wrapped** the line mid-token: `date` became `da` / `te` → **`sh: 1: da: not found`** (hpcperfstats02 + hpcperfstats04 2026-10-25 dead-letter `recorded_at` section) | Put each `echo == section` statement on **its own physical line inside the single-quoted `sh -c` script** (newlines are legal inside `'…'`), keeping every line short (< ~200 chars). Never rely on one giant line surviving copy/paste. **Multi-line `python3 -c '…'` too (hpcperfstats04 2026-11-05):** every line longer than ~80 chars lost its **middle** on paste (`make_interval(days => 2) ORDER BY time` → `make_inme DESC`; `round(time.monotonic() - s0, 1))` cut off) → `SyntaxError` at the first damaged line. Keep **every** line of a pasted script **≤ 70 chars**: split SQL into adjacent string literals in parentheses, alias long imports (`import … as hl`), name intermediates instead of nesting calls |
+| Very long **single-line** `sh -c '…'` census (1300+ chars) copied from chat or a plan into a terminal | The copy path **hard-wrapped** the line mid-token: `date` became `da` / `te` → **`sh: 1: da: not found`** (hpcperfstats02 + hpcperfstats04 2026-10-25 dead-letter `recorded_at` section) | Put each `echo == section` statement on **its own physical line inside the single-quoted `sh -c` script** (newlines are legal inside `'…'`), keeping every line short (< ~200 chars). Never rely on one giant line surviving copy/paste. **Multi-line `python3 -c '…'` too (hpcperfstats04 2026-11-05):** every line longer than ~80 chars lost its **middle** on paste (`make_interval(days => 2) ORDER BY time` → `make_inme DESC`; `round(time.monotonic() - s0, 1))` cut off) → `SyntaxError` at the first damaged line. Keep **every** line of a pasted script **≤ 68 chars**: split SQL into adjacent string literals in parentheses, alias long imports (`import … as hl`), name intermediates instead of nesting calls |
 | Host-side `grep daily_archive_dir /home/hpcperfstats/hpcperfstats.ini` | The INI exists **only inside the container** (`HPCPERFSTATS_INI`) → `No such file`, empty `DAILY`, every later path empty (hpcperfstats01 2026-11-01 append-throughput) | `podman exec hpcperfstats_pipeline_1 python3 -c "import hpcperfstats.dbload.lib.conf_parser as c; print(c.get_daily_archive_dir_path())"` (unlabeled print), captured into a host var |
 | Container→host path via `podman inspect` mounts with `s=$1 substr(p,length($2)+1)` | Mount destination is **`/hpcperfstats/`** (trailing slash) → host path glued as **`…/_dataarchive`** (hpcperfstats01 2026-11-01); `df`/`ls`/`findmnt` then hit a nonexistent path | Strip trailing slashes from **both** source and destination and match on `d` or `d"/"` prefix (see **Good — container path to host path** below) |
 | `iostat -xm` / `cat /proc/pressure/io` for device busy on the host | `iostat` (sysstat) not installed and PSI disabled on the EL9 kernel → **no output** (hpcperfstats01 2026-11-01) | Two `/proc/diskstats` samples 10 s apart; per-device read/write MB/s and `io_ticks` util% (see **Good — device busy from `/proc/diskstats`** below) |
