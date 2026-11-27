@@ -7,7 +7,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 WS_ROOT="$(cd "$ROOT_DIR/.." && pwd)"
 PYTHON="${WS_ROOT}/.venv/bin/python3"
-TEST_RUNS="${WS_ROOT}/test_runs"
+TEST_RUNS="${ROOT_DIR}/test_runs"
 mkdir -p "$TEST_RUNS"
 
 if [[ ! -x "$PYTHON" ]]; then
@@ -34,7 +34,7 @@ Run consolidated sync_timedb stall regression pytest battery (host venv).
 Usage:
   tests/run_sync_timedb_regression_battery.sh [-- pytest_extra_args...]
 
-Logs to: <workspace_root>/test_runs/day-close-loop-regression-battery-<timestamp>.log
+Logs to: <checkout>/test_runs/day-close-loop-regression-battery-<timestamp>.log
 
 Mandatory before closing any sync_timedb ingest/archive stall fix (sync-timedb-change-regression-gate.mdc).
 Slice 4+: queue orchestrator + job:v1 + B-09 predicate architecture (supervisor/janitor B

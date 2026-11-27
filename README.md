@@ -506,8 +506,12 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 10. **Build and start:**
 
    ```bash
-   podman-compose -p hpcperfstats up --build -d
+   ./scripts/rebuild_full_site.sh
    ```
+
+   The script builds the images, then starts the default stack with
+   `up -d --no-build`; use it for every later image refresh too
+   ([docs/upgrade.md](docs/upgrade.md)).
 
    View logs (`docker-compose.yaml` uses the **`json-file`** logging driver with
    **`max-size: 100m`** and **`max-file: 3`** so stdout stays available to
@@ -523,7 +527,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    ```bash
    HPCPERFSTATS_HTTP_PORT=8080 HPCPERFSTATS_HTTPS_PORT=8443 \
      HPCPERFSTATS_SYSLOG_PORT=1514 \
-     podman-compose -p hpcperfstats-dev up --build -d
+     HPCPERFSTATS_COMPOSE_PROJECT=hpcperfstats-dev \
+     ./scripts/rebuild_full_site.sh
    ```
 
    These variables are a development launch override only. Production site
@@ -559,7 +564,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
 | Task | Command |
 |------|---------|
-| Build and start container stack | `podman-compose -p hpcperfstats up --build -d` |
+| Build and start container stack | `./scripts/rebuild_full_site.sh` |
 | Stop and remove containers | `podman-compose -p hpcperfstats --profile pg18-migrate down` (the profile keeps `db_pg18` in the graceful stop; without it `db_pg18` is SIGKILLed mid shutdown checkpoint) |
 | Existing-stack rebuilds / Valkey / PG18 / INI | **[docs/upgrade.md](docs/upgrade.md)** |
 | Restart proxy after cert renew or `server=` change | `podman-compose -p hpcperfstats restart proxy` |

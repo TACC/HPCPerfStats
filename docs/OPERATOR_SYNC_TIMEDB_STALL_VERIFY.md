@@ -2,7 +2,7 @@
 
 Backlog catch-up sites (months of incomplete days) can run **many hours** of valid giant-archive work before an **idle spin** stall appears. Do **not** mark a deploy verified on a **15-minute T0 smoke alone**.
 
-See also: `sync-timedb-change-regression-gate.mdc`, `sync-timedb-queue-orchestrator-contract.mdc`, [SYNC_TIMEDB_PARALLELISM.md](SYNC_TIMEDB_PARALLELISM.md), live plan [sync-timedb-queue-redesign](../.cursor/plans/sync-timedb-queue-redesign.plan.md).
+See also: `sync-timedb-change-regression-gate.mdc`, `sync-timedb-queue-orchestrator-contract.mdc`, [SYNC_TIMEDB_PARALLELISM.md](SYNC_TIMEDB_PARALLELISM.md).
 
 ## Queue orchestrator era (2026-08 cutover)
 
@@ -42,7 +42,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 
 ## Queue orchestrator era — remaining tiers
 
-Production is **one** `sync_timedb.py` process per `archive_dir` (`run_sync_timedb_queue_orchestrator`, exclusive flock). Dual CLI ``backlog``/``current``, proximity heartbeat, `ArchiveJanitor` tick, handoff pins, and oldest-day **chunk gate** are **retired**. Operator census is **disk sidecars + thread titles** plus disk/DB reconstruct predicates — an empty `.sync_timedb_job_store.json` snapshot ≠ caught up. Pre-cutover T0 signatures below may mention Redis because that was the live job/members bus then; live census is the job-store sidecar and `.sync_timedb_archive_members/`.
+Production is **one** `sync_timedb.py` process per `archive_dir` (`run_sync_timedb_queue_orchestrator`, exclusive flock). Dual CLI ``backlog``/``current``, proximity heartbeat, `ArchiveJanitor` tick, handoff pins, and oldest-day **chunk gate** are **retired**. Operator census is **disk sidecars + thread titles** plus disk/DB reconstruct predicates — an empty `.sync_timedb_job_store.json` snapshot ≠ caught up. Pre-cutover T0 signatures below name the cache service as Valkey (the compose `redis` service at the time) because it was the live job/members bus then; live census is the job-store sidecar and `.sync_timedb_archive_members/`.
 
 ### RSS-pressure admission gate (`rss_hold` / `rss_release`, 2026-10-25)
 
@@ -134,7 +134,7 @@ podman-compose -p hpcperfstats logs pipeline 2>&1 | grep -E 'queue_orchestrator 
 
 **H1 (seal-defer confusion):** Narrow greps on `day-close` threads alone miss `complete=` / `tar_delete=` that often land on **`reconstruct-coordinator`** `progress day=` lines. Seal deferred while closed raw remains can be healthy — look for `incomplete_raw=` / `yielded=` and LIST requeue, not only `sealed=`.
 
-**Fail (T0 — day-close reconcile slot stall / H6, hpcperfstats04 2026-08-29):** Redis shows `day_close` LIST backlog + **exactly** `sync_day_close_max_inflight` leases for days with **no** day_raw_removal manifest advance and sticky `day_close=N/M` while ingest/append move. py-spy: `day-close_*` in `tarfile.getmember` ← `_copy_union_member_into_tar` ← `rebuild_daily_tar_member_union_in_place`. **Pass after fix:** greppable `stage_progress … advancing=true|false`, `claim`/`vacate`/`stage_enter`/`stage_exit`; after long **confirmed** no-progress (`stall_confirmed`) cooperative `yielded` vacates the lease (not a wall-clock abort from merge start while `members_done` climbs). Limitation: hang **inside** one named GNU tar extract cannot yield until that subprocess returns.
+**Fail (T0 — day-close reconcile slot stall / H6, hpcperfstats04 2026-08-29):** Valkey shows `day_close` LIST backlog + **exactly** `sync_day_close_max_inflight` leases for days with **no** day_raw_removal manifest advance and sticky `day_close=N/M` while ingest/append move. py-spy: `day-close_*` in `tarfile.getmember` ← `_copy_union_member_into_tar` ← `rebuild_daily_tar_member_union_in_place`. **Pass after fix:** greppable `stage_progress … advancing=true|false`, `claim`/`vacate`/`stage_enter`/`stage_exit`; after long **confirmed** no-progress (`stall_confirmed`) cooperative `yielded` vacates the lease (not a wall-clock abort from merge start while `members_done` climbs). Limitation: hang **inside** one named GNU tar extract cannot yield until that subprocess returns.
 
 **Fail (T0 — stale open daily tars, 2026-09-02):** hpcperfstats04 `stage_progress … advancing=true` on `reconcile_merge` (~70s/member, `members_done` still climbing — do **not** stall-confirm). Root: per-name `tarfile.getmember` union copy. hpcperfstats02 **append LLEN** ~3696 with mixed-host **FIFO** so fill `requeue`+`break` on the first other-tar item (batch size 1); `wait_on_ingest` yield is correct until append drains. **Pass after H1/H7:** named GNU tar extract; day-keyed append batches; append LLEN trends down; merge cadence ≫ 1 member/min while `advancing=true`.
 
@@ -177,9 +177,9 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 # T0 — day-close H6 progress / stall-confirm (full logs never --tail before grep)
 docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator day_close (claim|vacate|stage_enter|stage_exit|stage_progress)|stall_confirmed' | tail -80
 ```
-**Fail (T0 — boot sealed-populate stall, hpcperfstats03 2026-08-25):** hours of `[sync_timedb:main]` sealed `populate_source_decision` / `populate_source=sealed` **without** `queue_orchestrator boot discover submitted` / `boot discover seen=` / ingest fill; `ps` shows **archive-pool only** (no `ingest-pool`, no `populate-pool`); Redis ingest ZCARD/bands **0** while append LIST may already be deep. Root cause was sync boot discover **before** pools + worker `populate_and_wait` on classify. After fix: expect `boot discover submitted` early, populate-pool + ingest-pool alive within minutes, and fill/leases without MainThread sealed streams.
+**Fail (T0 — boot sealed-populate stall, hpcperfstats03 2026-08-25):** hours of `[sync_timedb:main]` sealed `populate_source_decision` / `populate_source=sealed` **without** `queue_orchestrator boot discover submitted` / `boot discover seen=` / ingest fill; `ps` shows **archive-pool only** (no `ingest-pool`, no `populate-pool`); Valkey ingest ZCARD/bands **0** while append LIST may already be deep. Root cause was sync boot discover **before** pools + worker `populate_and_wait` on classify. After fix: expect `boot discover submitted` early, populate-pool + ingest-pool alive within minutes, and fill/leases without MainThread sealed streams.
 
-**Fail (T0 — post-boot silence / discover_bg Lock deadlock, hpcperfstats03 2026-08-26):** logs show `populate-pool started` then `queue_orchestrator boot discover submitted` (or hang after pools with that log if an older build logged it **before** submit) then **no census / ingest / append / `boot discover seen=` for hours**. `ps` shows ingest+populate+archive kids alive. py-spy MainThread **idle** at `_discover_executor` ← `_submit_background_discover` (nested non-reentrant `_discover_bg_lock`). Redis: discover `LLEN=1` unclaimed, append may be deep, leases/inflight **0**, no `discover-bg` thread. **Pass after fix:** submit returns; `boot discover submitted` only after submit; fill census/leases appear within minutes; MainThread not stuck in `_discover_executor`.
+**Fail (T0 — post-boot silence / discover_bg Lock deadlock, hpcperfstats03 2026-08-26):** logs show `populate-pool started` then `queue_orchestrator boot discover submitted` (or hang after pools with that log if an older build logged it **before** submit) then **no census / ingest / append / `boot discover seen=` for hours**. `ps` shows ingest+populate+archive kids alive. py-spy MainThread **idle** at `_discover_executor` ← `_submit_background_discover` (nested non-reentrant `_discover_bg_lock`). Valkey: discover `LLEN=1` unclaimed, append may be deep, leases/inflight **0**, no `discover-bg` thread. **Pass after fix:** submit returns; `boot discover submitted` only after submit; fill census/leases appear within minutes; MainThread not stuck in `_discover_executor`.
 
 **Fail (T0 — ingest empty + append flood / MainThread day_close find, hpcperfstats03 2026-08-26):** after Lock fix: one census, hours of populate/archive skips, **zero** `ingest file path=`, **zero** `boot discover seen=`, append LIST ~70k. py-spy MainThread in `_drain_append_ready` → `enqueue_day_close_if_needed` (default FS probe) → archive-wide `iter_find_printf_records_streaming`. **Pass after subsystem-threads fix:** `ps`/`top` show titled `thread:ingest-coordinator`, `thread:append-coordinator`, `thread:day-close-coordinator`, `thread:reconstruct-coordinator` (plus `discover-bg`); MainThread only populate reap / pause recycle / death watch; append drain uses **cheap** day_close (`filesystem_complete=False`, job-store dedupe ≤1 per tar); ingest ZADD/fill resumes while append drains; day_close **workers** own remaining-raw find. Do **not** paste `REPLACE_WITH` / `SAMPLE_PATH` placeholders into classify commands — use a real baked path from the job-store append LIST.
 
@@ -188,15 +188,15 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 ```bash
 # T0 — gate-skip ACK thrash (INI paths first; full logs never --tail before grep)
 grep -cE 'Archive/delete gate: skipped|ingest file path=|queue_orchestrator census' /tmp/pipeline-full.log || true
-# Discover/append census is the job-store sidecar, not Redis job:v1
+# Discover/append census is the job-store sidecar, not Valkey job:v1
 # Expect gate_ready=False needs_ingest=True before fix; ingest enqueue after fix
 ```
 
-**Fail (T0 — ingest underfill / unused-slot gate RC7, hpcperfstats04 2026-08-30):** Redis deep ingest ZSET (`hot_q`/`catchup_q` ≫0) with **`HLEN` inflight ≪ `sync_ingest_pool_processes`**; status may show `ingest_catchup` stuck near **`catchup_cap`** while total inflight decays; RC1–RC6 helpers present (`catchup_dispatch_cap` / orphan reconcile / steal). Root cause: unused-slot elevated hot + catchup expand required `hot_submitted==0`. **Pass after RC7:** when ZSET is deep, local/HLEN ingest inflight stays near pool. **Superseded for band share:** do **not** treat catchup above `catchup_cap` while hot is deep as healthy — see catchup-dominate T0 below.
+**Fail (T0 — ingest underfill / unused-slot gate RC7, hpcperfstats04 2026-08-30):** Valkey deep ingest ZSET (`hot_q`/`catchup_q` ≫0) with **`HLEN` inflight ≪ `sync_ingest_pool_processes`**; status may show `ingest_catchup` stuck near **`catchup_cap`** while total inflight decays; RC1–RC6 helpers present (`catchup_dispatch_cap` / orphan reconcile / steal). Root cause: unused-slot elevated hot + catchup expand required `hot_submitted==0`. **Pass after RC7:** when ZSET is deep, local/HLEN ingest inflight stays near pool. **Superseded for band share:** do **not** treat catchup above `catchup_cap` while hot is deep as healthy — see catchup-dominate T0 below.
 
 **Fail (T0 — catchup-dominate / hot-band starvation, hpcperfstats04 2026-10-21):** `queue_orchestrator status` shows deep `ingest_hot` queued (tens of thousands) with `ingest_hot` inflight near 0–few while `ingest_catchup` inflight is most of the pool (often ≫ `catchup_cap`, up to full pool). Caps match law (`hot_cap=(2*pool)//3`, e.g. pool=64 → 42/22). Root cause: reserved hot loop keyed on total inflight vs `hot_cap` plus catchup expand-to-pool while `hot_queued>0`. **Pass after ingest-hot-band-starvation:** with deep hot+catchup and a full pool, median `ingest_hot` inflight trends toward `hot_cap` (≥ ~`hot_cap*0.7`) and `ingest_catchup` inflight ≤ `catchup_cap` (short spikes OK; idle slots under mem admit OK). Catchup > `catchup_cap` with `hot_q≫0` is fail.
 
-**Fail (T0 — local vs Redis desync RC8):** Redis **HLEN ≪ pool** with deep ZSET, leases ≈ HLEN, **and** empty greps for `ingest fill under-capacity` / `fill_block=` / `ingest runtime steal` (fill/hygiene gated on local-full). Root cause: phantom local `ingest_inflight` maps block fill + hygiene. **Pass after RC8:** `local_inflight_desync` may appear briefly then clear; HLEN rises toward pool; under-capacity/steal logs only when still stuck for real claim/lease reasons.
+**Fail (T0 — local vs Valkey desync RC8):** Valkey **HLEN ≪ pool** with deep ZSET, leases ≈ HLEN, **and** empty greps for `ingest fill under-capacity` / `fill_block=` / `ingest runtime steal` (fill/hygiene gated on local-full). Root cause: phantom local `ingest_inflight` maps block fill + hygiene. **Pass after RC8:** `local_inflight_desync` may appear briefly then clear; HLEN rises toward pool; under-capacity/steal logs only when still stuck for real claim/lease reasons.
 
 **Fail (T0 — decay-from-full skip storm RC9, hpcperfstats04 2026-08-30):** status time series shows **full pool then decay** (e.g. `21/39+11/77` → `2/517+3/736`) while ZSET grows; hot heads **`isfile True`** (not missing-path livelock); RC8 fingerprints deployed; **no** `fill_block=` in status during sustained underfill. Root cause: `skip_fp` / `skip_reband` same-score requeue burns skip budget while workers finish real jobs. **Pass after RC9:** penalty requeue deprioritizes skip identities; HLEN stays near pool; status shows persistent `fill_block=` until HLEN recovers; under-capacity logs include `store_hlen=` census; `oldest_day` advances.
 
@@ -204,7 +204,7 @@ grep -cE 'Archive/delete gate: skipped|ingest file path=|queue_orchestrator cens
 # T0 — RC9 decay-from-full / fill_block (full logs never --tail before grep)
 docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'queue_orchestrator status |ingest fill (under-capacity|empty deep_queue)|ingest fill skip_(fp|missing|reband) penalty' | tail -80
-# Ingest inflight census is `.sync_timedb_job_store.json` + `store_hlen=` logs, not Redis HLEN
+# Ingest inflight census is `.sync_timedb_job_store.json` + `store_hlen=` logs, not Valkey HLEN
 ```
 
 **Pass (T1/T2):** head-day work advances without restoring chunk_gate / handoff_priority / janitor tick signatures as the only progress metric. Prefer `progress day=` / `status` plus `.sync_timedb_job_store.json` and `.sync_timedb_archive_members/` over historical `oldest_day_chunk_gate_stall` greps. **T0/T1/T2 are post-deploy** — they cannot be claimed green until the orchestrator image is running; a pre-deploy empty job-store snapshot is a false negative, not a pass.
@@ -1099,7 +1099,7 @@ grep -E 'chunk dispatch begin|youngest_day_chunk_gate|newest-first / current mod
 
 grep -E 'youngest_day_chunk_gate(_pad|_stall|_cross_day_defer|_fallback)? ' /tmp/pipeline-full.log | tail -40
 
-# Heartbeat sidecar under archive_dir (not a Redis key)
+# Heartbeat sidecar under archive_dir (not a Valkey key)
 ls -la /path/to/archive/.sync_timedb_current_heartbeat.json 2>/dev/null || true
 ```
 
@@ -1673,7 +1673,7 @@ docker compose -p hpcperfstats exec db psql -h localhost -U hpcperfstats -c "SEL
 
 ### T0 / T1 — sticky ingest 0/N + bare TimeoutError thrash (H7) + idle stall (2026-08-29)
 
-**Failure signature (pre-fix):** status sticky `ingest_hot=0/N` with deep Redis ingest ZSET; mass `queue_orchestrator ingest timeout … elapsed_s=0.0 stage=unknown err=TimeoutError` while workers still log `ingest file path=`. Optional `*.fnctl.lock` identity on ZRANGE.
+**Failure signature (pre-fix):** status sticky `ingest_hot=0/N` with deep Valkey ingest ZSET; mass `queue_orchestrator ingest timeout … elapsed_s=0.0 stage=unknown err=TimeoutError` while workers still log `ingest file path=`. Optional `*.fnctl.lock` identity on ZRANGE.
 
 **Acceptance (post-deploy):**
 
@@ -1757,7 +1757,7 @@ docker compose logs pipeline --since 24h 2>&1 | grep -F 'sync_timedb worker_memo
 docker compose logs pipeline --since 24h 2>&1 | grep -F 'sync_timedb worker_memory: event=batch_summary' | grep -oE '(failure|rss)_reap_pct=[^ ]+' | tail -20
 ```
 
-**Archive populate lock timeout / F6 self-defer (T0/T1 post-fix):** fatal `Timed out waiting for archive members populate lock` during archive append when **`archive_append_inflight`** is set **before** pre-append lookup. **Pre-fix signature:** tail of pipeline logs shows **only** `populate: defer tar scan day=YYYY-MM-DD reason=archive_append_inflight` from **archive-pool** with **no** `archive_job_begin` / `archive_job_done` for that day; may end in duplicate populate lock timeout lines. Redis census post-crash may show `complete=0`, `hlen=0`, `lock_value=None`, `append_inflight=False` (orphan incomplete). **Post-fix pass:** same day shows `archive_job_begin` then `archive_job_done` / `archive_finalize`; **no** fatal populate lock timeout; janitor `Archive janitor tick done` clears `in_flight` without multi-hour `duration_s` stalls tied to stuck finalize.
+**Archive populate lock timeout / F6 self-defer (T0/T1 post-fix):** fatal `Timed out waiting for archive members populate lock` during archive append when **`archive_append_inflight`** is set **before** pre-append lookup. **Pre-fix signature:** tail of pipeline logs shows **only** `populate: defer tar scan day=YYYY-MM-DD reason=archive_append_inflight` from **archive-pool** with **no** `archive_job_begin` / `archive_job_done` for that day; may end in duplicate populate lock timeout lines. Valkey census post-crash may show `complete=0`, `hlen=0`, `lock_value=None`, `append_inflight=False` (orphan incomplete). **Post-fix pass:** same day shows `archive_job_begin` then `archive_job_done` / `archive_finalize`; **no** fatal populate lock timeout; janitor `Archive janitor tick done` clears `in_flight` without multi-hour `duration_s` stalls tied to stuck finalize.
 
 ```bash
 docker compose logs pipeline 2>&1 | \
@@ -1814,7 +1814,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -v 'suppressed_n=' | head -80
 ```
 
-**Bucket E2 — Dirty-tar populate EOF thrash + self-hot + exit 124 (T0/T1, 2026-06-07 class):** pre-fix loop shows `populate_source_decision … dirty=True sealed_exists=True use_tar=True` then `transient tar populate EOF during hot/append` while Redis census has **`tar_hot=True`** / **`append_inflight=False`** (waiter self-hot alone), orphan clear `hlen≈6500`, stale clear `hlen=0`, forever retry; workers wchan-idle in populate wait → **`pool_recover exceeded wall_s=30.0`** → exit **124** `idle_pool_taskqueue_dead`. Candidate counters `unprocessed_cross_day_n` / `processed_cross_day_n` are **diagnostic only** (misbucket census) — they do **not** set `waiting_on_ingest` by themselves. Flood of `Unable to find first timestamp in N path(s)` after day-close delete is rate-limited/summarized (not the crash driver).
+**Bucket E2 — Dirty-tar populate EOF thrash + self-hot + exit 124 (T0/T1, 2026-06-07 class):** pre-fix loop shows `populate_source_decision … dirty=True sealed_exists=True use_tar=True` then `transient tar populate EOF during hot/append` while Valkey census has **`tar_hot=True`** / **`append_inflight=False`** (waiter self-hot alone), orphan clear `hlen≈6500`, stale clear `hlen=0`, forever retry; workers wchan-idle in populate wait → **`pool_recover exceeded wall_s=30.0`** → exit **124** `idle_pool_taskqueue_dead`. Candidate counters `unprocessed_cross_day_n` / `processed_cross_day_n` are **diagnostic only** (misbucket census) — they do **not** set `waiting_on_ingest` by themselves. Flood of `Unable to find first timestamp in N path(s)` after day-close delete is rate-limited/summarized (not the crash driver).
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c 'python3 -c "
@@ -1856,7 +1856,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   tail -80
 ```
 
-**Healthy (post-fix):** cross-day cold Redis miss from ingest-pool **enqueues** populate work (no sealed stream on ingest-pool); MainThread may log WARNING + ensure/restart populate-pool; prewarm may show `populate_recovering`; supervisor must **not** `sys.exit(1)` / supervisord `exit status 1` solely from refuse-stream. **Unhealthy (pre-fix signature):** `ERROR: populate-pool unavailable; refusing sealed stream on ingest-pool for …/YYYY-MM-DD.tar.zst` immediately followed by `ERROR: archive members Redis L2 contract failed` and supervisor restart — often on a calendar day **outside** the current chunk day set (cross-day handoff).
+**Healthy (post-fix):** cross-day cold Valkey miss from ingest-pool **enqueues** populate work (no sealed stream on ingest-pool); MainThread may log WARNING + ensure/restart populate-pool; prewarm may show `populate_recovering`; supervisor must **not** `sys.exit(1)` / supervisord `exit status 1` solely from refuse-stream. **Unhealthy (pre-fix signature):** `ERROR: populate-pool unavailable; refusing sealed stream on ingest-pool for …/YYYY-MM-DD.tar.zst` immediately followed by `ERROR: archive members Redis L2 contract failed` and supervisor restart — often on a calendar day **outside** the current chunk day set (cross-day handoff).
 
 **Startup heavy-pass classify once (T0/T1 perf):** after boot, `janitor: heavy maintenance sub_phases reason=startup` should not show near-equal multi-thousand-second `candidate_report_s` **and** `scheduled_submit_s` from double `classify_day_close_candidates` (pre-fix ~2× ~1300s). Post-fix shares one classify for report+discover.
 
@@ -1900,13 +1900,13 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 
 ### T0 / T1 — exclusive daily tar restore (dual-zstd / `decomp.tmp`, 2026-07)
 
-**Failure signature (pre-fix):** two concurrent `zstd -d -o …/YYYY-MM-DD.tar.decomp.tmp` processes on the same day; three day-close workers logging `daily_tar_restore begin` for one calendar day; `daily_tar_restore end ok=no` from a non-owner clearing the Redis key and reopening the gate.
+**Failure signature (pre-fix):** two concurrent `zstd -d -o …/YYYY-MM-DD.tar.decomp.tmp` processes on the same day; three day-close workers logging `daily_tar_restore begin` for one calendar day; `daily_tar_restore end ok=no` from a non-owner clearing the Valkey key and reopening the gate.
 
 **Classify zstd cmdline:**
 
 | Cmdline | Path | Expected concurrency |
 |---------|------|----------------------|
-| `zstd -d -c` | Redis archive-members populate | One populate winner per day; OK across different days |
+| `zstd -d -c` | Valkey archive-members populate | One populate winner per day; OK across different days |
 | `zstd -d -o …decomp.tmp` | `decompress_compressed_to_tar` (sealed→tar) | **At most one** process site-wide per calendar day |
 
 **Deploy-time cleanup (single wave with code; no pre-code INI edit):**
@@ -1937,7 +1937,7 @@ ps -eo pid,lstart,etime,cmd | grep -E \"zstd -d\" | grep -v grep || true
 
 **Pass (T0):** at most one `archive: daily_tar_restore begin` per calendar day until matching owner `end`; at most one `zstd -o …decomp.tmp` process; extra day-close workers may log `janitor: day_close defer … reason=daily_tar_restore` / `phase=pre_seal_verify`. **Fail (T0):** two `zstd -o …decomp.tmp` for the same day, or interleaved `begin` from multiple callers without owner `end`, or non-owner `end ok=no` reopening a second `begin` on the same day.
 
-**T0 / T1 — membership invalidate after sealed→tar restore:** successful `decompress_compressed_to_tar` (gated prewarm / `ensure_daily_tar_restored_for_append` / corrupt replace) must log **`Archive members cache invalidated … reason=tar_restore_pre`** then **`reason=tar_restore`** so sealed+`tar=None` Redis maps cannot stay warm and skip populate. Expect a cold re-prewarm / populate for that day after restore — **not** a stall from thrashing the same day forever.
+**T0 / T1 — membership invalidate after sealed→tar restore:** successful `decompress_compressed_to_tar` (gated prewarm / `ensure_daily_tar_restored_for_append` / corrupt replace) must log **`Archive members cache invalidated … reason=tar_restore_pre`** then **`reason=tar_restore`** so sealed+`tar=None` Valkey maps cannot stay warm and skip populate. Expect a cold re-prewarm / populate for that day after restore — **not** a stall from thrashing the same day forever.
 
 ```bash
 # T0/T1 — restore invalidates memberships (full pipeline log; never --tail before grep)
@@ -1945,7 +1945,7 @@ podman-compose -p hpcperfstats logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 grep -E 'archive decompress restore begin|Archive members cache invalidated.*reason=tar_restore|daily_tar_restore (begin|end)|chunk prewarm' /tmp/pipeline-full.log | tail -80
 ```
 
-**Pass:** after a gated restore day, both `tar_restore_pre` and `tar_restore` invalidate lines appear near `archive decompress restore begin` / `daily_tar_restore end ok=yes`; subsequent prewarm/populate for that day proceeds (cold or re-warm). **Fail:** restore completes (`daily_tar_restore end ok=yes`) but no `reason=tar_restore` invalidate, while Redis stays warm under sealed+`tar=None` and prewarm skips with `store_warm` without rescanning.
+**Pass:** after a gated restore day, both `tar_restore_pre` and `tar_restore` invalidate lines appear near `archive decompress restore begin` / `daily_tar_restore end ok=yes`; subsequent prewarm/populate for that day proceeds (cold or re-warm). **Fail:** restore completes (`daily_tar_restore end ok=yes`) but no `reason=tar_restore` invalidate, while Valkey stays warm under sealed+`tar=None` and prewarm skips with `store_warm` without rescanning.
 
 ### T0 — ingest InterfaceError / ``another command is already in progress`` (2026-07)
 

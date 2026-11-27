@@ -7,7 +7,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 WS_ROOT="$(cd "$ROOT_DIR/.." && pwd)"
 PYTHON="${WS_ROOT}/.venv/bin/python3"
-TEST_RUNS="${WS_ROOT}/test_runs"
+TEST_RUNS="${ROOT_DIR}/test_runs"
 mkdir -p "$TEST_RUNS"
 
 if [[ ! -x "$PYTHON" ]]; then
@@ -31,7 +31,7 @@ focused orchestrator reclaim regressions.
 Compose (requires HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1 and Podman):
   HPCPERFSTATS_DAY_CLOSE_SOAK_COMPOSE=1 tests/run_sync_timedb_day_close_soak_workflow.sh
 
-Logs to: <workspace_root>/test_runs/day-close-space-reclaim-soak-<timestamp>.log
+Logs to: <checkout>/test_runs/day-close-space-reclaim-soak-<timestamp>.log
 EOF
 }
 

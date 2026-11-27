@@ -258,7 +258,7 @@ Some drivers are omitted or skipped depending on the configured build:
 |-----------|----------------|
 | (always) | `test_cpu_counter_arm_util`, `test_cpu_counter_arm_publish`, `test_arm_power_hwmon`, `test_arm_power_socket` (portable arm-backend / hwmon code; runs on x86 hosts too) |
 | (always) | `test_perf_util`, `test_x86_core_perf`, `test_x86_core_perf_bridge`, `test_cpu_counter_x86_publish`, `test_x86_uncore_perf`, `test_x86_rapl`, `test_arm_core_perf`, `test_arm_imc_scf` (portable direct perf readers on the fake perf layer; run on every host) |
-| `RABBITMQ` | `test_monitor_cli`, `test_ring_buffer`, `test_stats_buffer_collect`, `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden`, `test_monitor_timing` |
+| (always) | `test_monitor_cli`, `test_ring_buffer`, `test_stats_buffer_collect`, `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden`, `test_monitor_timing` (RabbitMQ daemon units; `configure` requires rabbitmq-c and `tests/Makefile.am` always passes `-DRABBITMQ`) |
 | `DEBUG` | `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden` (meaningful assertions; otherwise skipped) |
 | `INFINIBAND` | `test_ib_mad_backoff`, `test_ib_mad_sw_swap` |
 | Live broker | `test_rabbitmq_integration.sh` — opt-in via `RUN_RMQ_INTEGRATION=1` or `check-rabbitmq-integration` |

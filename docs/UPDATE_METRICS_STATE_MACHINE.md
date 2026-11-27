@@ -199,24 +199,6 @@ jid(s) to the next pass`); (b) listing **not** done and no progress for
 `STALL_EXIT_AFTER_SECONDS` with an idle consumer → `no_ready_candidates`
 stall exit; (c) unexpected fill exception → `listing_query_failed` stall exit.
 
-### §4.5 Backfill lane
-
-Plan `update-metrics-backfill-lane` (2026-10-31). Everything that ended
-before the 7-day window is the lane's domain; readiness there is decided
-from data arrival, never from `sync_timedb` day-close state (D4).
-
-| Step | Rule |
-|---|---|
-| listing (`_iter_backfill_pks`) | pass 1: `metrics_dirty_at IS NOT NULL AND end_time < window_start` (partial index, newest first). Pass 2: `metrics_version IS NULL OR < METRICS_CONTRACT_VERSION`, not dirty, `metrics_skipped_since` NULL or `<= now - metrics_backfill_quiescence_days`, newest first from the persisted cursor. Cheap `job_data` predicates only: no `host_data`, no fingerprints (`update-metrics-job-listing-new-data-type.mdc`). Disabled lane (`metrics_backfill_enabled = no`): pass 1 only (the old C7 catch-up) |
-| cursor | `metrics_scheduler_state["backfill_cursor"]` = `(end_time, jid)` of the last fully processed page, written when the next page is requested, cleared when the sweep runs dry (lap wrap), ignored after a version bump. A restart revisits at most one page |
-| order and slots | fresh days are listed first every fill; the lane is consulted last — **every fill, even when the fresh days already filled the round's prefetch** (a full prefetch ends only the fresh days; lane admits stop at the lane's room, not the prefetch) — and only while its **work-conserving cap** has room and the hourly rate brake (`metrics_backfill_max_jobs_per_hour`) is open. `cap = max(metrics_backfill_min_slots, pool − metrics_backfill_fresh_reserve_slots − fresh_active)` (`_backfill_slot_cap`), where `fresh_active` = fresh jobs in flight + fresh refs queued; room = cap − (backfill in flight + queued). An idle fresh window therefore hands all but the reserve threads to the sweep (32 threads → 30), a busy one takes them back as its jobs queue, and the lane never drops below its floor (default pool // 5). The consumer pops fresh-lane refs before backfill refs (`pop_fresh_first`), so a backfill job never holds a slot a queued fresh job is waiting for |
-| readiness (`backfill=True`) | failure backoff → proxy → strict as the fresh lane, with two differences: **every** host must cover the window (no `metrics_readiness_host_wait_seconds` admission of partial data) and an uncovered window writes **no** gate-failure catalog. Not ready ⇒ **skip, do not defer**: `record_backfill_skips` sets `metrics_skipped_since = now`, stores the coverage ratio it saw and consumes the dirty stamp the check looked at |
-| quiescence | a listed job with `metrics_skipped_since` set and no dirty stamp has waited the quiescence period with no new data: admitted without a probe as `partial_final` (`backfill_partial_total`), `metrics_coverage < 1.0`. A later dirty stamp relists it in pass 1 and a full re-check either computes it whole or skips it again |
-| persist | every persist stamps `metrics_version = METRICS_CONTRACT_VERSION`, `metrics_coverage`, `metrics_skipped_since = NULL` (`_provenance_stamp_fields`); bumping the constant is the whole "recompute everything" operator action — the next pass relists in-window jobs through Phase A (`metrics_version < METRICS_CONTRACT_VERSION` in `_annotate_metrics_listing_gates`; NULL stays with the lane) and the sweep restarts at the newest old job |
-| failure memory | same `_JOB_FAILURE_MEMORY`; at the daily step a backfill job whose **metrics** fail is closed out by `persist_metrics_failed_final` (missing catalog rows get `METRICS_FAILED_FINAL_REASON`, version stamped) so the sweep moves on (`backfill_failed_final`); prewarm-only failures keep their metrics and stay on daily retry |
-| pass lifetime | the lane keeps a pass open while old jobs remain; once every fresh day is listed the producer rebuilds the fresh day iterators in place every `metrics_scheduler_pass_interval_s` (`_maybe_relist_fresh_date_states`, log `fresh window relisted while the backfill lane keeps the pass open`), so the window is relisted at the same cadence as separate passes and the sweep never idles. Lane listing progress (skips included) advances the producer stall clock; a rate-brake wait is not a stall. A pass ends when the sweep wraps |
-| operator | `update_metrics.py --backfill-status` prints the census; `--backfill-finalize-partials [--before YYYY-MM-DD]` computes every still-skipped job before the date now (operator knows the range is fully ingested) |
-
 ### §4.3 Consumer and compute
 
 The consumer pops the first ready batch and runs **one continuous sliding
@@ -275,6 +257,24 @@ backoff; a finished one clears it. Stall reasons: `no_ready_candidates`,
 (consumer; cleared once metrics persist again). Consumer stall decisions use
 `max(processed, metrics_ok_total)`, so artifact-only failures never look like
 a wedged compute stage.
+
+### §4.5 Backfill lane
+
+Plan `update-metrics-backfill-lane` (2026-10-31). Everything that ended
+before the 7-day window is the lane's domain; readiness there is decided
+from data arrival, never from `sync_timedb` day-close state (D4).
+
+| Step | Rule |
+|---|---|
+| listing (`_iter_backfill_pks`) | pass 1: `metrics_dirty_at IS NOT NULL AND end_time < window_start` (partial index, newest first). Pass 2: `metrics_version IS NULL OR < METRICS_CONTRACT_VERSION`, not dirty, `metrics_skipped_since` NULL or `<= now - metrics_backfill_quiescence_days`, newest first from the persisted cursor. Cheap `job_data` predicates only: no `host_data`, no fingerprints (`update-metrics-job-listing-new-data-type.mdc`). Disabled lane (`metrics_backfill_enabled = no`): pass 1 only (the old C7 catch-up) |
+| cursor | `metrics_scheduler_state["backfill_cursor"]` = `(end_time, jid)` of the last fully processed page, written when the next page is requested, cleared when the sweep runs dry (lap wrap), ignored after a version bump. A restart revisits at most one page |
+| order and slots | fresh days are listed first every fill; the lane is consulted last — **every fill, even when the fresh days already filled the round's prefetch** (a full prefetch ends only the fresh days; lane admits stop at the lane's room, not the prefetch) — and only while its **work-conserving cap** has room and the hourly rate brake (`metrics_backfill_max_jobs_per_hour`) is open. `cap = max(metrics_backfill_min_slots, pool − metrics_backfill_fresh_reserve_slots − fresh_active)` (`_backfill_slot_cap`), where `fresh_active` = fresh jobs in flight + fresh refs queued; room = cap − (backfill in flight + queued). An idle fresh window therefore hands all but the reserve threads to the sweep (32 threads → 30), a busy one takes them back as its jobs queue, and the lane never drops below its floor (default pool // 5). The consumer pops fresh-lane refs before backfill refs (`pop_fresh_first`), so a backfill job never holds a slot a queued fresh job is waiting for |
+| readiness (`backfill=True`) | failure backoff → proxy → strict as the fresh lane, with two differences: **every** host must cover the window (no `metrics_readiness_host_wait_seconds` admission of partial data) and an uncovered window writes **no** gate-failure catalog. Not ready ⇒ **skip, do not defer**: `record_backfill_skips` sets `metrics_skipped_since = now`, stores the coverage ratio it saw and consumes the dirty stamp the check looked at |
+| quiescence | a listed job with `metrics_skipped_since` set and no dirty stamp has waited the quiescence period with no new data: admitted without a probe as `partial_final` (`backfill_partial_total`), `metrics_coverage < 1.0`. A later dirty stamp relists it in pass 1 and a full re-check either computes it whole or skips it again |
+| persist | every persist stamps `metrics_version = METRICS_CONTRACT_VERSION`, `metrics_coverage`, `metrics_skipped_since = NULL` (`_provenance_stamp_fields`); bumping the constant is the whole "recompute everything" operator action — the next pass relists in-window jobs through Phase A (`metrics_version < METRICS_CONTRACT_VERSION` in `_annotate_metrics_listing_gates`; NULL stays with the lane) and the sweep restarts at the newest old job |
+| failure memory | same `_JOB_FAILURE_MEMORY`; at the daily step a backfill job whose **metrics** fail is closed out by `persist_metrics_failed_final` (missing catalog rows get `METRICS_FAILED_FINAL_REASON`, version stamped) so the sweep moves on (`backfill_failed_final`); prewarm-only failures keep their metrics and stay on daily retry |
+| pass lifetime | the lane keeps a pass open while old jobs remain; once every fresh day is listed the producer rebuilds the fresh day iterators in place every `metrics_scheduler_pass_interval_s` (`_maybe_relist_fresh_date_states`, log `fresh window relisted while the backfill lane keeps the pass open`), so the window is relisted at the same cadence as separate passes and the sweep never idles. Lane listing progress (skips included) advances the producer stall clock; a rate-brake wait is not a stall. A pass ends when the sweep wraps |
+| operator | `update_metrics.py --backfill-status` prints the census; `--backfill-finalize-partials [--before YYYY-MM-DD]` computes every still-skipped job before the date now (operator knows the range is fully ingested) |
 
 ## §5 Artifact writes (prewarm)
 
@@ -356,7 +356,7 @@ Code constants: `ARTIFACT_BUILD_RETRY_LIMIT = 3`, `JOB_FAILURE_BACKOFF_S`,
 `PUBLIC_EF_POOL_THREADS = 4`, `STALL_EXIT_AFTER_SECONDS = 900`,
 `METRICS_CONTRACT_VERSION` (`lib/metrics.py`; bump on any metric semantics
 change — catalog members, formulas, aggregation rules, units — and every
-job is recomputed by the lane, newest first; currently **4** since 2026-11-02:
-untagged `host_data` rows on hosts a job holds alone now count toward the job,
+job is recomputed by the lane, newest first; currently **18**;
+untagged `host_data` rows on hosts a job holds alone count toward the job,
 see `job_exclusive_hosts` in `lib/job_host_data_scope.py`),
 `BACKFILL_RATE_WINDOW_S = 3600`.

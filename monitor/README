@@ -37,6 +37,3 @@ workspace-oriented flow is `monitor/scripts/ensure_dotbuild_prefix_static.sh`
 (followed by configuring with `CPPFLAGS`/`LDFLAGS` pointing at that prefix); see
 `monitor/scripts/build_static_bundle.sh` (`STATIC_PIN_*`) for pinned versions and options.
 
-Historical Variorum-only notes are kept for reference in `VARIORUM_MIGRATION.md`
-(superseded by the direct RAPL readers).
-

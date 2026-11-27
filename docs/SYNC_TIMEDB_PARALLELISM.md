@@ -86,13 +86,12 @@ Not generalized to `ThreadPoolExecutor` — lifecycle tied to populate call.
 
 ## Members-store populate fnctl contention
 
-On **active-ingest** calendar days, populate-pool **shared read locks** (`file_read_lock_wait` on `*.fnctl.lock`) contend with archive-pool **exclusive write locks** during `.tar` append. Tar populate waits up to **`sync_archive_members_populate_max_seconds`** (default **7200**) in one blocking attempt; transient timeouts must recover (waiter re-enqueue, prewarm retry) rather than supervisor **`sys.exit(1)`** on the first failure.
+On **active-ingest** calendar days, populate-pool **shared read locks** (`file_read_lock_wait` on `*.fnctl.lock`) contend with archive-pool **exclusive write locks** during `.tar` append. Tar populate waits on the read lock in one blocking attempt, up to **`sync_archive_members_populate_max_seconds`** when it is above 0 (default **0**: the wait uses **`sync_archive_members_fnctl_read_lock_timeout_seconds`**); transient timeouts must recover (waiter re-enqueue, prewarm retry) rather than supervisor **`sys.exit(1)`** on the first failure.
 
 | INI key | Default | Role |
 |---------|---------|------|
-| `sync_archive_members_populate_max_seconds` | 7200 | Tar populate fnctl read-lock wait when > 0; absolute waiter/prewarm recovery budget (`0` = off) |
+| `sync_archive_members_populate_max_seconds` | 0 | Tar populate fnctl read-lock wait when > 0; absolute waiter/prewarm recovery budget and no-progress bound while the populate lock is held (`0` = idle + heartbeat only) |
 | `sync_archive_members_fnctl_read_lock_timeout_seconds` | 180 | Read-lock wait for verify/non-populate paths; tar populate fallback when `populate_max_seconds=0` |
-| `sync_archive_members_populate_max_seconds` | 7200 | No-progress / waiter bound while populate lock held |
 
 **Populate source:** when sibling **`YYYY-MM-DD.tar` exists**, cold members-store populate uses **`populate_source=tar`**; **`populate_source=sealed`** only when tar is absent (post tar-drop).
 

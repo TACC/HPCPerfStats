@@ -2,7 +2,7 @@
 
 Use this document when a site **already runs** the Compose stack (or an older layout of it). For a **new** host, follow **[README.md](../README.md)** Installation only.
 
-Do **not** mix these procedures into a greenfield install. Fresh clones should `cp` examples, create empty bind directories, and `podman-compose -p hpcperfstats up --build -d` as documented in the README.
+Do **not** mix these procedures into a greenfield install. Fresh clones should `cp` examples, create empty bind directories, and run `./scripts/rebuild_full_site.sh` as documented in the README.
 
 ---
 
@@ -22,8 +22,9 @@ verify `podman info` before rebuilding. Configure npm, pip, XDG, Playwright, and
 temporary paths below `/data/user/$USER`; remove old root-filesystem caches only
 after the new paths are verified.
 
-Rebuild with `podman-compose -p hpcperfstats up --build -d`. Development uses
-project `hpcperfstats-dev` and ports 8080/8443/1514; tests use
+Rebuild with `./scripts/rebuild_full_site.sh`. Development uses
+project `hpcperfstats-dev` (`HPCPERFSTATS_COMPOSE_PROJECT=hpcperfstats-dev`)
+and ports 8080/8443/1514; tests use
 `hpcperfstats-test`. Never run global Podman prune or enable an alternate
 runtime-compatibility endpoint. OCI filenames (`.dockerignore`,
 `docker-compose*.yaml`) and service bake recipes under
@@ -37,7 +38,7 @@ canonical layout.
 
 1. Stop app services deliberately. Compose **`stop_grace_period`** defaults to **30s** for **`web`** (`HPCPERFSTATS_WEB_STOP_GRACE`) and **480s** for **`pipeline`** (`HPCPERFSTATS_PIPELINE_STOP_GRACE`); **`db`** (and dual-run **`db_pg18`**) and **`rabbitmq`** get **30m** so Postgres (SIGINT fast shutdown, checkpoint) and the broker (quorum/mnesia) finish before SIGKILL. **`scripts/rebuild_pipeline.sh`** uses **`HPCPERFSTATS_PIPELINE_STOP_TIMEOUT`** default **480** and **`HPCPERFSTATS_WEB_STOP_TIMEOUT`** default **30**, and calls **`supervisorctl shutdown`** before **`stop -t`**. A shorter pipeline override SIGKILLs mid-drain. Supervisord stops programs one at a time (drain **`stopwaitsecs=130`** each). Approximate solo budgets: listend ~**20s**, update_metrics ~**30–60s**, sync_timedb up to **120s**. Expected clean SIGTERM-driven exit **143**. If a drain program exceeds **`stopwaitsecs`**, pipeline stdout shows **`killing '…' with SIGKILL`** (see **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`**). **`rabbitmq-watcher`** and **`rsync_data`** use **`stopsignal=KILL`** on every stop.
 
-2. Rebuild and recreate the app. A full **`podman-compose -p hpcperfstats up --build`** plus recreating **`web`** is the primary way to land SPA fixes: startup fingerprint heal syncs the new package frontend into **`staticfiles_data`**.
+2. Rebuild and recreate the app with the rebuild scripts below; do not run `podman-compose ... up --build`. **`./scripts/rebuild_full_site.sh`** is the primary way to land SPA fixes: it recreates **`web`**, whose startup fingerprint heal syncs the new package frontend into **`staticfiles_data`**.
 
    | Task | Command |
    |------|---------|
@@ -84,7 +85,7 @@ podman-compose -p hpcperfstats exec valkey valkey-cli INFO server | grep -E '^(s
 podman-compose -p hpcperfstats restart web pipeline
 ```
 
-Expect `server_name:valkey` and `valkey_version:9.1.x` (or the pin in compose). Roll back by restoring the previous image tag, then `pull` / `up -d valkey` and restart **web** and **pipeline**. If **`[CACHE] valkey_location`** points at an **external** server (not the Compose service), upgrade that server separately, then restart the app services that use the cache.
+Expect `server_name:valkey` and `valkey_version:9.2.x` (the major.minor of the compose pin). Roll back by restoring the previous image tag, then `pull` / `up -d valkey` and restart **web** and **pipeline**. If **`[CACHE] valkey_location`** points at an **external** server (not the Compose service), upgrade that server separately, then restart the app services that use the cache.
 
 ### Redis → Valkey cutover (one-time)
 

@@ -11,7 +11,7 @@ Use this after Erlang `binary_alloc` OOM, quorum consume **541** storms, or when
 | Console logs | `log.console.level = warning` (not `info` — connection flood under thousands of publishers); `log.connection` / `log.channel` = `error` |
 | Crash dumps | `ERL_CRASH_DUMP_SECONDS=0` + `ulimits.core: 0` — no `erl_crash.dump` / OS core by default |
 | Nodename | Static `hostname: rabbitmq-prod` / `RABBITMQ_NODENAME=rabbit@rabbitmq-prod` |
-| Alarms truth | `rabbitmqctl status` → **Alarms** (not `list_alarms` on 4.3.x) |
+| Alarms truth | `rabbitmqctl status` → **Alarms** (not `list_alarms` on 4.4.x) |
 | Pipeline scream | supervisord `rabbitmq-watcher` — every **5 min** logs `[rabbitmq-watcher]` with `mem_used`; literal **`ERROR`** at **40 GiB** and every **+10 GiB** band (50/60/…) for log pagers |
 
 ## When `rabbitmqctl` fails (node not running)

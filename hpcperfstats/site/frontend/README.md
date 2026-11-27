@@ -54,7 +54,7 @@ Full static export (local dev, CI before Playwright):
 npm run build
 ```
 
-Output: `../hpcperfstats_site/static/frontend/`. After `collectstatic`, nginx serves hashed files under `/static/`; Django’s **`ReactSPAView`** serves only the **`index.html`** shell for `/machine/` and `/machine/<path>`.
+Output: `../hpcperfstats_site/static/frontend/`. After `collectstatic`, nginx serves hashed files under `/static/` and the **`index.html`** shells for `/machine/` and `/pub/` (deep links fall back to the segment `index.html`; `services-conf/nginx-static-files.conf`); Django serves no SPA shell.
 
 **Playwright Next-bundle check** (`test_bokeh_job_list_embed_browser_e2e.py` third test): run **`npm run build`** (not `build:prod`) so **`bokeh-playwright-smoke/index.html`** is copied to **`../hpcperfstats_site/static/frontend/`**. The smoke route is a Next App Router page used only for regression testing; it is not linked from production UI and is excluded from production deploy. See **`frontend-prod-test-build-boundary.mdc`**.
 

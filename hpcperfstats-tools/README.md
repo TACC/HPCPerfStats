@@ -13,7 +13,7 @@ pip install ./hpcperfstats-tools
 # pip install -e ./hpcperfstats-tools
 ```
 
-Requires Python 3.10+.
+Requires Python 3.14+.
 
 ## Configuration
 
@@ -31,7 +31,7 @@ For a deployed portal, use the real base URL, e.g. `https://stats.cluster.domain
 
 ## REST paths (contract with the server)
 
-`ApiClient` accepts relative paths under the configured `base_url`. When the Django app adds or renames machine API routes, update this client (and its tests) in the same change as the server. **Canonical route list:** `hpcperfstats/site/machine/api_urls.py` in the main HPCPerfStats repository (`urlpatterns`).
+`ApiClient` accepts relative paths under the configured `base_url`. When the Django app adds or renames machine API routes, update this client (and its tests) in the same change as the server. **Canonical route list:** `hpcperfstats/site/lib/machine/api_urls.py` in the main HPCPerfStats repository (`urlpatterns`).
 
 ## API key
 
@@ -71,7 +71,7 @@ hpcperfstats-jobstats --insecure 12345
 
 Runs `sacct` for a date range in one of two **mutually exclusive** modes:
 
-- **API mode** (default): POSTs the pipe-delimited output to the HPCPerfStats ingest endpoint when that day’s sacct body has at least one job row (header-only or empty days are skipped, same as `-f`). The API stores the data using the same logic as the portal’s sync_acct and also writes `{acct_path}/YYYY-MM-DD.txt` for scheduled `sync_acct.py` reingest only when the body has at least one job row. The API returns HTTP 409 when a POST would replace an on-disk file with fewer lines (staff API key required). Header-only or empty POSTs skip the write without a 409.
+- **API mode** (default): POSTs the pipe-delimited output to the HPCPerfStats ingest endpoint when that day’s sacct body has at least one job row (header-only or empty days are skipped, same as `-f`). The API stores the data using the same logic as the portal’s sync_acct and also writes `{acct_path}/YYYY-MM-DD.txt` for a manual `sync_acct.py` reimport only when the body has at least one job row. The API returns HTTP 409 when a POST would replace an on-disk file with fewer lines (staff API key required). Header-only or empty POSTs skip the write without a 409.
 - **File mode** (`-f DIR`): writes the same pipe-delimited body to `DIR/YYYY-MM-DD.txt` locally (same naming as the ingest API). `DIR` must already exist. No API URL or key required. Do not combine with `--api-key`.
 
 ```bash
