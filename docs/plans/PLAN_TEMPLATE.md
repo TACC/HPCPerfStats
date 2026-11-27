@@ -257,7 +257,7 @@ Per `plan-creation-contract.mdc` step 5:
 | ------------------------------ | -------------------------------------------------------------- |
 | Test workflow / commands       | `docs/how-to/develop/run-tests.md`, `docs/reference/test-layout.md` (`testing-doc-sync.mdc`) |
 | Operator setup / compose       | `docs/tutorials/install-hpcperfstats.md`, `docs/reference/compose-services.md` (`readme-installation-sync.mdc`) |
-| User-visible metrics/search/UI | `docs/using-the-website-as-a-researcher.md`, frontend metadata |
+| User-visible metrics/search/UI | `docs/tutorials/explore-jobs-in-the-web-ui.md`, `docs/reference/web-ui-metrics.md`, frontend metadata |
 | Deploy / concurrency tuning    | `docs/reference/pipeline-configuration.md`, `docs/explanation/pipeline-concurrency.md` |
 
 

@@ -26,10 +26,7 @@ from hpcperfstats.dbload.lib import conf_parser as cfg
 
 _REPO = Path(__file__).resolve().parents[2]
 
-CORE_DOCS = (
-  "README.md",
-  "docs/using-the-website-as-a-researcher.md",
-)
+CORE_DOCS = ("README.md",)
 TESTING_DOCS = (
   "docs/how-to/develop/run-tests.md",
   "docs/reference/test-layout.md",

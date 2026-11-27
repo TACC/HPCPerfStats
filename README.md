@@ -46,7 +46,8 @@ The most used pages:
 - [Compose services](docs/reference/compose-services.md): each container's image, limits, mounts and commands.
 - [Pipeline configuration](docs/reference/pipeline-configuration.md): every tuning key in `hpcperfstats.ini` with its default.
 - [Pipeline concurrency](docs/explanation/pipeline-concurrency.md): how threads, memory and connections are sized.
-- [Using the website as a researcher](docs/using-the-website-as-a-researcher.md): reading the job UI, plots and metrics.
+- [Explore jobs in the web UI](docs/tutorials/explore-jobs-in-the-web-ui.md): find jobs, read the job list and take the first steps on a job page.
+- [Web UI metrics](docs/reference/web-ui-metrics.md): every Job Detail panel, metric and plot, with what each one diagnoses.
 - [Run tests](docs/how-to/develop/run-tests.md): test commands and workflows; [Test layout](docs/reference/test-layout.md) lists the suites.
 - [Monitor metrics reference](monitor/docs/METRICS_REFERENCE.md): every monitor-reported variable.
 

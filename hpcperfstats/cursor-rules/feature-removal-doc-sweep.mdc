@@ -19,7 +19,7 @@ When **removing** a plot module, API field, SPA tab, or analysis surface that us
 
 | Area | Action |
 |------|--------|
-| `docs/using-the-website-as-a-researcher.md` | Remove or rewrite sections that reference the retired surface; add history row when user-visible. |
+| `docs/tutorials/explore-jobs-in-the-web-ui.md`, `docs/reference/web-ui-metrics.md` | Remove or rewrite steps, rows and sections that reference the retired surface (current state only; no history row). |
 | `docs/reference/analysis-architectures.md` | Remove stale capability bullets. |
 | `docs/`, `artifacts/` gap/compliance reports | Remove or update matrices that still list the feature. |
 | Frontend `variableMetadata*.js` | Remove tooltips/labels for retired fields when UI no longer shows them. |

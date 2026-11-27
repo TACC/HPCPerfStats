@@ -22,7 +22,7 @@ describe("normalizeVariableKey", () => {
 });
 
 describe("getVariableTooltipContent", () => {
-  it("returns researcherUse for metrics documented in the researcher guide", () => {
+  it("returns researcherUse for metrics documented in the web UI metrics reference", () => {
     const cpu = getVariableTooltipContent("avg_cpuusage");
     expect(cpu?.description).toMatch(/busy CPU cores|busy-core/i);
     expect(cpu?.researcherUse).toMatch(/parallel efficiency|OpenMP|MPI/i);

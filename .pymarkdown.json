@@ -10,7 +10,7 @@
     "md029": {"style": "ordered"},
     "md046": {"style": "fenced"},
     "md048": {"style": "backtick"},
-    "md033": {"allowed_elements": "details,summary,!--"},
+    "md033": {"allowed_elements": "a,details,summary,!--"},
     "md011": {"enabled": false},
     "md013": {
       "line_length": 100000,

@@ -237,7 +237,7 @@ Its jobs and archive-member maps live in process with disk sidecars (`SyncTimedb
 - The OpenAPI schema under `site/openapi/` drives orval-generated TypeScript clients in the SPA.
 - The React / Next.js SPA routes live under `/machine/` and `/pub/` (Next `output: "export"`); nginx serves the export from `/srv/static/frontend`.
 - Job Detail shows scheduler fields plus the job data tabs Metrics, Summary plots, Roofline, Multiprecision Mix, Processes, Execution and hosts, and Device data (`src/views/JobDetail.tsx`).
-  Detail and type-detail payloads come from `job_detail_artifact` when present ([`docs/using-the-website-as-a-researcher.md`](../using-the-website-as-a-researcher.md)).
+  Detail and type-detail payloads come from `job_detail_artifact` when present ([Web UI metrics](../reference/web-ui-metrics.md)).
 - User-visible numbers and plot ticks never use scientific notation: Python and Bokeh use shared formatters, and JS uses `formatDecimalStandard` / standard notation.
 
 API behaviour clients rely on:
@@ -283,4 +283,4 @@ Capacity planning (RabbitMQ queue depth, archive storage growth, DB retention, V
 - [Pipeline concurrency](pipeline-concurrency.md)
 - [Pipeline configuration](../reference/pipeline-configuration.md)
 - [Install HPCPerfStats](../tutorials/install-hpcperfstats.md)
-- [`docs/using-the-website-as-a-researcher.md`](../using-the-website-as-a-researcher.md)
+- [Web UI metrics](../reference/web-ui-metrics.md)

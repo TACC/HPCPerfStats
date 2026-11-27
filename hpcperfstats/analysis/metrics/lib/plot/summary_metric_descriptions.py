@@ -3,12 +3,12 @@ User-facing descriptions for job summary (Bokeh) subplot metrics.
 
 Keep ``SUMMARY_METRIC_DESCRIPTIONS`` aligned with ``description`` strings in
 ``SUMMARY_PLOT_METRIC_METADATA`` in
-``hpcperfstats/site/frontend/src/utils/variableMetadata.js`` (same keys, same
+``hpcperfstats/site/frontend/src/utils/variableMetadata.ts`` (same keys, same
 prose).
 
 Keep ``SUMMARY_METRIC_RESEARCHER_USE`` aligned with ``researcherUse`` in the
-same JS object (HPC / AI / diagnostic reasoning from
-``docs/using-the-website-as-a-researcher.md``).
+same TS object (HPC / AI / diagnostic reasoning from
+``docs/reference/web-ui-metrics.md``).
 
 Attributes:
   SUMMARY_METRIC_DESCRIPTIONS: Attribute.

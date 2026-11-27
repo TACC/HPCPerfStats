@@ -72,7 +72,19 @@ HPCPerfStats serves researchers and operators who expect clear hierarchy, honest
 ## Feedback components
 
 - Prefer **`LoadingMessage`** and **`BannerErrorMessage`** over ad hoc text/alerts.
-- **No toast library** for production SPA; use inline status, banners, and button labels (`Working…`). See `docs/SPA_UI_FEEDBACK.md`.
+- **No toast library** (no Sonner, react-hot-toast or similar) in the `/machine` and `/pub` SPAs. Toasts are easy to miss, stack poorly on mobile and fight focus management in the extended search dialog; inline and banner feedback stays in context on data-heavy pages. Reuse these patterns before adding a new feedback channel:
+
+| Situation | Pattern |
+|-----------|---------|
+| Page loading | `LoadingMessage`, or a shadcn `Skeleton` layout for the route (job list table, job detail) |
+| Fatal fetch error | `BannerErrorMessage` (early return) |
+| Partial or section load | Muted loading text or a per-section `LoadingMessage` |
+| Partial API failure | shadcn `<Alert role="status">` with a **Retry** button (job list histograms: **Retry histograms**; job detail plots: **Retry plots**) |
+| Staff diagnostics | Expandable plot error detail in `BokehEmbed` |
+| Destructive confirm | `window.confirm` before staff and API-key actions |
+| Success after a mutation | Inline button or status text (`Copied`, `Working…`), or the staff `<Alert id="staff-message" role="status">` in the navbar |
+
+- A new surface that needs persistent success messaging gets an `<Alert role="status">` region next to the action, never a global toast.
 
 ## Navigation affordances
 
@@ -86,4 +98,4 @@ HPCPerfStats serves researchers and operators who expect clear hierarchy, honest
 
 ## Overlap
 
-- `react-js-cursor-rule.mdc`, `wcag-aa-mobile-web.mdc`, **`interactive-ready-controls.mdc`**, `search-metric-artifact-sync.mdc`, **`researcher-job-detail-doc-sync.mdc`** when user-visible copy changes — including job-list **filter summary**, **empty results** (200 + in-table message), **Modify search**, job-detail **breadcrumbs**, shareable **`?tab=`** URLs, and partial-load **retry** affordances (update `docs/using-the-website-as-a-researcher.md` §1–§2 in the same task).
+- `react-js-cursor-rule.mdc`, `wcag-aa-mobile-web.mdc`, **`interactive-ready-controls.mdc`**, `search-metric-artifact-sync.mdc`, **`researcher-job-detail-doc-sync.mdc`** when user-visible copy changes — including job-list **filter summary**, **empty results** (200 + in-table message), **Modify search**, job-detail **breadcrumbs**, shareable **`?tab=`** URLs, and partial-load **retry** affordances (update `docs/tutorials/explore-jobs-in-the-web-ui.md` and `docs/reference/web-ui-metrics.md` in the same task).

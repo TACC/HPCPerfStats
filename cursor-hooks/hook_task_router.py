@@ -718,7 +718,6 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
       "monitor/docs/how-to/*",
       "monitor/docs/explanation/*",
       "monitor/docs/reference/*",
-      "docs/using-the-website-as-a-researcher.md",
       "hpcperfstats/tests/test_core_docs_drift_guard.py",
     ],
     "exact_paths": [
@@ -787,7 +786,8 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
   {
     "id": "researcher_website_guide",
     "patterns": [
-      "docs/using-the-website-as-a-researcher.md",
+      "docs/tutorials/explore-jobs-in-the-web-ui.md",
+      "docs/reference/web-ui-metrics.md",
       "hpcperfstats/site/frontend/src/views/JobDetail.tsx",
       "hpcperfstats/site/frontend/src/views/JobList.tsx",
       "hpcperfstats/site/frontend/src/views/Search.tsx",

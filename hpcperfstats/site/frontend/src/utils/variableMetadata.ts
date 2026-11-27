@@ -4,7 +4,7 @@
  * VARIABLE_METADATA spreads legacy monitor events, then current monitor events, then the
  * UI tables in this file; later entries win so UI wording overrides generic monitor text.
  *
- * Optional `researcherUse` (aligned with docs/using-the-website-as-a-researcher.md) is
+ * Optional `researcherUse` (aligned with docs/reference/web-ui-metrics.md) is
  * shown below the definition in the job-detail help tooltip.
  */
 

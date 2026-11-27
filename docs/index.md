@@ -11,7 +11,7 @@ Pages listed without a link are planned and not written yet.
 Learn one reliable path from start to finish.
 
 - [Install HPCPerfStats](tutorials/install-hpcperfstats.md)
-- Explore jobs in the web UI
+- [Explore jobs in the web UI](tutorials/explore-jobs-in-the-web-ui.md)
 
 ## How-to guides
 
@@ -46,7 +46,7 @@ Look up code, configuration and contract facts.
 - [`sync_timedb` stall signatures](reference/sync-timedb-stall-signatures.md)
 - [`update_metrics` state machine](reference/update-metrics-state-machine.md)
 - [Test layout](reference/test-layout.md)
-- Web UI metrics
+- [Web UI metrics](reference/web-ui-metrics.md)
 - [Analysis architectures](reference/analysis-architectures.md)
 - Security posture
 - [Release notes](reference/release-notes.md)

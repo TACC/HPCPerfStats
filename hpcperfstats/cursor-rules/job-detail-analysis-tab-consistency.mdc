@@ -55,7 +55,7 @@ Job Detail **Print** uses the browser print dialog (`window.print` → Save as P
 
 ## Documentation
 
-When user-visible plot-tab behavior or semantics change, update **`docs/using-the-website-as-a-researcher.md`** per **`researcher-job-detail-doc-sync.mdc`**.
+When user-visible plot-tab behavior or semantics change, update **`docs/reference/web-ui-metrics.md`** (and **`docs/tutorials/explore-jobs-in-the-web-ui.md`** when a step changes) per **`researcher-job-detail-doc-sync.mdc`**.
 
 ## Overlap
 
