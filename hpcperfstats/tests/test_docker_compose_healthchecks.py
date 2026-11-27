@@ -345,10 +345,9 @@ def test_install_tutorial_is_fresh_only_and_upgrade_doc_holds_existing_stack():
   assert _UPGRADE_DOC in readme
   assert _INSTALL_TUTORIAL in readme
   assert "../how-to/operate/upgrade-the-stack.md" in tutorial
-  install = tutorial.split("## Before you begin", 1)[1].split(
-    "## What you built", 1
-  )[0]
-  assert "fresh install" in tutorial.lower()
+  intro, install = tutorial.split("## Before you begin", 1)
+  install = install.split("## What you built", 1)[0]
+  assert "fresh install" in intro.lower()
   forbidden_in_install = (
     "## Compose Valkey service",
     "Upgrading from an older ini layout",

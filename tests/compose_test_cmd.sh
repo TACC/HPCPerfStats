@@ -98,6 +98,8 @@ compose_rsync_repo_to_work_copy() {
     --exclude 'staticfiles/'
     --exclude 'hpcperfstats/site/hpcperfstats_site/static/frontend/'
   )
+  # --delete skips excluded docs/; drop the retired map from reused copies.
+  rm -f "${dest}/docs/monitor_variable_rename_map.yaml"
   if [[ "$minimal" == "1" ]]; then
     mkdir -p "${dest}/hpcperfstats" "${dest}/tests"
     rsync -a --timeout=120 "${excludes[@]}" \

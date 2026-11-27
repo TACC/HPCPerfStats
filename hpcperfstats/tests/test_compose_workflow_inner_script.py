@@ -595,3 +595,22 @@ def test_db_pytest_installs_filefrag_for_the_extent_sharing_test():
   assert (
     'apt-get install -y --no-install-recommends "${_apt_pkgs[@]}"' in source
   )
+
+
+def test_rsync_work_copy_drops_stale_docs_rename_map(tmp_path):
+  """A reused work copy must not keep the retired docs rename map: docs/ is
+  rsync-excluded, so --delete alone never removes it."""
+  repo = tmp_path / "repo"
+  (repo / "docs").mkdir(parents=True)
+  (repo / "pyproject.toml").write_text("", encoding="utf-8")
+  dest = tmp_path / "work"
+  stale = dest / "docs" / "monitor_variable_rename_map.yaml"
+  stale.parent.mkdir(parents=True)
+  stale.write_text("stale: true\n", encoding="utf-8")
+  script = (
+    "set -euo pipefail; source tests/compose_test_cmd.sh; "
+    f"compose_rsync_repo_to_work_copy {repo} {dest} 0"
+  )
+  subprocess.run(["bash", "-c", script], cwd=_REPO_ROOT, check=True)
+  assert (dest / "pyproject.toml").is_file()
+  assert not stale.exists()

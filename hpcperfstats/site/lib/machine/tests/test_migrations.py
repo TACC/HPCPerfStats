@@ -793,8 +793,9 @@ _NOTICE_THEN_RETURN = re.compile(
 _EXCEPTION_SWALLOWED_BY_NOTICE = re.compile(
   r"EXCEPTION\s+WHEN\s+[\w\s]+?\s+THEN\s+RAISE\s+NOTICE", re.IGNORECASE
 )
-# Verbatim gate from 0032 before the fail-closed fix (commit 7dd5ecbc): the
-# soft-skip that left hpcperfstats03 without a UNIQUE or compression policy.
+# Gate from 0032 before the fail-closed fix (commit 7dd5ecbc), verbatim except
+# the doc path, which now points at the history record: the soft-skip that
+# left hpcperfstats03 without a UNIQUE or compression policy.
 _OLD_0032_SOFT_SKIP = """
             IF COALESCE(compressed_n, 0) > 0 THEN
               RAISE NOTICE
