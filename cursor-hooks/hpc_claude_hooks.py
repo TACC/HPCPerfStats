@@ -7,7 +7,7 @@ and Claude sides always agree on which rules a path triggers.
 Subcommands (hook event in parentheses), all fail-open on internal errors:
   prompt     (UserPromptSubmit)  short reminder + task-keyword rule hints
   pre-edit   (PreToolUse)        deny Edit/Write until triggered rules (and router ``docs``,
-                                 e.g. docs/SYNC_TIMEDB_STATE_MACHINE.md) were Read THIS turn
+                                 e.g. docs/reference/sync-timedb-state-machine.md) were Read THIS turn
   post-edit  (PostToolUse)       rule dual-registration / hooks.json copy reminders
   stop       (Stop)              close gate: required headings + rule dispatch coverage
 
