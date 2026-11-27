@@ -21,8 +21,8 @@ When **removing** a plot module, API field, SPA tab, or analysis surface that us
 |------|--------|
 | `docs/tutorials/explore-jobs-in-the-web-ui.md`, `docs/reference/web-ui-metrics.md` | Remove or rewrite steps, rows and sections that reference the retired surface (current state only; no history row). |
 | `docs/reference/analysis-architectures.md` | Remove stale capability bullets. |
-| `docs/`, `artifacts/` gap/compliance reports | Remove or update matrices that still list the feature. |
-| Frontend `variableMetadata*.js` | Remove tooltips/labels for retired fields when UI no longer shows them. |
+| Other evergreen pages under `docs/{tutorials,how-to,reference,explanation}/` (`git grep -n <FEATURE> -- docs README.md`) | Remove or update matrices that still list the feature; records in `docs/history/` stay as written. |
+| Frontend `variableMetadata*.ts` | Remove tooltips/labels for retired fields when UI no longer shows them. |
 
 ## Overlap
 
