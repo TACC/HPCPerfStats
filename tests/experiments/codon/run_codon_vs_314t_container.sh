@@ -4,7 +4,7 @@
 # step; we install Clang and PATH-shim ``g++`` -> ``clang++`` (no g++ package).
 set -euo pipefail
 
-GIT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+GIT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 WORKSPACE_ROOT="$(cd "$GIT_ROOT/.." && pwd)"
 CODON_HOME="${CODON_HOME:-/data/user/${USER}/codon}"
 LOG_DIR="${HPCPERFSTATS_TEST_RUNS:-${WORKSPACE_ROOT}/test_runs}"
@@ -31,7 +31,7 @@ fi
     -e HPCPERFSTATS_CODON_BENCH_REPS="$REPS" \
     -e HPCPERFSTATS_CODON_BENCH_SAMPLES="$SAMPLES" \
     -v "${CODON_HOME}:/opt/codon:ro" \
-    -v "${GIT_ROOT}/experiments/codon:/work/experiments/codon:ro" \
+    -v "${GIT_ROOT}/tests/experiments/codon:/work/tests/experiments/codon:ro" \
     -v "${GIT_ROOT}/hpcperfstats:/work/hpcperfstats:ro" \
     "$IMAGE" \
     bash -lc '
@@ -56,7 +56,7 @@ echo "ft314t=$(/opt/python3.14t/bin/python -V)"
 
 # --- Codon native arm ---
 echo "=== codon native ==="
-if /opt/codon/bin/codon run -release /work/experiments/codon/codon_native_e6_bench.py; then
+if /opt/codon/bin/codon run -release /work/tests/experiments/codon/codon_native_e6_bench.py; then
   echo "codon_run=pass"
 else
   echo "codon_run=fail"
@@ -65,7 +65,7 @@ fi
 
 # --- 3.14t production IncrementalStatsParser + CPython FeedKernel ---
 echo "=== cpython 3.14t ==="
-export PYTHONPATH="/work/experiments/codon:/work:${PYTHONPATH:-}"
+export PYTHONPATH="/work/tests/experiments/codon:/work:${PYTHONPATH:-}"
 # Prefer image-installed package; overlay live experiments + optional live package
 /opt/python3.14t/bin/python - << "PY"
 import os
@@ -73,7 +73,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, "/work/experiments/codon")
+sys.path.insert(0, "/work/tests/experiments/codon")
 sys.path.insert(0, "/work")
 
 from e6_corpus import build_e6_payload_lines

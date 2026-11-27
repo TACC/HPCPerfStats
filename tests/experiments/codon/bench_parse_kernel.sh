@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-GIT_ROOT="$(cd "$ROOT/../.." && pwd)"
+GIT_ROOT="$(cd "$ROOT/../../.." && pwd)"
 VENV="${HPCPERFSTATS_VENV:-/data/HPCPerfStats/.venv/bin/python3}"
 CODON="${CODON_BIN:-/data/user/${USER}/codon/bin/codon}"
 LOG_DIR="${HPCPERFSTATS_TEST_RUNS:-/data/HPCPerfStats/test_runs}"

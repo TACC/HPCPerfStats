@@ -1,6 +1,6 @@
 ---
 description: Do not add or leave dead code, pass-through aliases, redundant branches, value-copying or stale comments, planning-ID pointers, non-ASCII comment glyphs, or generated-snapshot drift (Python, TS/JS, shell, config)
-globs: hpcperfstats/**/*.py,scripts/**,services-conf/**,tests/**/*.sh,hpcperfstats/site/frontend/src/**,hpcperfstats/site/frontend/app/**,hpcperfstats/site/frontend/scripts/**,hpcperfstats/site/frontend/test/**,hpcperfstats-tools/**/*.py,cursor-hooks/*.py,experiments/**/*.py,docs/**/*.md,.gitignore,pyproject.toml
+globs: hpcperfstats/**/*.py,scripts/**,services-conf/**,tests/**/*.sh,hpcperfstats/site/frontend/src/**,hpcperfstats/site/frontend/app/**,hpcperfstats/site/frontend/scripts/**,hpcperfstats/site/frontend/test/**,hpcperfstats-tools/**/*.py,cursor-hooks/*.py,tests/experiments/**/*.py,docs/**/*.md,.gitignore,pyproject.toml
 alwaysApply: false
 ---
 

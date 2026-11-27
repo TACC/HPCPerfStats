@@ -35,7 +35,7 @@ export CODON_HOME=/data/user/$USER/codon-0.20.8
 # Confirm: codon_parse status=enabled in sync_timedb / pipeline logs
 
 # Offline A/B (uses image-baked pyext when present):
-./experiments/codon/run_codon_ab_baseline.sh
+./tests/experiments/codon/run_codon_ab_baseline.sh
 ```
 
 A/B pass requires `gate_1p25x=True` in `test_runs/codon_ab_*.log`.

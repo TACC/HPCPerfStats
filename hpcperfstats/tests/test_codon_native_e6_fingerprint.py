@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
-_CODON_EXP = _REPO / "experiments" / "codon"
+_CODON_EXP = _REPO / "tests" / "experiments" / "codon"
 if str(_CODON_EXP) not in sys.path:
   sys.path.insert(0, str(_CODON_EXP))
 

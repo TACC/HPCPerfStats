@@ -71538,13 +71538,12 @@
   ],
   "excluded_summary": {
     "codon_compile_unit": 144,
-    "codon_experiment": 67,
     "cursor_hooks": 175,
     "django_migrations": 100,
     "docs_scratch": 52,
     "monitor_read_only": 1010,
     "test_module": 11602,
-    "test_tree": 283
+    "test_tree": 350
   },
   "roots": [
     "/data/HPCPerfStats/HPCPerfStats",
@@ -71554,13 +71553,12 @@
     "excluded": 13433,
     "excluded_by_reason": {
       "codon_compile_unit": 144,
-      "codon_experiment": 67,
       "cursor_hooks": 175,
       "django_migrations": 100,
       "docs_scratch": 52,
       "monitor_read_only": 1010,
       "test_module": 11602,
-      "test_tree": 283
+      "test_tree": 350
     },
     "in_scope": 4769,
     "in_scope_failed": 0,

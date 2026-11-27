@@ -4,7 +4,7 @@
 # Optional: HPCPERFSTATS_CODON_PYEXT_DIR mounts a host override at /pyext.
 set -euo pipefail
 
-GIT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+GIT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 WORKSPACE_ROOT="$(cd "$GIT_ROOT/.." && pwd)"
 CODON_HOME="${CODON_HOME:-/data/user/${USER}/codon-0.20.8}"
 LOG_DIR="${HPCPERFSTATS_TEST_RUNS:-${WORKSPACE_ROOT}/test_runs}"
@@ -48,7 +48,7 @@ fi
     -e "HPCPERFSTATS_CODON_AB_B_ONLY=${B_ONLY}" \
     -e "HPCPERFSTATS_CODON_AB_FROZEN_A=${FROZEN_A}" \
     "${PODMAN_PYEXT_ARGS[@]}" \
-    -v "${GIT_ROOT}/experiments/codon:/work/experiments/codon:ro" \
+    -v "${GIT_ROOT}/tests/experiments/codon:/work/tests/experiments/codon:ro" \
     -v "${GIT_ROOT}/hpcperfstats:/work/hpcperfstats:ro" \
     "$IMAGE" \
     bash -lc '
@@ -68,7 +68,7 @@ else
   echo "missing_pyext_in_image_or_mount" >&2
   exit 1
 fi
-export PYTHONPATH="${PYEXT_ROOT}:/work/hpcperfstats/dbload/codon:/work/experiments/codon:/work:${PYTHONPATH:-}"
+export PYTHONPATH="${PYEXT_ROOT}:/work/hpcperfstats/dbload/codon:/work/tests/experiments/codon:/work:${PYTHONPATH:-}"
 export LD_LIBRARY_PATH="/opt/zlib-ng/lib:/opt/python3.14t/lib"
 echo "pyext_root=${PYEXT_ROOT}"
 /opt/python3.14t/bin/python - <<'\''PY'\''
@@ -114,11 +114,11 @@ if [[ "${HPCPERFSTATS_CODON_AB_B_ONLY:-0}" == "1" ]]; then
   echo "arm_a_collapsed_rows=frozen"
 else
 echo "=== arm_a 3.14t incremental+collapse ==="
-export PYTHONPATH="/work/experiments/codon:/work:${PYTHONPATH:-}"
+export PYTHONPATH="/work/tests/experiments/codon:/work:${PYTHONPATH:-}"
 /opt/python3.14t/bin/python - <<'\''PY'\''
 import os, sys, time
 from pathlib import Path
-sys.path.insert(0, "/work/experiments/codon")
+sys.path.insert(0, "/work/tests/experiments/codon")
 sys.path.insert(0, "/work")
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
   IncrementalStatsParser,

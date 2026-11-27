@@ -1,6 +1,6 @@
 # Codon FT parse feasibility baseline (updated 2026-10-21)
 
-Spike scope: bounded **feed-only** parse kernel under `experiments/codon/`,
+Spike scope: bounded **feed-only** parse kernel under `tests/experiments/codon/`,
 oracle parity vs `IncrementalStatsParser`, microbench **Codon-native vs
 `/opt/python3.14t`** inside the pipeline image. **No** production `dbload/`
 edits, **no** Docker/supervisord ABI changes.
@@ -36,7 +36,7 @@ Host lacked `g++`/`clang++`, so tiers 0–1 failed at link. Multi-module
 
 Log: `test_runs/codon_vs_314t_20261021T094310.log`
 
-Runner: `experiments/codon/run_codon_vs_314t_container.sh` (Clang shim, not g++).
+Runner: `tests/experiments/codon/run_codon_vs_314t_container.sh` (Clang shim, not g++).
 
 | Arm | Time (80 reps × 400 samples) | Notes |
 |-----|------------------------------|-------|
@@ -77,6 +77,6 @@ Keep production `sync_timedb_parsing.py` unchanged until that design lands.
 
 ```bash
 # From HPCPerfStats/ git checkout:
-./experiments/codon/run_codon_vs_314t_container.sh
+./tests/experiments/codon/run_codon_vs_314t_container.sh
 # Logs under workspace test_runs/codon_vs_314t_*.log
 ```

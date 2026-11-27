@@ -21,7 +21,7 @@ Applies to **in-scope** Python in the HPCPerfStats checkout and the in-tree **`h
 
 ## Out of scope (inventory must list with `excluded_reason`)
 
-`monitor/**`, tests, migrations, `cursor-hooks/**`, `test_runs/**`, packaging metadata, `docs/**` scratch, `experiments/**` (`codon_experiment`), and any path segment `codon/` (`codon_compile_unit`, e.g. `hpcperfstats/dbload/codon/**`) — never silently skip.
+`monitor/**`, tests, migrations, `cursor-hooks/**`, `test_runs/**`, packaging metadata, `docs/**` scratch, and any path segment `codon/` (`codon_compile_unit`, e.g. `hpcperfstats/dbload/codon/**`) — never silently skip.
 
 ## Required shape
 

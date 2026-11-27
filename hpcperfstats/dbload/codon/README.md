@@ -30,7 +30,7 @@ processes are the parallel unit. Each file is streamed in
 workers above `sync_codon_worker_recycle_rss_mib` are replaced between files.
 The C ABI takes a per-call event-type exclusion list (`codon_exclude_set_c`).
 
-Benches/inventory stay under `experiments/codon/`.
+Benches/inventory stay under `tests/experiments/codon/`.
 
 | Path | Role |
 |------|------|

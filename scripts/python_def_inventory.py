@@ -52,7 +52,6 @@ EXCLUSION_RULES: tuple[tuple[str, str], ...] = (
   ("cursor-hooks", "cursor_hooks"),
   ("tests", "test_tree"),
   ("docs", "docs_scratch"),
-  ("experiments", "codon_experiment"),
   # Codon compile units (``@export`` / ``Ptr`` dialect); not CPython API surface.
   ("codon", "codon_compile_unit"),
 )

@@ -420,7 +420,7 @@ def trailing_jobs_arm(lines: list[str]) -> bool:
 
 
 def _cpu_e6_schema_tokens() -> list[str]:
-  # Keep in sync with experiments/codon/e6_corpus.py @full cpu schema.
+  # Keep in sync with tests/experiments/codon/e6_corpus.py @full cpu schema.
   return [
     "user,W=64,U=1",
     "nice,W=64,U=1",

@@ -110,9 +110,11 @@ def test_codon_compile_unit_path_excluded(inv):
     Path("hpcperfstats/dbload/codon/feed_collapse.py")
   )
   assert reason == "codon_compile_unit"
-  # ``experiments`` wins before the ``codon`` segment.
-  exp = inv.exclusion_reason_for_path(Path("experiments/codon/e6_corpus.py"))
-  assert exp == "codon_experiment"
+  # ``tests`` wins before the ``codon`` segment.
+  exp = inv.exclusion_reason_for_path(
+    Path("tests/experiments/codon/e6_corpus.py")
+  )
+  assert exp == "test_tree"
   bridge = inv.exclusion_reason_for_path(
     Path("hpcperfstats/dbload/lib/sync_timedb_codon_bridge.py")
   )

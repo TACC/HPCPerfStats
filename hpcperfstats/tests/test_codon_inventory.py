@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
-_TIER0 = _REPO / "experiments" / "codon" / "inventory" / "tier0_stdlib.py"
+_TIER0 = (
+  _REPO / "tests" / "experiments" / "codon" / "inventory" / "tier0_stdlib.py"
+)
 
 
 @pytest.mark.skipif(
