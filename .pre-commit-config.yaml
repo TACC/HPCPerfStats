@@ -106,6 +106,25 @@ repos:
         files: ^monitor/(src/.*\.c|scripts/check_sentinel_error_paths\.(py|allowlist))$
         pass_filenames: false
 
+  # Generated reference pages: --fix rewrites a stale page and fails. Rerun the
+  # generator in the checkout and commit the page with the other paths
+  # (git isolated-commit hooks write only to the slot). files: lists every
+  # generator input (pinned by hpcperfstats/tests/test_doc_generators_fresh.py).
+  - repo: local
+    hooks:
+      - id: monitor-variables-consumer-map
+        name: regenerate docs/reference/monitor-variables-consumer-map.md
+        entry: ../.venv/bin/python3 scripts/docs/gen_monitor_variables_consumer_map.py --fix
+        language: system
+        files: ^(scripts/docs/gen_monitor_variables_consumer_map\.py|docs/reference/monitor-variables-consumer-map\.md|monitor/src/[^/]+\.[ch]|monitor/scripts/lib/keys_catalog\.py|hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map\.yaml|(hpcperfstats/(analysis|dbload|lib|site/lib/machine|site/frontend/src))/.+\.(py|ts|tsx|js|jsx))$
+        pass_filenames: false
+      - id: monitor-naming-tables
+        name: regenerate docs/reference/monitor-naming-tables.md
+        entry: ../.venv/bin/python3 scripts/docs/gen_monitor_naming_tables.py --fix
+        language: system
+        files: ^(scripts/docs/gen_monitor_naming_tables\.py|docs/reference/monitor-naming-tables\.md|hpcperfstats/dbload/lib/monitor_naming/(load_map\.py|monitor_variable_rename_map\.yaml))$
+        pass_filenames: false
+
   # Markdown lint (docs/reference/documentation-style.md, "Lint toolchain").
   # files: covers every evergreen page by directory pattern (root and package
   # READMEs, docs/index.md, the docs/ and monitor/docs/ quadrant

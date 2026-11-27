@@ -247,6 +247,28 @@ The four hooks share one pattern, the `md_lint_files` YAML anchor in `.pre-commi
 The hooks exclude `docs/history/`, `docs/measurements/`, generated docs (lint the generator templates instead), `node_modules` and `test_runs`.
 After mdformat touches a doc that a test pins, run that test, because mdformat changes code-span escapes.
 
+### Regeneration hooks
+
+Two commit-stage hooks keep generated reference pages current.
+Each one's `files:` pattern lists every input of its generator, and `hpcperfstats/tests/test_doc_generators_fresh.py` checks that pattern against the inputs.
+
+| Hook                             | Generator                                            | Page                                               |
+| -------------------------------- | ---------------------------------------------------- | -------------------------------------------------- |
+| `monitor-variables-consumer-map` | `scripts/docs/gen_monitor_variables_consumer_map.py` | `docs/reference/monitor-variables-consumer-map.md` |
+| `monitor-naming-tables`          | `scripts/docs/gen_monitor_naming_tables.py`          | `docs/reference/monitor-naming-tables.md`          |
+
+A hook runs its generator with `--fix`: a stale page is rewritten and the hook fails with the command to run.
+Run the generator in the checkout, then commit the page with the other paths:
+
+```bash
+../.venv/bin/python3 scripts/docs/gen_monitor_naming_tables.py
+git isolated-commit -m "<MESSAGE>" -- <PATHS> \
+  docs/reference/monitor-naming-tables.md
+```
+
+Under `git isolated-commit` the hook rewrites the page in the slot worktree only, and a named page that still matches `HEAD` is not part of the commit, so name the page only after regenerating it.
+The freshness test also runs each generator's `--check`, for commits made without hooks.
+
 ## Related
 
 - [Diataxis]

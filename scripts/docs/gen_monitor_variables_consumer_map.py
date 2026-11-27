@@ -15,6 +15,19 @@ Run from the checkout root::
   ../.venv/bin/python3 scripts/docs/gen_monitor_variables_consumer_map.py \\
     --check
 
+The ``monitor-variables-consumer-map`` pre-commit hook runs ``--fix`` when a
+commit touches an input: this script, the page, ``monitor/src/*.[ch]``,
+``keys_catalog.py``, the rename map and ``load_map.py``, or a scanned file
+under ``SCAN_ROOTS`` (which holds ``monitor_sentinel.py`` and
+``sync_timedb_parsing.py``). A stale page is rewritten and the hook fails.
+Run this script in the checkout, then commit the page with the other paths:
+``git isolated-commit`` runs hooks in a slot worktree, so the rewrite never
+reaches the checkout, and a named page that still matches ``HEAD`` is not part
+of the commit.
+``hpcperfstats/tests/test_doc_generators_fresh.py`` runs ``--check`` for
+commits that skip hooks, and pins the hook's ``files:`` pattern to these
+inputs.
+
 Attributes:
   REPO (Path): Checkout root.
   OUT (Path): Generated page.
@@ -586,33 +599,50 @@ def render() -> str:
 
 def main(argv: list[str] | None = None) -> int:
   """
-  Write the page, or with ``--check`` verify the committed copy is current.
+  Write the page, or check it with ``--check`` or refresh it with ``--fix``.
+
+  ``--fix`` is the pre-commit hook mode: it rewrites a stale page and fails
+  with the command to run and the path to commit, and passes without writing
+  when the page is current.
 
   Args:
     argv (list[str] | None): Command-line arguments (default ``sys.argv``).
 
   Returns:
-    int: 0 on success or when up to date, 1 when ``--check`` finds drift.
+    int: 0 on success or when up to date, 1 when ``--check`` finds drift
+    or ``--fix`` rewrote the page.
 
   Examples:
     >>> main(["--check"])  # doctest: +SKIP
     0
   """
   ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-  ap.add_argument(
+  mode = ap.add_mutually_exclusive_group()
+  mode.add_argument(
     "--check", action="store_true", help="fail if the page is stale"
+  )
+  mode.add_argument(
+    "--fix",
+    action="store_true",
+    help="rewrite a stale page and fail (pre-commit hook mode)",
   )
   args = ap.parse_args(argv)
   text = render()
   rel = OUT.relative_to(REPO)
-  if args.check:
-    current = OUT.read_text(encoding="utf-8") if OUT.is_file() else ""
-    if current != text:
-      print(f"{rel} is stale; run {SCRIPT}")
-      return 1
+  current = OUT.read_text(encoding="utf-8") if OUT.is_file() else ""
+  if (args.check or args.fix) and current == text:
     print(f"{rel} up to date")
     return 0
+  if args.check:
+    print(f"{rel} is stale; run {SCRIPT}")
+    return 1
   OUT.write_text(text, encoding="utf-8")
+  if args.fix:
+    print(
+      f"{rel} was stale: run ../.venv/bin/python3 {SCRIPT} in the"
+      f" checkout, then commit {rel} with the other paths"
+    )
+    return 1
   print(f"Wrote {rel}")
   return 0
 
