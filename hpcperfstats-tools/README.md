@@ -19,7 +19,7 @@ Requires Python 3.14+.
 
 Tools read the API base URL from a small INI config file.
 
-**Config file:** Set the `HPCPERFSTATS_TOOLS_INI` environment variable to the path of your INI file (e.g. the path to `hpcperfstats-tools.ini.example` or a copy of it).
+**Config file:** Set the `HPCPERFSTATS_TOOLS_INI` environment variable to the path of your INI file (for example the path to `hpcperfstats-tools.ini.example` or a copy of it).
 
 ```ini
 [API]
@@ -27,7 +27,7 @@ Tools read the API base URL from a small INI config file.
 base_url = http://localhost:8000/api/
 ```
 
-For a deployed portal, use the real base URL, e.g. `https://stats.cluster.domain.edu/api/`.
+For a deployed portal, use the real base URL, for example `https://stats.cluster.domain.edu/api/`.
 
 ## REST paths (contract with the server)
 
@@ -35,7 +35,7 @@ For a deployed portal, use the real base URL, e.g. `https://stats.cluster.domain
 
 ## API key
 
-Both tools authenticate with an API key. Keys are created in the HPCPerfStats web UI (e.g. `/api-key/` or `/login_prompt` after signing in).
+Both tools authenticate with an API key. Keys are created in the HPCPerfStats web UI (for example `/api-key/` or `/login_prompt` after signing in).
 
 - **First use:** pass the key with `--api-key`. It will be stored in `~/.hpcperfstats-api` for that API base URL.
 - **Later runs:** the cached key is used automatically, or you can pass `--api-key` again.
@@ -45,7 +45,7 @@ Both tools authenticate with an API key. Keys are created in the HPCPerfStats we
 
 ### hpcperfstats-jobstats
 
-Prints a job-efficiency style summary for a single Slurm job (CPU/GPU utilization, memory, etc.) using the same data as the HPCPerfStats web UI.
+Prints a job-efficiency style summary for a single Slurm job (CPU/GPU utilization, memory, and so on) using the same data as the HPCPerfStats web UI.
 
 ```bash
 # Summary for job 12345 (uses config base_url and cached API key)
@@ -60,12 +60,12 @@ hpcperfstats-jobstats --insecure 12345
 
 **Options:**
 
-| Option       | Description |
-|-------------|-------------|
-| `jid`       | Job ID (required). |
-| `--api-url` | Base URL for the API (default from config). |
-| `--api-key` | API key (optional; otherwise uses cache). |
-| `--insecure` | Disable TLS certificate verification. |
+| Option       | Description                                 |
+| ------------ | ------------------------------------------- |
+| `jid`        | Job ID (required).                          |
+| `--api-url`  | Base URL for the API (default from config). |
+| `--api-key`  | API key (optional; otherwise uses cache).   |
+| `--insecure` | Disable TLS certificate verification.       |
 
 ### hpcperfstats-sacct-gen
 
@@ -90,12 +90,12 @@ hpcperfstats-sacct-gen -f /path/to/accounting 2024-01-01 2024-01-08
 
 **Options:**
 
-| Option       | Description |
-|-------------|-------------|
-| `start_date` | Start date (YYYY-MM-DD or parseable). Default: today. |
-| `end_date`   | End date, inclusive. Default: start_date (same day). |
+| Option       | Description                                                                                  |
+| ------------ | -------------------------------------------------------------------------------------------- |
+| `start_date` | Start date (YYYY-MM-DD or parseable). Default: today.                                        |
+| `end_date`   | End date, inclusive. Default: start_date (same day).                                         |
 | `-f DIR`     | Write `DIR/YYYY-MM-DD.txt` files instead of API ingest. Mutually exclusive with `--api-key`. |
-| `--api-key`  | API key (optional in API mode; otherwise uses cache). Mutually exclusive with `-f`. |
+| `--api-key`  | API key (optional in API mode; otherwise uses cache). Mutually exclusive with `-f`.          |
 
 **Requirements:**
 

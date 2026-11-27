@@ -32,10 +32,10 @@ Run the Next development server (proxies `/api` and auth URLs to Django):
 npm run dev
 ```
 
-Open http://localhost:3000/machine/ (or use Django’s URL with proxy). Ensure
+Open <http://localhost:3000/machine/> (or use Django’s URL with proxy). Ensure
 Django is running on port 8000.
 
-**Note:** In production and the Podman Compose stack with **`proxy`**,
+**Note:** In production and the podman-compose stack with **`proxy`**,
 `/static/*` is served by nginx from collected static files, not Django or
 Gunicorn.
 

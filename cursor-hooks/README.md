@@ -28,16 +28,16 @@ cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
 
 Monitor-focused workspace: symlink `.cursor/rules` to `HPCPerfStats/monitor/cursor-rules` instead.
 
-There is **no** `HPCPerfStats/.cursor/` directory — hook scripts and rules live in checked-in git paths; workspace `.cursor/` holds the rules/hooks script symlinks, a **copied** `hooks.json`, and local Cursor metadata (`plans/`).
+The checkout has **no** `HPCPerfStats/.cursor/` directory — hook scripts and rules live in checked-in git paths; workspace `.cursor/` holds the rules/hooks script symlinks, a **copied** `hooks.json`, and local Cursor metadata (`plans/`).
 
 ## Profile detection
 
 Hooks auto-detect workspace profile from the **`.cursor/rules` symlink target**:
 
-| Symlink target | Profile | Rules dir label |
-|----------------|---------|-----------------|
-| `…/monitor/cursor-rules` | `monitor` | `HPCPerfStats/monitor/cursor-rules` |
-| `…/hpcperfstats/cursor-rules` | `hpcperfstats` | `hpcperfstats/cursor-rules` |
+| Symlink target                | Profile        | Rules dir label                     |
+| ----------------------------- | -------------- | ----------------------------------- |
+| `…/monitor/cursor-rules`      | `monitor`      | `HPCPerfStats/monitor/cursor-rules` |
+| `…/hpcperfstats/cursor-rules` | `hpcperfstats` | `hpcperfstats/cursor-rules`         |
 
 `hook_task_router.py` merges **`MONITOR_ROUTER_ENTRIES`** and **`HPCPERFSTATS_ROUTER_ENTRIES`** so authorized cross-edits can trigger rules from both trees.
 
@@ -45,16 +45,16 @@ Plan template accepted for Read verification: `HPCPerfStats/docs/plans/PLAN_TEMP
 
 ## Hooks
 
-| Event | Script | Behavior |
-|-------|--------|----------|
-| `preToolUse` | `record-rule-reads.py` | **First** hook. On **`Read`/`ReadFile`/`CreatePlan`/`Write`/`StrReplace`**, append turn-activity events to `<transcript>.hpc_turn_activity.jsonl` under **`fcntl.flock`** (kinds: `read`, `create_plan`, `live_plan_write`; keyed by user-row count). Always **`allow`**. Works around Cursor persisting tool calls to `transcript_path` only after the turn ends, and prevents parallel-Read lost updates on the old unlocked ledger |
-| `preToolUse` | `check-pre-create-plan-reads.py` | **`deny`** **`CreatePlan`** and **`Write`/`StrReplace`** to `.cursor/plans/*.plan.md` until `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `plan-template-enforcement.mdc`, `compose-operator-terminal-commands.mdc`, `deploy-ini-with-code-no-phase-zero.mdc`, and `PLAN_TEMPLATE.md` are Read this turn (transcript reads **unioned** with the current-turn ledger) |
-| `preToolUse` | `check-block-until-plan-disk.py` | After **`CreatePlan`** without a same-turn disk write, **`deny`** all tools except **Read** and **Write/StrReplace** to `.cursor/plans/*.plan.md`. CreatePlan / live-plan Write facts are transcript **OR** ledger (any same-turn live plan write before or after CreatePlan clears pending). Stale on-disk `.plan.md` from a prior turn does **not** clear pending |
-| `preToolUse` | `check-live-plan-operator-discovery.py` | **`deny`** **Write/StrReplace** to `.cursor/plans/*.plan.md` when reconstructed markdown fails `operator_discovery_issues`, or when Operator discovery needs commands and `compose-operator-terminal-commands.mdc` / `operator-command-lessons-learned.mdc` were not Read **full-file** (no `limit`/`offset`) this turn (full-file transcript reads **unioned** with the current-turn ledger) |
-| `stop` | `check-close-gate.py` | After **file edits**, **`CreatePlan`**, or **any live `.cursor/plans` Write/StrReplace** (transcript **or** ledger), require close headings (Agent rule dispatch, Final code review, Post-implementation review) and Read-before-edit proof — **always** on plan turns (no soft-phrasing escape). Read proof and disk-sync use the turn-activity ledger when the transcript lags. Also: **rule dual-registration** when `cursor-rules/*.mdc` was edited; **PLAN_TEMPLATE** + **operator-discovery** shape on the live disk file when CreatePlan was used |
-| `postToolUse` | `check-create-plan-disk-sync.py` | After **`CreatePlan`**, inject mandatory same-turn **Write** to **`.cursor/plans/*.plan.md`** (`plan-live-disk-sync.mdc`) |
-| `postToolUse` | `check-edit-triggered-rules.py` | After `Write`/`StrReplace`/`EditNotebook`/`CreatePlan`, inject context if triggered domain rules or plan-authoring reads are missing **this turn** (`last_turn_rows` **unioned** with ledger — prior-turn edits do not poison read-before-edit); flag PLAN_TEMPLATE / other plan-authority gaps on live plan disk writes |
-| `postToolUse` | `check-new-rule-router.py` | After `Write`/`StrReplace` on `cursor-rules/*.mdc`, inject context if `agent-discipline-core.mdc` or `hook_task_router.py` omits the new rule |
+| Event         | Script                                  | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `preToolUse`  | `record-rule-reads.py`                  | **First** hook. On **`Read`/`ReadFile`/`CreatePlan`/`Write`/`StrReplace`**, append turn-activity events to `<transcript>.hpc_turn_activity.jsonl` under **`fcntl.flock`** (kinds: `read`, `create_plan`, `live_plan_write`; keyed by user-row count). Always **`allow`**. Works around Cursor persisting tool calls to `transcript_path` only after the turn ends, and prevents parallel-Read lost updates on the old unlocked ledger                                                                                                                    |
+| `preToolUse`  | `check-pre-create-plan-reads.py`        | **`deny`** **`CreatePlan`** and **`Write`/`StrReplace`** to `.cursor/plans/*.plan.md` until `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `plan-template-enforcement.mdc`, `compose-operator-terminal-commands.mdc`, `deploy-ini-with-code-no-phase-zero.mdc`, and `PLAN_TEMPLATE.md` are Read this turn (transcript reads **unioned** with the current-turn ledger)                                                                                                                                                                          |
+| `preToolUse`  | `check-block-until-plan-disk.py`        | After **`CreatePlan`** without a same-turn disk write, **`deny`** all tools except **Read** and **Write/StrReplace** to `.cursor/plans/*.plan.md`. CreatePlan / live-plan Write facts are transcript **OR** ledger (any same-turn live plan write before or after CreatePlan clears pending). Stale on-disk `.plan.md` from a prior turn does **not** clear pending                                                                                                                                                                                      |
+| `preToolUse`  | `check-live-plan-operator-discovery.py` | **`deny`** **Write/StrReplace** to `.cursor/plans/*.plan.md` when reconstructed markdown fails `operator_discovery_issues`, or when Operator discovery needs commands and `compose-operator-terminal-commands.mdc` / `operator-command-lessons-learned.mdc` were not Read **full-file** (no `limit`/`offset`) this turn (full-file transcript reads **unioned** with the current-turn ledger)                                                                                                                                                            |
+| `stop`        | `check-close-gate.py`                   | After **file edits**, **`CreatePlan`**, or **any live `.cursor/plans` Write/StrReplace** (transcript **or** ledger), require close headings (Agent rule dispatch, Final code review, Post-implementation review) and Read-before-edit proof — **always** on plan turns (no soft-phrasing escape). Read proof and disk-sync use the turn-activity ledger when the transcript lags. Also: **rule dual-registration** when `cursor-rules/*.mdc` was edited; **PLAN_TEMPLATE** + **operator-discovery** shape on the live disk file when CreatePlan was used |
+| `postToolUse` | `check-create-plan-disk-sync.py`        | After **`CreatePlan`**, inject mandatory same-turn **Write** to **`.cursor/plans/*.plan.md`** (`plan-live-disk-sync.mdc`)                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `postToolUse` | `check-edit-triggered-rules.py`         | After `Write`/`StrReplace`/`EditNotebook`/`CreatePlan`, inject context if triggered domain rules or plan-authoring reads are missing **this turn** (`last_turn_rows` **unioned** with ledger — prior-turn edits do not poison read-before-edit); flag PLAN_TEMPLATE / other plan-authority gaps on live plan disk writes                                                                                                                                                                                                                                 |
+| `postToolUse` | `check-new-rule-router.py`              | After `Write`/`StrReplace` on `cursor-rules/*.mdc`, inject context if `agent-discipline-core.mdc` or `hook_task_router.py` omits the new rule                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 **Turn-activity ledger race notes:** parallel `preToolUse` recorders take an exclusive flock before rewriting the sidecar; entries from prior turns (different `user_rows`) are dropped on compact. Legacy `<transcript>.hpc_rule_reads.jsonl` is still **read** for compatibility. Do **not** treat “`.plan.md` exists on disk” alone as same-turn Write proof.
 
@@ -68,7 +68,10 @@ Plan template accepted for Read verification: `HPCPerfStats/docs/plans/PLAN_TEMP
 4. Manual smoke test:
 
 ```bash
-echo '{"status":"completed","loop_count":0,"transcript_path":"/path/to/transcript.jsonl","workspace_roots":["/path/to/workspace"]}' | \
+J='{"status":"completed","loop_count":0,'
+J+='"transcript_path":"/path/to/transcript.jsonl",'
+J+='"workspace_roots":["/path/to/workspace"]}'
+echo "$J" | \
   .venv/bin/python3 HPCPerfStats/cursor-hooks/check-close-gate.py
 ```
 
@@ -105,12 +108,12 @@ The test `<WORKSPACE_ROOT>/.claude/tests/test_checkout_hook_copy.py` fails when 
 The `ruff-check` and `ruff-format` pre-commit hooks exclude the copy: their py314 fixes would change its bytes and produce syntax the system `python3` cannot parse.
 It imports the same router (`hook_task_router.py`) as Cursor, so both tools agree on which rules a path triggers.
 
-| Event | Subcommand | Behavior |
-|-------|-----------|----------|
-| `UserPromptSubmit` | `prompt` | Discipline reminder, plus bug-task and plan-task rule hints from prompt keywords |
-| `PreToolUse` `Edit\|Write\|MultiEdit\|NotebookEdit` | `pre-edit` | Deny until every triggered rule and router `docs` file was Read this turn (since the last user prompt, read from the transcript) |
-| `PostToolUse` edits | `post-edit` | Remind about rule dual registration (`agent-discipline-core.mdc` and `hook_task_router.py`) and the `.cursor/hooks.json` copy step |
-| `Stop` | `stop` | Close-heading gate and paste-safety check (below), capped at `MAX_STOP_BLOCKS` consecutive blocks per session |
+| Event                                               | Subcommand  | Behavior                                                                                                                           |
+| --------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `UserPromptSubmit`                                  | `prompt`    | Discipline reminder, plus bug-task and plan-task rule hints from prompt keywords                                                   |
+| `PreToolUse` `Edit\|Write\|MultiEdit\|NotebookEdit` | `pre-edit`  | Deny until every triggered rule and router `docs` file was Read this turn (since the last user prompt, read from the transcript)   |
+| `PostToolUse` edits                                 | `post-edit` | Remind about rule dual registration (`agent-discipline-core.mdc` and `hook_task_router.py`) and the `.cursor/hooks.json` copy step |
+| `Stop`                                              | `stop`      | Close-heading gate and paste-safety check (below), capped at `MAX_STOP_BLOCKS` consecutive blocks per session                      |
 
 The close-heading gate applies when the turn edited a gated path: the final message needs `## Agent rule dispatch` (listing every triggered non-always-on rule), `## Final code review (senior engineer pass)` and `## Post-implementation review`.
 The paste-safety check runs every turn: a `bash` or `sh` fence in the final message must not contain a heredoc or a line longer than `PASTE_LINE_MAX` characters.
