@@ -29,7 +29,7 @@ Solve one task on a running site or in the checkout.
 - [Run tests](how-to/develop/run-tests.md)
 - [Run `sync_timedb` benchmarks](how-to/develop/run-sync-timedb-benchmarks.md)
 - [Diagnose `update_metrics`](how-to/develop/diagnose-update-metrics.md)
-- Build Codon kernels
+- [Build Codon kernels](how-to/develop/build-codon-kernels.md)
 - [Add a CPU type](how-to/develop/add-a-cpu-type.md)
 
 ## Reference
@@ -58,7 +58,7 @@ Understand the design and its trade-offs.
 
 - [Architecture](explanation/architecture.md)
 - [Pipeline concurrency](explanation/pipeline-concurrency.md)
-- Codon runtime model
+- [Codon runtime model](explanation/codon-runtime-model.md)
 - Monitor naming scheme
 
 ## Records

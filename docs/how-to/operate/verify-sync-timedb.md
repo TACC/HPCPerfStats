@@ -200,53 +200,7 @@ A `.sync_timedb_sealed_integrity.json` row with `action=operator_restore_needed`
 
 ## Verify the Codon parse bridge
 
-The pipeline image bakes the Codon ingest parser in the Dockerfile stage `codon-build` of `services-conf/pipeline_web.Dockerfile`, at the Codon release pinned by `CODON_VERSION`, by running `hpcperfstats/dbload/codon/build_codon_ext.sh`.
-The runtime copies it to `/opt/hpcperfstats/codon_parse`, which supervisord puts on `PYTHONPATH` for `sync_timedb`; the bridge also adds that directory to `sys.path` when it exists.
-Rebuild it with `./scripts/rebuild_pipeline.sh`; never prebuild the `.so` on the host or copy it into the build context.
-
-When the extension is missing, ingest uses the CPython `IncrementalStatsParser` and the stall signatures are the same.
-When it loads, file parses run in Codon worker processes (`codon_mode=process_pool`), one per ingest thread.
-The worker count is `[PIPELINE] sync_ingest_pool_processes` (default `64`), capped at `MAX_CODON_SLOTS` (128).
-Each worker parses a file in `[PIPELINE] sync_codon_parse_flush_max_mib` windows and is replaced between files once its RSS passes `[PIPELINE] sync_codon_worker_recycle_rss_mib` (default `1536`).
-Worker RSS counts toward the tree RSS roof, so on a small roof lower `sync_ingest_pool_processes` (for example to `32`) if ingest admission defers.
-A Codon failure or a worker that dies mid-file (`codon worker EOF`) fails that file and never falls back to the CPython parser.
-
-To verify the bridge after a redeploy:
-
-1. Grep the startup line:
-
-   ```bash
-   podman-compose -p hpcperfstats logs pipeline 2>&1 \
-     | grep 'codon_parse status=' | tail -5
-   ```
-
-2. Confirm `codon_parse status=enabled ... api=parse_stats_lines_codon gil=off contexts=<N> codon_mode=process_pool codonrt_serialize=0`.
-   `<N>`: the slot count.
-
-3. Confirm the daemon interpreter is still `/opt/python3.14t/bin/python3.14t` (T0 step 2) and that `sys._is_gil_enabled()` stays false after the Codon import.
-
-4. Grep the census lines for `codon_slot_occ=` (held over total slots).
-
-5. Escalate a sustained flood of `codon parse_stats_lines_codon failed`, `gil_enabled_after_import` or mid-file `RuntimeError` lines.
-   `HPCPERFSTATS_CODON_PARSE_DISABLE=1` turns the bridge off in tests and soaks (startup logs `status=disabled reason=HPCPERFSTATS_CODON_PARSE_DISABLE`).
-
-To check a rebuilt image without starting the stack:
-
-```bash
-podman run --rm --entrypoint /bin/bash \
-  localhost/hpcperfstats:latest -lc '
-  export PYTHONPATH=/opt/hpcperfstats/codon_parse
-  M=hpcperfstats.dbload.lib.sync_timedb_codon_bridge
-  /opt/python3.14t/bin/python -c "
-import importlib
-b = importlib.import_module(\"$M\")
-print(b.log_codon_parse_startup())"
-'
-```
-
-Codon is not a fix for day_close, lock or discover stalls.
-The micro A/B `tests/experiments/codon/run_codon_ab_baseline.sh` writes `test_runs/codon_ab_*.log` and passes on `gate_1p25x=True`.
-Full-load Codon off and on soaks use `--loaded48` from [Run sync_timedb benchmarks](../develop/run-sync-timedb-benchmarks.md).
+Check the `codon_parse status=` startup line and the `codon_slot_occ=` census token with [Verify the result](../develop/build-codon-kernels.md#verify-the-result) in Build Codon kernels.
 
 ## Troubleshooting
 

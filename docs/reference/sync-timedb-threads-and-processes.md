@@ -110,7 +110,7 @@ On the free-threaded image with the baked `.so`, file parses run in Codon worker
 Threads sharing one Codon runtime serialize on the Boehm allocation lock, so processes are the parallel unit.
 A worker above `sync_codon_worker_recycle_rss_mib` is replaced between files.
 Host fakes (`CODON_EXT_ENV`) stay in-process, and the legacy Popen pool behind `_use_codon_process_pool` is a test-only opt-in.
-The runtime model and bake are in [`hpcperfstats/dbload/codon/README.md`](../../hpcperfstats/dbload/codon/README.md).
+The runtime model is in [Codon runtime model](../explanation/codon-runtime-model.md#process-model), and the bake is in [Build Codon kernels](../how-to/develop/build-codon-kernels.md).
 
 ## Raw `threading.Thread`
 
