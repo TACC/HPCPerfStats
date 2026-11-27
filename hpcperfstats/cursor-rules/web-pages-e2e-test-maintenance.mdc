@@ -89,7 +89,7 @@ Also regenerate if the Playwright test’s **failure substrings** or embed harne
 4. Run `pytest hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (requires `python -m playwright install chromium` and network for the Bokeh CDN).
 5. Keep **Python contract tests** in `test_job_hist_bokeh_ranges.py` green in the same change.
 
-Copy-paste commands and a full generator snippet are maintained in `HPCPerfStats/docs/how-to/develop/run-tests.md` (Run frontend tests); update that doc when regeneration steps or paths change (`testing-doc-sync.mdc`).
+The steps above are the only regeneration procedure; no doc carries a generator snippet. `HPCPerfStats/docs/how-to/develop/run-tests.md` documents the browser runner (`tests/run_bokeh_browser_workflow.sh`); update it when that runner, its prerequisites or the fixture paths change (`testing-doc-sync.mdc`).
 
 ### Overlap
 

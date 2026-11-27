@@ -3,8 +3,7 @@ description: Contract between monitor host_data events and frontend variable met
 globs:
   - "**/generate-variable-metadata-monitor-events.py"
   - "**/variableMetadataMonitorEvents.ts"
-  - "**/variableMetadataMonitorEvents.js"
-  - "**/variableMetadata.js"
+  - "**/variableMetadata.ts"
   - "**/docs/reference/monitor-variables-consumer-map.md"
   - "**/scripts/docs/gen_monitor_variables_consumer_map.py"
 alwaysApply: false

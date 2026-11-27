@@ -1,10 +1,9 @@
 ---
 description: Keep variable and metric tooltip metadata synchronized across generator, React, Python summary text, and docs
 globs:
-  - "**/variableMetadata.js"
+  - "**/variableMetadata.ts"
   - "**/variableMetadataMonitorEvents.ts"
-  - "**/variableMetadataMonitorEvents.js"
-  - "**/variableMetadata.test.js"
+  - "**/variableMetadata.test.ts"
   - "**/generate-variable-metadata-monitor-events.py"
   - "**/summary_metric_descriptions.py"
   - "**/job_detail_bokeh_plot_descriptions.py"
@@ -23,10 +22,10 @@ Tooltip and help text for metrics/events live in **several files**. After changi
 |-------|-----------------------------|---------------------------|
 | Monitor `host_data.event` names | Monitor `KEYS` macros + dbload renames (see `variable-metadata-monitor-contract.mdc`) | — |
 | Per-event descriptions | `hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py` (`DESC`, `generic()`, `collect_all_names()` extras) | `variableMetadataMonitorEvents.ts` (`MONITOR_EVENT_METADATA`) |
-| Merged UI map | `variableMetadata.js` (`JOB_ACCOUNTING_AND_DERIVED_METADATA`, `SUMMARY_PLOT_METRIC_METADATA`) spread over `MONITOR_EVENT_METADATA` | `VARIABLE_METADATA` / `getDescriptionForVariable` |
-| Job catalog metrics | `metrics.py` + `variableMetadata.js` `JOB_ACCOUNTING_*` | See `variable-metadata-derived-metrics-sync.mdc` |
-| Summary subplot column help | **`variableMetadata.js` → `SUMMARY_PLOT_METRIC_METADATA`** | **`hpcperfstats/analysis/metrics/lib/plot/summary_metric_descriptions.py` → `SUMMARY_METRIC_DESCRIPTIONS`** — **same keys, same prose** (see comment at top of `summary_metric_descriptions.py`) |
-| Job Detail Bokeh plot help (roofline, multiprecision, fixed embed keys) | **`variableMetadata.js` → `JOB_DETAIL_BOKEH_PLOT_METADATA`** | **`hpcperfstats/analysis/metrics/lib/plot/job_detail_bokeh_plot_descriptions.py` → `JOB_DETAIL_BOKEH_HELP`** — **same keys, same prose** |
+| Merged UI map | `variableMetadata.ts` (`JOB_ACCOUNTING_AND_DERIVED_METADATA`, `SUMMARY_PLOT_METRIC_METADATA`) spread over `MONITOR_EVENT_METADATA` | `VARIABLE_METADATA` / `getDescriptionForVariable` |
+| Job catalog metrics | `metrics.py` + `variableMetadata.ts` `JOB_ACCOUNTING_*` | See `variable-metadata-derived-metrics-sync.mdc` |
+| Summary subplot column help | **`variableMetadata.ts` → `SUMMARY_PLOT_METRIC_METADATA`** | **`hpcperfstats/analysis/metrics/lib/plot/summary_metric_descriptions.py` → `SUMMARY_METRIC_DESCRIPTIONS`** — **same keys, same prose** (see comment at top of `summary_metric_descriptions.py`) |
+| Job Detail Bokeh plot help (roofline, multiprecision, fixed embed keys) | **`variableMetadata.ts` → `JOB_DETAIL_BOKEH_PLOT_METADATA`** | **`hpcperfstats/analysis/metrics/lib/plot/job_detail_bokeh_plot_descriptions.py` → `JOB_DETAIL_BOKEH_HELP`** — **same keys, same prose** |
 | Consumer cross-reference (key -> code, sentinels, historical keys, per-type diagnostic notes) | `scripts/docs/gen_monitor_variables_consumer_map.py` (`DIAGNOSTIC_NOTES`, `HISTORICAL_KEYS`; keys from `monitor/scripts/lib/keys_catalog.py`) | `docs/reference/monitor-variables-consumer-map.md` |
 | Per-key meaning, unit, width, tier | `monitor/docs/metric_descriptions.tsv` + monitor `KEYS` | `monitor/docs/METRICS_REFERENCE.md` (`monitor-raw-data-format-docs.mdc`) |
 
@@ -44,7 +43,7 @@ After changing **`generate-variable-metadata-monitor-events.py`** or monitor-exp
 Then run frontend checks that touch metadata:
 
 ```bash
-cd hpcperfstats/site/frontend && npm test -- --run src/utils/variableMetadata.test.js
+cd hpcperfstats/site/frontend && npm test -- --run src/utils/variableMetadata.test.ts
 ```
 
 Rerun `scripts/docs/gen_monitor_variables_consumer_map.py` after any change to monitor keys, the rename map, `monitor_sentinel.py`, the ingest skip list or a scanned consumer file that quotes a key; `hpcperfstats/tests/test_doc_generators_fresh.py` fails while the page is stale.
