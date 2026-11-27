@@ -1,8 +1,11 @@
 # Monitor variable rename table
 
-Generated 2026-11-18 from `hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml`.
+Historical record, 2026-11-27. Not maintained.
 
-**Clean break:** no ingest aliases. Downstream must adopt new names.
+Rendered on 2026-11-18 from the monitor rename map (`docs/monitor_variable_rename_map.yaml`, now `hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml`); the current map is rendered in [Monitor naming tables](../reference/monitor-naming-tables.md).
+
+The monitor never emits a legacy and a canonical name together: new archives carry only the new names.
+Consumers keep reading the old names through the map: ingest detects legacy schemas (`resolve.schema_needs_legacy_hardware_decode`) and analysis probes canonical then legacy names (`resolve.canonical_type_name`, `type_probe_names`, `events_probe_names`).
 
 ## Downstream impact (document-only)
 

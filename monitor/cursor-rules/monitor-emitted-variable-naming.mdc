@@ -9,7 +9,7 @@ alwaysApply: false
 
 # Monitor emitted variable naming
 
-- **Canonical spec:** `HPCPerfStats/docs/MONITOR_NAMING_SCHEME.md` and `HPCPerfStats/hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml`.
+- **Canonical spec:** `HPCPerfStats/docs/explanation/monitor-naming-scheme.md` (rules) and `HPCPerfStats/hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml`.
 - **Level 1 (`st_name`):** lowercase snake `{origin}_{domain}[_{variant}]`; architecture/generation in the type, not the key.
 - **Level 2 (event keys):** lowercase snake `{resource}_{signal}[_{qualifier}]`; units in schema suffix (`U=`), not key text when avoidable.
 - **Kernel mirrors:** map `/proc`/`/sys` fields to snake_case at emit time (`host_key_alias_emit` for mem/proc).

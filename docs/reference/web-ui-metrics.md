@@ -296,5 +296,5 @@ Each number in this page points to one row here.
 
 - [Explore jobs in the web UI](../tutorials/explore-jobs-in-the-web-ui.md)
 - [Monitor metrics reference](../../monitor/docs/METRICS_REFERENCE.md)
-- [Monitor variables catalog](../MONITOR_VARIABLES.md)
+- [Monitor variables consumer map](monitor-variables-consumer-map.md)
 - [Analysis architectures](analysis-architectures.md)

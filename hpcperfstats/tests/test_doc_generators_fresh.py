@@ -16,6 +16,14 @@ GENERATORS = {
     "monitor/scripts/gen_metrics_reference.py",
     "--check",
   ],
+  "monitor_naming_tables": [
+    "scripts/docs/gen_monitor_naming_tables.py",
+    "--check",
+  ],
+  "monitor_variables_consumer_map": [
+    "scripts/docs/gen_monitor_variables_consumer_map.py",
+    "--check",
+  ],
   "overhead_profiles": [
     "monitor/measurement/bin/aggregate_profiles.py",
     "--check",

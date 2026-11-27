@@ -303,6 +303,9 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     "id": "monitor_analysis_naming",
     "patterns": [
       "hpcperfstats/dbload/lib/monitor_naming/**",
+      "docs/reference/monitor-naming-tables.md",
+      "docs/explanation/monitor-naming-scheme.md",
+      "scripts/docs/gen_monitor_naming_tables.py",
     ],
     "rules": [
       "monitor-analysis-architecture-sync.mdc",
@@ -493,9 +496,8 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
       "hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.ts",
       "hpcperfstats/analysis/metrics/lib/plot/job_detail_bokeh_plot_descriptions.py",
       "hpcperfstats/analysis/metrics/lib/plot/summary_metric_descriptions.py",
-      "docs/MONITOR_VARIABLES.md",
-      "docs/regenerate_monitor_variables_catalog.py",
-      "docs/augment_monitor_variables_diagnostics.py",
+      "docs/reference/monitor-variables-consumer-map.md",
+      "scripts/docs/gen_monitor_variables_consumer_map.py",
     ],
     "rules": [
       "variable-metadata-cross-source-sync.mdc",

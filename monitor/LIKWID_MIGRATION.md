@@ -11,7 +11,7 @@
 > - `README.md` → *x86 counters (direct perf, 3.1 Phases 2+3)* and the migration table
 >   *x86 `host_cpu_hw`, uncore and RAPL (3.1 Phases 2+3: direct perf, PMU library removed)*
 > - `cursor-rules/monitor-x86-direct-perf.mdc` (laws) and `cursor-rules/monitor-arm-direct-perf.mdc`
-> - `HPCPerfStats/docs/MONITOR_VARIABLES.md` (key meanings)
+> - `docs/METRICS_REFERENCE.md` (key meanings)
 >
 > The text below describes the LIKWID era (3.0 – 3.1 Phase 1) and is kept only to explain
 > archived data, for example why ICX+ `mem_load_uops_retired_l1_hit` counted all loads, why

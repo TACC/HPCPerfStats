@@ -22,7 +22,7 @@ globs:
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-The monitor emits `-<n>` instead of a value when a key could not be read (catalog: `monitor/src/stats_sentinel.h`, mirror: `hpcperfstats/lib/monitor_sentinel.py`, prose: `docs/MONITOR_VARIABLES.md` → *Value sentinels*). Ingest stores the code in `host_data.value`. An emitted `0` always means "read, and it was 0".
+The monitor emits `-<n>` instead of a value when a key could not be read (catalog: `monitor/src/stats_sentinel.h`, mirror: `hpcperfstats/lib/monitor_sentinel.py`, consumer table: `docs/reference/monitor-variables-consumer-map.md` -> *Value sentinels*, generated from the mirror). Ingest stores the code in `host_data.value`. An emitted `0` always means "read, and it was 0".
 
 ## Laws
 
@@ -33,7 +33,7 @@ The monitor emits `-<n>` instead of a value when a key could not be read (catalo
 5. **The side table rides the marks path, not the host_data transaction.** `host_sentinel_summary` rows come from `kind=sentinel` marks persisted in `persist_monitor_marks`. Writes are idempotent: replays and split flushes merge into one run when `prev` matches the stored end; a device-count change starts a new row. Failures and lost retries log at **ERROR**, never WARNING.
 6. **Audience split per request.** Researchers see only `RESEARCHER_VISIBLE_CODES` (currently `{-2}` NOT_PRESENT) as no-data reasons on Job Detail; staff views (telemetry health, admin) see every code. Decide per endpoint, not per code site.
 7. **Every per-sample reader uses the fold's sample states, not a per-row drop.** A `(host, time)` sample (per device for per-device sums) is valid, bridged, or a gap; one unreadable summed event makes the whole sample a gap, never a partial sum. Static-kind codes are absent counters, not gaps. The 5-minute fold (`sentinel_samples`) and every other per-sample sum (`FrameIndex.sum_per_sample` via `sentinel_sample_mask`: plots, Type Detail, peaks, `avg_cpuusage`) share the rule. Interior transient gaps are interpolated for the fold and for series readers within `metrics_sentinel_fill_*`; peaks are never filled (`update-metrics-columnar-codon-contract.mdc` law 5).
-8. **Codes are append-only.** Never renumber, reuse, or remove a code. Add a code to `stats_sentinel.h`, `monitor_sentinel.py`, the Codon literals in `feed_collapse.py`, and the docs table in one task; the catalog drift test, `test_stats_sentinel_catalog.c`, and the Codon literals test must all pass.
+8. **Codes are append-only.** Never renumber, reuse, or remove a code. Add a code to `stats_sentinel.h`, `monitor_sentinel.py`, the Codon literals in `feed_collapse.py`, and the wire table in `monitor/docs/RAW_DATA_FORMAT.md` in one task, then rerun `scripts/docs/gen_monitor_variables_consumer_map.py`; the catalog drift test, `test_stats_sentinel_catalog.c`, and the Codon literals test must all pass.
 
 ## Overlap
 

@@ -5,8 +5,8 @@ globs:
   - "**/variableMetadataMonitorEvents.ts"
   - "**/variableMetadataMonitorEvents.js"
   - "**/variableMetadata.js"
-  - "**/docs/MONITOR_VARIABLES.md"
-  - "**/docs/regenerate_monitor_variables_catalog.py"
+  - "**/docs/reference/monitor-variables-consumer-map.md"
+  - "**/scripts/docs/gen_monitor_variables_consumer_map.py"
 alwaysApply: false
 ---
 
@@ -30,10 +30,9 @@ alwaysApply: false
 
 1. If new `KEYS` / `ARM_IMC_KEYS` / `CPU_COUNTER_METRICS_KEYS` / NFS `EVENT_KEYS` / `BYTE_KEYS` / `XPRT_KEYS` event names are added, or ingest maps new counter aliases into `host_data.event`, update the generator if needed (extra names, or `DESC` entries in the script for clarity).
 2. Regenerate `variableMetadataMonitorEvents.ts` with the command above.
-3. Regenerate the operator catalog and diagnostics: from repo root,  
-   `.venv/bin/python docs/regenerate_monitor_variables_catalog.py` then  
-   `.venv/bin/python docs/augment_monitor_variables_diagnostics.py`  
-   (see `variable-metadata-cross-source-sync.mdc`).
+3. Regenerate the consumer map from repo root:
+   `../.venv/bin/python3 scripts/docs/gen_monitor_variables_consumer_map.py`
+   (see `variable-metadata-cross-source-sync.mdc`); per-key definitions live in `monitor/docs/METRICS_REFERENCE.md`.
 4. Keep one human-readable sentence per `description` (no scientific notation in strings; project-wide display rules still apply elsewhere).
 
 ## Overlap

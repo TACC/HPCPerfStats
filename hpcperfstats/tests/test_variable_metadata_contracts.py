@@ -163,17 +163,23 @@ def test_monitor_keys_extractor_keeps_all_x_entries_on_one_line():
     )
 
 
-def test_augment_counts_all_metrics_lib_analysis_as_wired():
-  """Events read by any analysis/metrics/lib module (lib root, columnar/, gen/, plot/) are wired."""
+def _consumer_map_module():
   import importlib.util
 
   repo_root = Path(__file__).resolve().parents[2]
-  path = repo_root / "docs" / "augment_monitor_variables_diagnostics.py"
-  spec = importlib.util.spec_from_file_location("augment_mv", path)
+  path = (
+    repo_root / "scripts" / "docs" / "gen_monitor_variables_consumer_map.py"
+  )
+  spec = importlib.util.spec_from_file_location("consumer_map", path)
   assert spec is not None and spec.loader is not None
   mod = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(mod)
-  wired = mod.path_is_analysis_wired
+  return mod
+
+
+def test_consumer_map_counts_metrics_lib_as_application_code():
+  """analysis/metrics/lib modules (root, columnar/, gen/, plot/) are app code."""
+  is_test = _consumer_map_module()._is_test_path
   lib = "hpcperfstats/analysis/metrics/lib/"
   for p in (
     lib + "columnar/roofline_series.py",
@@ -181,11 +187,27 @@ def test_augment_counts_all_metrics_lib_analysis_as_wired():
     lib + "gen/imc_cas_bw.py",
     lib + "plot/roofline.py",
     lib + "metrics.py",
+    "hpcperfstats/dbload/lib/sync_timedb_parsing.py",
   ):
-    assert wired(p), p
+    assert not is_test(p), p
   for p in (
     "hpcperfstats/analysis/metrics/tests/test_columnar_kernels.py",
     lib + "gen/tests/test_imc_cas_bw.py",
-    "hpcperfstats/dbload/lib/sync_timedb_parsing.py",
+    lib + "plot/test_hover.py",
+    "hpcperfstats/site/frontend/src/utils/variableMetadata.test.ts",
   ):
-    assert not wired(p), p
+    assert is_test(p), p
+
+
+def test_consumer_map_type_gate_drops_generic_word_hits():
+  """A quoted generic key counts only next to one of its type names."""
+  refs = _consumer_map_module().key_references(
+    {"active": {"host_mem"}},
+    {"host_mem": {"mem"}},
+    {
+      "pg.py": "state = 'active'",
+      "mem.py": "typ = 'mem'; ev = 'active'",
+      "probe.py": "from monitor_naming import x; ev = 'active'",
+    },
+  )
+  assert refs == {"active": (["mem.py", "probe.py"], [])}

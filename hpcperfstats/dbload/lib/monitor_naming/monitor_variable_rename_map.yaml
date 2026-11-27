@@ -1,4 +1,4 @@
-# Monitor variable rename map (source of truth for apply_monitor_variable_renames.py)
+# Monitor variable rename map: legacy -> canonical names (loaded by load_map.py)
 types:
   cpu: host_cpu
   mem: host_mem

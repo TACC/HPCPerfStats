@@ -4,7 +4,6 @@ This page maps every HPCPerfStats doc by what you want to do.
 It is for operators, developers and researchers looking for the right page.
 
 The docs follow [Diataxis]: tutorials teach, how-to guides solve one task, reference describes, and explanation discusses why.
-Pages listed without a link are planned and not written yet.
 
 ## Tutorials
 
@@ -50,7 +49,8 @@ Look up code, configuration and contract facts.
 - [Analysis architectures](reference/analysis-architectures.md)
 - [Security posture](reference/security-posture.md)
 - [Release notes](reference/release-notes.md)
-- Monitor variables consumer map
+- [Monitor variables consumer map](reference/monitor-variables-consumer-map.md)
+- [Monitor naming tables](reference/monitor-naming-tables.md)
 
 ## Explanation
 
@@ -59,7 +59,7 @@ Understand the design and its trade-offs.
 - [Architecture](explanation/architecture.md)
 - [Pipeline concurrency](explanation/pipeline-concurrency.md)
 - [Codon runtime model](explanation/codon-runtime-model.md)
-- Monitor naming scheme
+- [Monitor naming scheme](explanation/monitor-naming-scheme.md)
 
 ## Records
 

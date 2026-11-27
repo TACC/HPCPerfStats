@@ -372,7 +372,7 @@ D=hpcperfstats/site/frontend/src/utils
 python3 "$D/generate-variable-metadata-monitor-events.py"
 ```
 
-Then merge into `src/utils/variableMetadata.ts` and refresh the operator catalog with `docs/regenerate_monitor_variables_catalog.py`.
+Then merge into `src/utils/variableMetadata.ts` and regenerate the consumer map with `scripts/docs/gen_monitor_variables_consumer_map.py`.
 
 ## Measure coverage
 

@@ -211,7 +211,7 @@ The canonical Python references (`hpcperfstats/cursor-rules/monitor-analysis-arc
 - `hpcperfstats/analysis/metrics/lib/plot/roofline_peaks.py`: peak tables and inference.
 - `hpcperfstats/analysis/metrics/lib/plot/roofline.py`: merge logic.
 
-The monitor variable catalog is [`docs/MONITOR_VARIABLES.md`](../MONITOR_VARIABLES.md), maintained with `docs/regenerate_monitor_variables_catalog.py` and `docs/augment_monitor_variables_diagnostics.py`.
+Key meanings are in the [monitor metrics reference](../../monitor/docs/METRICS_REFERENCE.md), the consumer code that reads each key is in the [monitor variables consumer map](../reference/monitor-variables-consumer-map.md), and the naming rules are in [Monitor naming scheme](monitor-naming-scheme.md).
 
 ### Valkey roles
 

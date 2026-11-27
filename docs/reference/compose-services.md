@@ -159,7 +159,7 @@ Host status values:
 - incomplete: the scan failed.
 - no recent data: no sample in 7 days.
 
-The hand-kept catalog the runtime view checks against is [`docs/MONITOR_VARIABLES.md`](../MONITOR_VARIABLES.md).
+The code that reads each `(type, event)` pair is listed in the [monitor variables consumer map](monitor-variables-consumer-map.md).
 
 ### Accounting reimport
 

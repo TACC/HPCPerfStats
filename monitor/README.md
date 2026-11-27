@@ -682,7 +682,8 @@ Build, configure and validation changes in the same release:
   (`measurement/lib/driver_map.py`).
 
 The analysis side also halves SPR Max HBM bandwidth (`hbm_cas_*` are 32-byte CAS, D21) in the
-same contract bump. See `HPCPerfStats/docs/MONITOR_VARIABLES.md`.
+same contract bump. See `docs/METRICS_REFERENCE.md` (key meanings) and
+`HPCPerfStats/docs/reference/monitor-variables-consumer-map.md` (consumer code).
 
 ### Lustre collectors (`lustre_mdc` / `lustre_osc` / `lustre_llite`)
 
