@@ -31,7 +31,7 @@ alwaysApply: false
 2. Regenerate `variableMetadataMonitorEvents.ts` with the command above.
 3. Regenerate the consumer map from repo root:
    `../.venv/bin/python3 scripts/docs/gen_monitor_variables_consumer_map.py`
-   (see `variable-metadata-cross-source-sync.mdc`); per-key definitions live in `monitor/docs/METRICS_REFERENCE.md`.
+   (see `variable-metadata-cross-source-sync.mdc`) and commit the page with the change; the `monitor-variables-consumer-map` pre-commit hook fails the commit while the page is stale. Per-key definitions live in `monitor/docs/METRICS_REFERENCE.md`.
 4. Keep one human-readable sentence per `description` (no scientific notation in strings; project-wide display rules still apply elsewhere).
 
 ## Overlap

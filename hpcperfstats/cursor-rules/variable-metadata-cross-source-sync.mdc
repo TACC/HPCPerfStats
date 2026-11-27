@@ -46,7 +46,7 @@ Then run frontend checks that touch metadata:
 cd hpcperfstats/site/frontend && npm test -- --run src/utils/variableMetadata.test.ts
 ```
 
-Rerun `scripts/docs/gen_monitor_variables_consumer_map.py` after any change to monitor keys, the rename map, `monitor_sentinel.py`, the ingest skip list or a scanned consumer file that quotes a key; `hpcperfstats/tests/test_doc_generators_fresh.py` fails while the page is stale.
+Rerun `scripts/docs/gen_monitor_variables_consumer_map.py` after any change to monitor keys, the rename map, `monitor_sentinel.py`, the ingest skip list or a scanned consumer file that quotes a key. The `monitor-variables-consumer-map` pre-commit hook runs the generator with `--fix` on those inputs: a stale page is rewritten and the commit fails; rerun the generator in the checkout and commit the page with the other paths (under `git isolated-commit` the rewrite stays in the slot, and a named page that matches `HEAD` is dropped). `hpcperfstats/tests/test_doc_generators_fresh.py` fails while the page is stale and pins the hook's `files:` pattern to the generator inputs (`docs/reference/documentation-style.md`, "Regeneration hooks").
 
 ## Pairing rules (manual sync)
 

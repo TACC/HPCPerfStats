@@ -40,8 +40,6 @@ Equivalent manual command: day-close plan **Phase 1b** pytest line in [`tests/ru
 | Day-close space reclaim (post_seal bool, reseal, phase=done dual, vnd reopen) | `test_sync_timedb_queue_orchestrator.py`, `test_sync_timedb_day_raw_removal.py`, `tests/run_sync_timedb_day_close_soak_workflow.sh` | Oracle = `open_tar_n` / dual decline (not `archive_done` alone); host soak default |
 | `test_arch_*` battery | Phase 1b `-k` via `run_sync_timedb_regression_battery.sh` | Must stay green; no weaken/xfail without plan amend |
 
-Retired B modules (`test_sync_timedb_supervisor.py`, `test_sync_timedb_janitor.py`) are **deleted** with ArchiveJanitor; do not resurrect june04 janitor-handoff replay tests without a plan amend.
-
 ## Runtime stall telemetry (backlog sites)
 
 Ship and keep enabled on catch-up deployments:
@@ -66,21 +64,9 @@ After a failed ``proc_data`` / ``host_data`` ``bulk_create`` in ``_write_stats_p
 2. **Reset** the Django/psycopg connection (``rollback`` + ``close_old_connections``) before ``_insert_*_individually``; a mid-command socket otherwise yields ``another command is already in progress`` on every remaining row.
 3. On InterfaceError / desync during a row ``save``, reset **once**, retry that row once, then **abort** the file write path — do not log N identical desync lines for the rest of the frame.
 
-Regression: ``test_write_stats_payload_timeout_not_swallowed_into_single_insert``, ``test_write_stats_payload_resets_connection_after_bulk_create_error``, ``test_insert_rows_individually_desync_resets_once_then_aborts``. Post-deploy T0: see ``docs/how-to/operate/verify-sync-timedb.md`` (Troubleshooting, cascading already in progress inserts).
-
-## Between-chunk pending reconcile (handoff + TTL)
-
-- **`handoff_priority` day_close defer** (`_maybe_enqueue_immediate_day_close`) must **not** call `_reconcile_pending_with_oldest_checkpoint_incomplete` — chunk-boundary reconcile before dispatch is enough. Double full rebuilds on every defer caused multi-minute tax (hpcperfstats03, 2026-07).
-- Soft TTL (`PENDING_RECONCILE_UNPROCESSED_TTL_S`, 120s) must **not** be shorter than typical cap `elapsed_s` for valid incomplete fingerprints — reuse until invalidate or **`PENDING_RECONCILE_UNPROCESSED_HARD_CEILING_S`** (~900s) via `try_reuse_pending_reconcile_unprocessed_cache(..., hard_ceiling_s=...)`. Soft TTL still forces refresh when incomplete was zero / no fingerprint.
-- **Cache-miss under known pending:** chunk start uses **`_reconcile_pending_nonblocking`** (`SessionSingleFlightExecutor` role `pending-reconcile`) — kick live unprocessed async, ingest on current pending, **drain-if-done only** (never `future.result()` join). Day-close rescan flag kicks async `pending-rescan` (no sync find on MainThread). Regression: **`test_r29_async_pending_reconcile_nonblocking_chunk_start`**, **`test_r30_day_close_rescan_kicks_async_not_sync_find`**.
-- **Cache-hit cap is not cheap** while `supplement_pending_paths_from_closed_paths` can walk a ~400k closed-path snapshot: prefer sort-then-stat (RC-1) and **one cap per boundary**. Archive-finalize slots must set `archive_finalize_needs_post_reconcile` and let `_reconcile_pending_nonblocking` consume it once — never call `_reconcile_pending_with_oldest_checkpoint_incomplete` inline per finalize slot (RC-2).
-- Regression: `test_arch_handoff_priority_defer_skips_full_pending_reconcile`, `test_try_reuse_pending_reconcile_unprocessed_cache_skip_vs_rescan`, `test_arch_archive_finalize_defers_reconcile_to_chunk_boundary`.
-
-## Giant / idle pool supplement stop (RC-E)
-
-- **`_giant_pool_supplement_paths_fn`** may dispatch (and mid-imap replenish) **only while at least one path from the batch's own frozen set is still in flight**. Primary-iterator exhausted + idle slots is the **normal end-of-chunk** condition and must **never by itself** authorize unbounded work-steal against a live-growing closed-path snapshot (hpcperfstats03 2026-07: `in_flight_giants=[]` + repeated `giant pool supplement replenish` with **zero** `chunk_elapsed_s` for 6h+).
-- Idle-slot fill (RC-3) and giant-tail replenish (RC-D) remain valid **while a batch straggler blocks**; once only supplements remain in flight, return `[]` and log **`giant pool supplement stop reason=batch_paths_complete`**.
-- Regression: `test_imap_batch_terminates_with_ever_growing_closed_snapshot`, `test_supplement_stops_when_only_supplements_in_flight`, `test_supplement_continues_while_original_path_in_flight`, `test_giant_in_flight_still_replenishes_mid_imap` in `test_sync_timedb_ingest_file_timeout.py`.
+Regression: `hpcperfstats/tests/test_sync_timedb_ingest_write_lock.py::test_write_stats_payload_resets_connection_after_bulk_create_error` (step 2).
+Steps 1 and 3 have no direct test (`_reraise_if_ingest_control_flow` on the write path; one-reset-then-abort in `_insert_rows_individually`).
+Post-deploy T0: see ``docs/how-to/operate/verify-sync-timedb.md`` (Troubleshooting, cascading already in progress inserts).
 
 ## Throughput / thread-count changes
 

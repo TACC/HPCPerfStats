@@ -66,7 +66,7 @@ Increment `SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION` in the **same PR** as any c
 - maint hints debt/day_phases interpretation
 - DB-head/delete gate behavior affecting persisted skip reasons
 
-Add or extend `test_sync_timedb_persistence.py` and `test_sync_timedb_persistence_artifact_registry` drift guard.
+Add or extend `test_sync_timedb_persistence.py` and its `test_persistence_artifact_registry_matches_dbload_sidecars` drift guard.
 
 ## Dead-end remediation state (2026-10-26, no contract bump)
 
@@ -81,7 +81,7 @@ Added without bumping `SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION` (a bump would w
 
 ## Archival ground-truth (hints ≠ done)
 
-Persisted manifests and **`archive_maint_hints`** (`day_phases`, debt) are **hints only** at decision time. Seal eligibility, delete, tar-drop, and **`is_complete`** must re-check **disk + DB** predicates (`has_closed_raw_on_disk`, **`_day_close_filesystem_complete`**, **`remaining_raw_by_gz_has_paths_on_disk`**) — stale hint/manifest **`phase=done`** or **`tar_dropped`** must not skip work. **`reopen_stale_done_all_skipped`** / **`reopen_done_days_with_verified_on_disk`** downgrade hints when ground truth disagrees. See **`test_try_finish_tar_drop_manifest_done_stale_accrual`** and **`test_reopen_done_days_with_verified_on_disk_at_delete_pass_start`** in `test_sync_timedb_day_raw_removal.py`.
+Persisted manifests and **`archive_maint_hints`** (`day_phases`, debt) are **hints only** at decision time. Seal eligibility, delete, tar-drop, and **`day_close_is_complete`** must re-check **disk + DB** predicates (`has_closed_raw_on_disk`, **`day_close_filesystem_complete`**, **`remaining_raw_by_gz_has_paths_on_disk`**) — stale hint/manifest **`phase=done`** or **`tar_dropped`** must not skip work. **`reopen_stale_done_all_skipped`** / **`reopen_done_days_with_verified_on_disk`** downgrade hints when ground truth disagrees. See **`test_try_finish_tar_drop_manifest_done_stale_accrual`**, **`test_days_needing_delete_includes_done_with_verified_on_disk_after_reopen`** and **`test_reopen_stale_done_clears_verify_stage`** in `test_sync_timedb_day_raw_removal.py`.
 
 ## Operator notes
 

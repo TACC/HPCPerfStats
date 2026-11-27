@@ -983,7 +983,7 @@ docker compose exec pipeline su hpcperfstats -c 'nc -zv db 5432 && nc -zv valkey
 **Bad** — host assumes compose DNS; three separate pastes for one service:
 
 ```bash
-python3 -m pytest hpcperfstats/site/lib/machine/tests/test_foo.py -q
+python3 -m pytest hpcperfstats/site/lib/machine/tests/<TEST_FILE>.py -q
 cd HPCPerfStats && python hpcperfstats/site/manage.py shell -c "…"
 psql -h db -U hpcperfstats -c "SELECT 1"
 ```
@@ -992,7 +992,7 @@ psql -h db -U hpcperfstats -c "SELECT 1"
 
 ```bash
 docker compose exec web bash -lc '
-python -m pytest hpcperfstats/site/lib/machine/tests/test_foo.py -q &&
+python -m pytest hpcperfstats/site/lib/machine/tests/<TEST_FILE>.py -q &&
 python hpcperfstats/site/manage.py shell -c "from hpcperfstats.site.lib.machine.models import job_data; print(job_data.objects.count())"
 '
 
