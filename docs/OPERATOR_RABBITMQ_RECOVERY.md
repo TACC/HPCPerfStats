@@ -52,7 +52,10 @@ podman-compose -p hpcperfstats -f docker-compose.yaml exec rabbitmq rabbitmqctl 
 Check **Alarms**, Memory vs 64 GiB watermark, and that listend reaches consume (not only `Starting Connection`). Filtered pipeline AMQP lines:
 
 ```bash
-podman-compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'AMQP quorum consume-setup|Begining Consume|Starting Connection|timed out consuming' | tail -80
+podman-compose -p hpcperfstats logs pipeline 2>&1 \
+  | grep -E -e 'AMQP quorum consume-setup|Begin+ing Consume' \
+    -e 'Starting Connection|timed out consuming' \
+  | tail -80
 ```
 
 Correlate memory trajectory (watcher emits every 5 minutes; ERROR bands at 40/50/60 GiB):

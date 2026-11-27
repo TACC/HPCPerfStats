@@ -1491,7 +1491,7 @@ def _maybe_reset_amqp_reconnect_backoff_after_stable_consume(
   """
   Reset reconnect backoff after a stable consume session (>=30s).
 
-  Backoff must not reset on ``Begining Consume`` alone; only after the
+  Backoff must not reset on ``Beginning Consume`` alone; only after the
   consumer has been attached long enough to indicate broker health.
 
   Args:
@@ -3251,7 +3251,7 @@ def _amqp_consumer_main(session: _AmqpConsumeSession) -> None:
         _bind_listend_consume(channel, queue_name, had_consumer=had_consumer)
         had_consumer = True
         if not consume_start_logged:
-          log_print("Begining Consume from queue: " + queue_name)
+          log_print("Beginning Consume from queue: " + queue_name)
           consume_start_logged = True
           session.attach_monotonic = time.monotonic()
           if int(_amqp_consumer_count) <= 1:
