@@ -117,3 +117,34 @@ def test_versioned_shared_object_sonames_are_gitignored() -> None:
     check=False,
   )
   assert proc_build.returncode == 1, "in-image build script must be trackable"
+
+
+def test_codon_experiment_scripts_default_codon_home_to_image_pin() -> None:
+  """Host CODON_HOME default follows the Dockerfile CODON_VERSION pin."""
+  pin = re.search(
+    r"^ENV CODON_VERSION=([0-9.]+)",
+    _DOCKERFILE.read_text(encoding="utf-8"),
+    flags=re.MULTILINE,
+  )
+  assert pin, "CODON_VERSION pin not found in Dockerfile"
+  experiments = _REPO / "tests" / "experiments" / "codon"
+  for name in (
+    "run_codon_ab_baseline.sh",
+    "run_sync_timedb_compile_inventory.sh",
+  ):
+    text = (experiments / name).read_text(encoding="utf-8")
+    assert not re.search(r"codon-\d", text), f"{name} hardcodes a version"
+    block = re.search(
+      r"^CODON_VERSION=.*?\n(?:  .*\n)*CODON_HOME=.*\n",
+      text,
+      flags=re.MULTILINE,
+    )
+    assert block, f"{name} lacks the CODON_VERSION/CODON_HOME block"
+    out = subprocess.run(
+      ["bash", "-c", block.group(0) + 'printf %s "$CODON_HOME"'],
+      env={"GIT_ROOT": str(_REPO), "USER": "u", "PATH": "/usr/bin:/bin"},
+      capture_output=True,
+      text=True,
+      check=True,
+    ).stdout
+    assert out == f"/data/user/u/codon-{pin.group(1)}", name

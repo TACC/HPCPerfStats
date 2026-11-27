@@ -11,6 +11,10 @@ from typing import Any
 
 from django.db import connection
 
+# Default report directory when HPCPERFSTATS_STRESS_REPORT_DIR is unset: the
+# checkout's gitignored test_runs/stress/, independent of the working directory.
+DEFAULT_REPORT_DIR = Path(__file__).resolve().parents[2] / "test_runs" / "stress"
+
 
 def _json_safe(obj: Any) -> Any:
   if isinstance(obj, (datetime, date, datetime_time)):
@@ -34,7 +38,7 @@ class StressProfiler:
 
   def __init__(self, report_dir: str | Path | None = None) -> None:
     raw = report_dir or os.environ.get("HPCPERFSTATS_STRESS_REPORT_DIR", "").strip()
-    self.report_dir = Path(raw) if raw else Path("artifacts") / "stress"
+    self.report_dir = Path(raw) if raw else DEFAULT_REPORT_DIR
     self.report_dir.mkdir(parents=True, exist_ok=True)
     self.phases: list[dict[str, Any]] = []
     self.counts: dict[str, Any] = {}

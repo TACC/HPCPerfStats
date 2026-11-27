@@ -4,7 +4,11 @@ set -euo pipefail
 
 GIT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 WORKSPACE_ROOT="$(cd "$GIT_ROOT/.." && pwd)"
-CODON_HOME="${CODON_HOME:-/data/user/${USER}/codon-0.20.8}"
+# Default host Codon install follows the image pin (CODON_VERSION in
+# services-conf/pipeline_web.Dockerfile); set CODON_HOME to override.
+CODON_VERSION="$(sed -n 's/.*CODON_VERSION=\([0-9.]*\).*/\1/p' \
+  "$GIT_ROOT/services-conf/pipeline_web.Dockerfile" | head -n 1)"
+CODON_HOME="${CODON_HOME:-/data/user/${USER}/codon-${CODON_VERSION}}"
 LOG_DIR="${HPCPERFSTATS_TEST_RUNS:-${WORKSPACE_ROOT}/test_runs}"
 STAMP="$(date +%Y%m%dT%H%M%S)"
 LOG="${LOG_DIR}/codon_sync_timedb_inventory_${STAMP}.log"

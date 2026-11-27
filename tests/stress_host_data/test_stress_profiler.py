@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, time, timezone
+from pathlib import Path
 
-from .stress_profiler import StressProfiler
+from .stress_profiler import DEFAULT_REPORT_DIR, StressProfiler
 
 
 def test_build_report_serializes_postgresql_temporal_values(tmp_path) -> None:
@@ -24,3 +25,19 @@ def test_build_report_serializes_postgresql_temporal_values(tmp_path) -> None:
       "sample_time": "01:02:03",
   }
   json.dumps(report)
+
+
+def test_default_report_dir_is_checkout_test_runs_stress(
+  tmp_path, monkeypatch
+) -> None:
+  """Unset report dir writes to <checkout>/test_runs/stress, not ./artifacts."""
+  monkeypatch.delenv("HPCPERFSTATS_STRESS_REPORT_DIR", raising=False)
+  monkeypatch.chdir(tmp_path)
+  checkout = Path(__file__).resolve().parents[2]
+
+  profiler = StressProfiler()
+
+  assert profiler.report_dir == checkout / "test_runs" / "stress"
+  assert profiler.report_dir == DEFAULT_REPORT_DIR
+  assert profiler.report_dir.is_dir()
+  assert not (tmp_path / "artifacts").exists()
