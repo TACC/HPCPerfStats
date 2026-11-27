@@ -15,9 +15,10 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
 )
 
 
-def test_monitor_variable_rename_map_yaml_drift():
+def test_monitor_variable_rename_map_single_packaged_copy():
+  from hpcperfstats.dbload.lib.monitor_naming import load_map
+
   repo_root = Path(__file__).resolve().parents[2]
-  docs_yaml = repo_root / "docs" / "monitor_variable_rename_map.yaml"
   pkg_yaml = (
     repo_root
     / "hpcperfstats"
@@ -26,9 +27,14 @@ def test_monitor_variable_rename_map_yaml_drift():
     / "monitor_naming"
     / "monitor_variable_rename_map.yaml"
   )
-  assert docs_yaml.is_file()
+  assert load_map.yaml_path() == pkg_yaml
   assert pkg_yaml.is_file()
-  assert docs_yaml.read_bytes() == pkg_yaml.read_bytes()
+  assert not (repo_root / "docs" / "monitor_variable_rename_map.yaml").exists()
+  # Ingest decodes legacy names from this map: spot-check known entries.
+  assert load_map.type_renames()["cpu"] == "host_cpu"
+  assert load_map.type_renames()["amd64_df"] == "amd_x86_uncore_df"
+  assert load_map.type_renames()["intel_8pmc3"] == "intel_x86_pmc_gpr8"
+  assert "removed_legacy" in load_map.load_monitor_rename_map()
 
 
 def test_type_probe_names_canonical_then_legacy():

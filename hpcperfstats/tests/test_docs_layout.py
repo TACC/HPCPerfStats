@@ -89,7 +89,6 @@ LEGACY_ALLOWED = frozenset(
     "docs/artifacts/update_metrics_stall_audit_2026-05-12.md",
     "docs/augment_monitor_variables_diagnostics.py",
     "docs/generate_monitor_rename_table.py",
-    "docs/monitor_variable_rename_map.yaml",
     "docs/python_def_inventory.json",
     "docs/regenerate_monitor_emitted_variables_by_architecture.py",
     "docs/regenerate_monitor_variable_usage_gap_analysis.py",

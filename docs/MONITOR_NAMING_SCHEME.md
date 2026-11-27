@@ -1,7 +1,7 @@
 # Monitor emitted variable naming scheme
 
 Canonical rules for **`st_name`** (collector type) and **event keys** emitted by
-`hpcperfstatsd`. Machine-readable renames: [`monitor_variable_rename_map.yaml`](monitor_variable_rename_map.yaml).
+`hpcperfstatsd`. Machine-readable renames: [`monitor_variable_rename_map.yaml`](../hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml).
 
 Generated: 2026-11-18 (also run `docs/generate_monitor_rename_table.py` after map edits).
 

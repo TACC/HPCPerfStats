@@ -1,5 +1,5 @@
 """
-Load docs/monitor_variable_rename_map.yaml (single source of truth).
+Load the packaged monitor_variable_rename_map.yaml (single source of truth).
 """
 
 from __future__ import annotations
@@ -14,35 +14,18 @@ except ImportError:
   yaml = None  # type: ignore
 
 
-def _repo_root() -> Path:
-  """
-  Internal helper to handle repo root.
-
-  Returns:
-    Path: Path produced by this call.
-
-  Examples:
-    >>> _repo_root()  # doctest: +SKIP
-  """
-  return Path(__file__).resolve().parents[2]
-
-
 def yaml_path() -> Path:
   """
-  Yaml path.
+  Return the packaged rename map path (the only copy).
 
   Returns:
-    Path: Path produced by this call.
+    Path: ``monitor_variable_rename_map.yaml`` next to this module.
 
   Examples:
-    >>> yaml_path()  # doctest: +SKIP
+    >>> yaml_path().name
+    'monitor_variable_rename_map.yaml'
   """
-  packaged = (
-    Path(__file__).resolve().parent / "monitor_variable_rename_map.yaml"
-  )
-  if packaged.is_file():
-    return packaged
-  return _repo_root() / "docs" / "monitor_variable_rename_map.yaml"
+  return Path(__file__).resolve().parent / "monitor_variable_rename_map.yaml"
 
 
 @lru_cache(maxsize=1)

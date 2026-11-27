@@ -5,7 +5,7 @@ Use this checklist for each `.c`/`.h` pass under `HPCPerfStats/monitor/src/`. On
 ## Before editing
 
 - [ ] Identify phase queue entry and paired header.
-- [ ] Read applicable rows in `HPCPerfStats/docs/monitor_variable_rename_map.yaml`.
+- [ ] Read applicable rows in `HPCPerfStats/hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml`.
 - [ ] Note `#ifdef` / optional-hardware gates for this module.
 
 ## Audit

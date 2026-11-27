@@ -10,12 +10,12 @@ The matching rule is `hpcperfstats/cursor-rules/monitor-analysis-architecture-sy
 
 Typenames and events have a canonical name and, for older data, legacy names; analysis reads canonical first, then legacy.
 
-| Module                                                                                                      | Holds                                                                                                  |
-| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `hpcperfstats/dbload/lib/monitor_naming/canonical.py`                                                       | canonical typenames and events (from `docs/monitor_variable_rename_map.yaml`), `_PMC_FREQ_BY_TYPENAME` |
-| `hpcperfstats/dbload/lib/monitor_naming/legacy.py`, `hpcperfstats/dbload/lib/sync_timedb_parsing_legacy.py` | legacy names (historical `host_data`, CTL/CTR ingest)                                                  |
-| `hpcperfstats/dbload/lib/monitor_naming/resolve.py`                                                         | analysis probes: canonical first, then legacy                                                          |
-| `hpcperfstats/analysis/metrics/lib/gen/utils.py`                                                            | imports `pmc_freq_for_typename` and the `resolve.py` priorities for the per-job `utils` object         |
+| Module                                                                                                      | Holds                                                                                                                   |
+| ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `hpcperfstats/dbload/lib/monitor_naming/canonical.py`                                                       | canonical typenames and events (from `monitor_variable_rename_map.yaml` in the same directory), `_PMC_FREQ_BY_TYPENAME` |
+| `hpcperfstats/dbload/lib/monitor_naming/legacy.py`, `hpcperfstats/dbload/lib/sync_timedb_parsing_legacy.py` | legacy names (historical `host_data`, CTL/CTR ingest)                                                                   |
+| `hpcperfstats/dbload/lib/monitor_naming/resolve.py`                                                         | analysis probes: canonical first, then legacy                                                                           |
+| `hpcperfstats/analysis/metrics/lib/gen/utils.py`                                                            | imports `pmc_freq_for_typename` and the `resolve.py` priorities for the per-job `utils` object                          |
 
 ### Monitor-to-analysis contract
 

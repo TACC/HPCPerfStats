@@ -352,7 +352,8 @@ def main() -> int:
     ap.add_argument(
         "--yaml",
         type=Path,
-        default=Path(__file__).resolve().parent / "monitor_variable_rename_map.yaml",
+        default=Path(__file__).resolve().parents[1]
+        / "hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml",
     )
     ap.add_argument(
         "roots",

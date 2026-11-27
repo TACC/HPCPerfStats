@@ -199,7 +199,7 @@ Per `plan-creation-contract.mdc` step 5:
 | Trigger | Update |
 |---------|--------|
 | Build / verify workflow | `HPCPerfStats/monitor/README.md`, `tests/README.md` (`monitor-readme-maintenance.mdc`) |
-| Breaking emit/schema | `monitor/README.md` migration table, `docs/monitor_variable_rename_map.yaml` (`monitor-consumer-schema-migration.mdc`) |
+| Breaking emit/schema | `monitor/README.md` migration table, `hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml` (`monitor-consumer-schema-migration.mdc`) |
 
 ## 6. Consumer follow-up plan (optional)
 

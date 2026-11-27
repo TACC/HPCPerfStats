@@ -12,7 +12,7 @@ It is for analysis developers; use it when the monitor ships a typename that `hp
 
 To add a CPU type:
 
-1. Add the rename entry to `docs/monitor_variable_rename_map.yaml`, then update `canonical.py` and `legacy.py` in `hpcperfstats/dbload/lib/monitor_naming/`.
+1. Add the rename entry to `hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml`, then update `canonical.py` and `legacy.py` in `hpcperfstats/dbload/lib/monitor_naming/`.
 2. When the type acts as PMC, add its frequency to `_PMC_FREQ_BY_TYPENAME` in `canonical.py`.
 3. Extend the `resolve.py` probe orders if the type needs a new position.
 4. For a new Intel IMC typename, add a roofline peak row in `hpcperfstats/analysis/metrics/lib/plot/roofline_peaks.py`.

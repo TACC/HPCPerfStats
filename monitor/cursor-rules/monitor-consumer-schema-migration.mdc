@@ -2,7 +2,7 @@
 description: Breaking monitor output changes — rename map, README, coordinated rollout
 globs:
   - HPCPerfStats/monitor/**
-  - HPCPerfStats/docs/monitor_variable_rename_map.yaml
+  - HPCPerfStats/hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml
 alwaysApply: false
 ---
 
@@ -20,7 +20,7 @@ Any change that breaks **historical** ingest or queries:
 
 ## Required artifacts (monitor change set)
 
-1. **`HPCPerfStats/docs/monitor_variable_rename_map.yaml`**
+1. **`HPCPerfStats/hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml`**
    - `types:` for typename moves
    - `events:` for **per-key** renames (not only typename)
    - `removed_legacy:` for retired typenames/keys

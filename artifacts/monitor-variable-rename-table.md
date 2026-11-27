@@ -1,6 +1,6 @@
 # Monitor variable rename table
 
-Generated 2026-11-18 from `docs/monitor_variable_rename_map.yaml`.
+Generated 2026-11-18 from `hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml`.
 
 **Clean break:** no ingest aliases. Downstream must adopt new names.
 

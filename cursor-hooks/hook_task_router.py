@@ -302,7 +302,6 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
   {
     "id": "monitor_analysis_naming",
     "patterns": [
-      "docs/monitor_variable_rename_map.yaml",
       "hpcperfstats/dbload/lib/monitor_naming/**",
     ],
     "rules": [

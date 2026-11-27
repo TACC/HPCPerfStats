@@ -120,23 +120,10 @@ compose_rsync_repo_to_work_copy() {
       "${repo_root}/scripts/" "${dest}/scripts/"
     rsync -a --timeout=120 "${excludes[@]}" \
       "${repo_root}/services-conf/" "${dest}/services-conf/"
-    compose_rsync_docs_contract_files "$repo_root" "$dest"
     return 0
   fi
   rsync -a --delete --timeout=120 "${excludes[@]}" \
     "${repo_root}/" "${dest}/"
-  compose_rsync_docs_contract_files "$repo_root" "$dest"
-}
-
-compose_rsync_docs_contract_files() {
-  local repo_root="$1"
-  local dest="$2"
-  if [[ -f "${repo_root}/docs/monitor_variable_rename_map.yaml" ]]; then
-    mkdir -p "${dest}/docs"
-    rsync -a --timeout=120 \
-      "${repo_root}/docs/monitor_variable_rename_map.yaml" \
-      "${dest}/docs/"
-  fi
 }
 
 compose_prepare_bind_mount() {

@@ -15,7 +15,10 @@ except ImportError:
     yaml = None  # type: ignore
 
 REPO = Path(__file__).resolve().parents[1]
-YAML_PATH = REPO / "docs" / "monitor_variable_rename_map.yaml"
+YAML_PATH = (
+    REPO / "hpcperfstats" / "dbload" / "lib" / "monitor_naming"
+    / "monitor_variable_rename_map.yaml"
+)
 SCHEME_OUT = REPO / "docs" / "MONITOR_NAMING_SCHEME.md"
 TABLE_OUT = REPO / "artifacts" / "monitor-variable-rename-table.md"
 
@@ -45,7 +48,7 @@ def write_scheme(data: dict) -> None:
         f"""# Monitor emitted variable naming scheme
 
 Canonical rules for **`st_name`** (collector type) and **event keys** emitted by
-`hpcperfstatsd`. Machine-readable renames: [`monitor_variable_rename_map.yaml`](monitor_variable_rename_map.yaml).
+`hpcperfstatsd`. Machine-readable renames: [`monitor_variable_rename_map.yaml`](../hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml).
 
 Generated: {date.today().isoformat()} (also run `docs/generate_monitor_rename_table.py` after map edits).
 
@@ -106,7 +109,7 @@ def write_table(data: dict) -> None:
     lines = [
         "# Monitor variable rename table",
         "",
-        f"Generated {date.today().isoformat()} from `docs/monitor_variable_rename_map.yaml`.",
+        f"Generated {date.today().isoformat()} from `hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml`.",
         "",
         "**Clean break:** no ingest aliases. Downstream must adopt new names.",
         "",

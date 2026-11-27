@@ -419,7 +419,7 @@ so an emitted `0` always means "read, and the counter was 0". Codes come from th
 - **Rollout: consumer first.** Deploy the consumer that decodes `-<n>` (ingest, readers, Job
   Detail reasons) on every site before installing a monitor with the knob on; an older consumer
   would store a sentinel as a huge unsigned value. `emit_value_sentinels 0` is the escape hatch.
-- **No key renames**: `docs/monitor_variable_rename_map.yaml` is unchanged.
+- **No key renames**: `hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml` is unchanged.
 - **Validators.** `scripts/lib/row_validate.py` accepts an unsigned integer or a catalog `-<n>`;
   `cross_sample_validate.py` skips chain-breaking gaps, FAILs a bridgeable gap whose next value
   dropped, and prints `NOTE sentinel` counts per code. A capture without the `$sentinels`
@@ -548,7 +548,7 @@ with a single sysfs walk per cycle. Migration notes for historical archives:
 | Device id `mlx5_0/1` | `mlx5_0.1` |
 | Switch keys `rx_bytes`, `tx_bytes`, … | `sw_rx_bytes`, `sw_tx_bytes`, … |
 
-See `HPCPerfStats/docs/monitor_variable_rename_map.yaml` for rename-map entries.
+See `HPCPerfStats/hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml` for rename-map entries.
 
 ### IB MAD extended keys retired (`host_ib`)
 
@@ -567,7 +567,7 @@ fabric management clears the PortCounters behind it. The same row already carrie
 `port_xmit_data` / `port_rcv_data` keep their names and are now sysfs on every port (the MAD
 query used to overwrite them where it answered: a one-time step on such ports at the upgrade).
 The switch-side `sw_*` keys stay on MAD, unchanged. Rename-map entries live in
-`HPCPerfStats/docs/monitor_variable_rename_map.yaml` (`removed_legacy`).
+`HPCPerfStats/hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml` (`removed_legacy`).
 
 `hpcperfstats/` uses the IB packet counters only in the `avg_packetsize` and `max_packetrate` job
 metrics (`analysis/metrics/lib/metrics.py`): since 33a11f77 they read host_ib
@@ -609,7 +609,7 @@ FP and SVE events are resolved from sysfs names first, then from a MIDR-keyed ra
 one row (Arm Neoverse V2, MIDR `0x410fd4f0`). Another core logs its MIDR once and leaves those keys
 at 0 until a verified row is added. A key whose event is not open is not published. The analysis
 side reads the new keys as `avg_fp{64,32,16}_instr`; see
-`HPCPerfStats/docs/monitor_variable_rename_map.yaml`.
+`HPCPerfStats/hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml`.
 
 ### Grace PMU sharing keys (3.1 Phase 1b, D6)
 
@@ -695,7 +695,7 @@ same contract bump. See `HPCPerfStats/docs/MONITOR_VARIABLES.md`.
 | Consumer follow-up | Separate plan: `.cursor/plans/lustre-llite-consumer-followup.plan.md` (ship consumer dual-read first or same release; do not deploy dashboards that hard-code old KEY strings without that work) |
 
 Old→new llite event map lives under `type_events.lustre_llite` in
-`HPCPerfStats/docs/monitor_variable_rename_map.yaml`.
+`HPCPerfStats/hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml`.
 
 ### BeeGFS collector (`beegfs_client`)
 
@@ -906,7 +906,7 @@ only the node-wide `-` payload (never `j:` stamped). The analysis node power est
 Σ `module_power_w` when > 0 (GH200), else Σ `socket_power_w` + GPU power (GB200; Σ
 `socket_power_w` alone on GPU-less Grace/Grace and Vera), which raises GB200 and Grace/Grace
 estimates by the SoC + memory share of the socket. History with only the old keys keeps the old
-formula. See `HPCPerfStats/docs/monitor_variable_rename_map.yaml`.
+formula. See `HPCPerfStats/hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml`.
 
 
 - **`cpu_counter_metrics` (`arm` backend on Grace)**: util accumulators from `/proc/stat` jiffies over the daemon's collect interval; the clock comes from cpufreq **`scaling_cur_freq`** (never `cpuinfo_cur_freq`, which reports bogus CPPC values on Grace), falling back to `base_frequency` / `cpuinfo_max_freq` / `scaling_max_freq`. **Fail-soft cycle keys** (accumulated from util + `clock_khz`): **`mperf`** = reference cycles (`ref = clock_khz × Δt_us / 1000`), **`aperf`** = active cycles (`act = ref × (util_total / 100)`), **`cpu_clock_est_cycles`** = same as **`aperf`**. When the direct-perf CYC event (`arm_core_perf`) is open and its scaled lifetime is > 0, all three carry measured cycles instead. `instr_retired`, `arm_fp_{dp,sp,hp}_spec`, `arm_est_flops` (FIXED + SCALE) and `arm_int8_ops` / `arm_int16_ops` come only from measured events; nothing synthesizes instructions or FLOPs from util. The backend uses no DCGM: embedded DCGM ran five 100–200 Hz timer loops (~615 wakeups/s) whatever the watch cadence, ≈ 8 core-s/h under the `performance` governor and ≈ 109 under `ondemand`.
