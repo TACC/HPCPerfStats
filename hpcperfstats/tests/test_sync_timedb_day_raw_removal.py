@@ -2958,6 +2958,83 @@ def test_frozen_production_manifest_closes_end_to_end(tmp_path, monkeypatch):
   ), "every deleted raw is in the sealed archive (INV-COPY)"
 
 
+def test_done_sealed_only_day_deletes_unmanifested_sealed_raw(
+  tmp_path, monkeypatch
+):
+  """01 2026-11-26 shape: done manifest, 17k unmanifested raw still on disk.
+
+  A sealed-only day whose manifest is ``done`` but lists only a few files
+  claimed ``complete`` every pass while ~76% of its on-disk raw had a
+  same-size sealed copy (09-15: 416 entries, 17,132 raw files). Raw with a
+  sealed copy is deleted; raw the sealed copy lacks stays on disk.
+  """
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
+
+  day = datetime(2026, 9, 15)
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True)
+  segs = []
+  for hour in (1, 2, 3):
+    ts = int(datetime(day.year, day.month, day.day, hour).timestamp())
+    seg = host / str(ts)
+    seg.write_text(f"{ts} job1 cn001\nline {hour}\n")
+    os.utime(seg, (ts, ts))
+    segs.append(seg)
+  sealed, late = segs[:2], segs[2]
+  tar_path, zst = _seal_day(tmp_path, sealed[0], day)
+  _append_member(tar_path, sealed[1])
+  atomic_seal_tar_to_zst(
+    tar_path,
+    zst,
+    num_threads=1,
+    compress_level=3,
+    keep_uncompressed_tar=True,
+    log_fn=None,
+  )
+  os.remove(tar_path)
+  state = _make_coordinator(tmp_path)._get_or_create_day(tar_path)
+  with state._lock:
+    state._manifest["entries"] = {
+      str(host / "1"): {"status": "verified", "deleted": True}
+    }
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    _save_manifest(state._manifest_path, state._manifest)
+  monkeypatch.setattr(
+    cfg, "get_host_name_ext", lambda: "cluster.integration.test"
+  )
+  monkeypatch.setattr(cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    cfg, "get_daily_archive_dir_path", lambda: str(tmp_path / "daily")
+  )
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_ingest_readiness."
+    "stats_file_head_ingested_in_db",
+    lambda _p: True,
+  )
+  outcomes = []
+  for _claim in range(4):
+    outcomes.append(
+      qo._run_day_close_job(
+        "2026-09-15",
+        tgz_archive_dir=str(tmp_path / "daily"),
+        archive_data_dir=str(tmp_path),
+        log_fn=lambda *a, **k: None,
+      )
+    )
+    if outcomes[-1] == "complete" and not any(s.exists() for s in sealed):
+      break
+  assert outcomes[-1] == "complete", outcomes
+  assert not any(s.exists() for s in sealed), "sealed raw deleted"
+  assert late.exists(), "raw with no sealed copy is never deleted"
+  assert not os.path.exists(tar_path), "no restore of the sealed day"
+
+
 def test_enospc_injection_append_seal_rebuild_salvage_no_loss(
   tmp_path, monkeypatch
 ):

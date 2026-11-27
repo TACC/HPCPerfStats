@@ -14,6 +14,9 @@ Attributes:
   VERIFY_STAGE_NONE: Attribute.
   VERIFY_STAGE_POST_SEAL: Attribute.
   VERIFY_STAGE_PRE_SEAL: Attribute.
+  _UNMANIFESTED_RAW_LOGGED: Last ``(adopted, not_in_sealed)`` logged per
+    day, so a sealed-only day's unmanifested-raw line repeats only when its
+    counts change.
   _log_day_raw_verify_complete: Attribute.
   remaining_raw_blocking_day_incomplete: Attribute.
 """
@@ -116,6 +119,7 @@ REPAIR_REQUIRED_STATUSES = frozenset(
   }
 )
 KICK_NO_HANDOFF_PROGRESS = frozenset({"noop", "quarantine_terminal"})
+_UNMANIFESTED_RAW_LOGGED: dict[str, tuple[int, int]] = {}
 
 VERIFY_STAGE_NONE = "none"
 VERIFY_STAGE_PRE_SEAL = "pre_seal_complete"
@@ -780,18 +784,13 @@ class _DayRawRemovalState:
     if self._only_quarantine_terminal_on_disk():
       self._finalize_quarantine_terminal_done()
       return {}
-    if self.delete_phase_done():
-      blocking = self._blocking_manifest_paths_on_disk()
-      if blocking:
-        zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
-        return {zst_path: blocking}
-      return {}
-    if self.verification_complete():
-      blocking = self._blocking_manifest_paths_on_disk()
-      if blocking:
-        zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
-        return {zst_path: blocking}
-      return {}
+    if self.delete_phase_done() or self.verification_complete():
+      blocking = (
+        self._blocking_manifest_paths_on_disk()
+        or self._adopt_unmanifested_sealed_raw()
+      )
+      zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
+      return {zst_path: blocking} if blocking else {}
     return self._filter_accrual_paths_blocking_tar_drop(
       self._build_remaining_raw_for_daily_tar(),
     )
@@ -1069,7 +1068,7 @@ class _DayRawRemovalState:
       path
       for path, entry in self._manifest_entries_on_disk()
       if self._entry_blocks_done(path, entry)
-    ]
+    ] or self._adopt_unmanifested_sealed_raw()
     if not blocking:
       return False
     with self._lock:
@@ -1204,6 +1203,60 @@ class _DayRawRemovalState:
       if path not in entries:
         unmanifested.append(path)
     return unmanifested
+
+  def _adopt_unmanifested_sealed_raw(self) -> list[str]:
+    """
+    Record sealed-only day raw the manifest never listed but the zst holds.
+
+    A ``done`` / ``verification_complete`` manifest is read entry-only, so
+    raw it never listed stayed on disk while the day claimed ``complete``
+    (hpcperfstats01 2026-11-26: 09-15 listed 416 of 17,132 raw files). On a
+    sealed-only day (no open ``.tar``), each unlisted day raw file that is a
+    same-size member of the sealed member map (T0) is recorded as
+    ``skipped_not_in_archive``, so the sealed-only reclassify (DB gate) and
+    the DL-3 delete gate remove it. Raw the sealed copy lacks is only
+    logged: adopting it would restore the whole sealed day for an append.
+    An invalid map adopts nothing and queues its rebuild for a later pass.
+
+    Returns:
+      list[str]: Paths recorded by this call (empty when none).
+
+    Examples:
+      >>> _DayRawRemovalState()._adopt_unmanifested_sealed_raw()
+      ... # doctest: +SKIP
+      ['/archive/c001.cluster/1757912400']
+    """
+    zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
+    if os.path.isfile(self.tar_path) or not os.path.isfile(zst_path):
+      return []
+    with self._lock:
+      listed = set(self._manifest.get("entries", {}))
+    found = [
+      path
+      for paths in (self._build_remaining_raw_for_daily_tar() or {}).values()
+      for path in paths or ()
+      if path not in listed and os.path.isfile(path)
+    ]
+    members = sealed_members_lookup(zst_path) if found else None
+    adopted = [
+      path for path in found if raw_path_in_sealed_members(path, members or {})
+    ]
+    for path in adopted:
+      self._record_entry(
+        path, zst_path, "skipped_not_in_archive", "unmanifested_sealed_raw"
+      )
+    counts = (len(adopted), len(found) - len(adopted))
+    day_key = self.day_date.isoformat()
+    logged = _UNMANIFESTED_RAW_LOGGED.get(day_key)
+    if found and self.log_fn and logged != counts:
+      _UNMANIFESTED_RAW_LOGGED[day_key] = counts
+      self.log_fn(
+        f"Day raw removal unmanifested raw day={day_key} "
+        f"adopted={counts[0]} not_in_sealed={counts[1]} "
+        f"sealed_map={'ok' if members is not None else 'unavailable'}",
+        flush=True,
+      )
+    return adopted
 
   def _manifest_entries_on_disk(self) -> list[tuple[str, dict[str, Any]]]:
     """
