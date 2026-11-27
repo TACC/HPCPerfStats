@@ -35,6 +35,6 @@ Sparse `@fast`/`@full` rows are not enough — **slow keys must be skipped at co
 
 ## Docs
 
-- Keep **`monitor/README.md`** two-tier section aligned with consumer rollout (not “deferred” if consumer parses tiers). See **monitor-consumer-schema-migration**.
+- Keep the two-tier pages aligned with consumer rollout (not “deferred” if consumer parses tiers): rationale and rollout in **`monitor/docs/explanation/design.md`**, wire rules in **`monitor/docs/RAW_DATA_FORMAT.md`**. See **monitor-consumer-schema-migration**.
 
 Cross-links: **monitor-jitter-and-fidelity-priority**, **monitor-workspace-contract**, **monitor-c-testing-standards**.

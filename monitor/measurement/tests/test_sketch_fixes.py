@@ -25,7 +25,8 @@ def test_superseded_isolation_scripts_removed_and_swept():
     gone = ("capture_collector_isolation", "summarize_collector_isolation")
     for name in gone:
         assert not list((ROOT / "bin").glob(name + ".*"))
-    scan_roots = [ROOT, CHECKOUT / "monitor" / "README.md", CHECKOUT / "docs",
+    scan_roots = [ROOT, CHECKOUT / "monitor" / "README.md", CHECKOUT / "monitor" / "docs",
+                  CHECKOUT / "docs",
                   CHECKOUT / "tests" / "site_measurement"]
     hits = []
     for base in scan_roots:

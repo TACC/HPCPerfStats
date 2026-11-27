@@ -59,4 +59,4 @@ On Stampede3 / other TACC systems (`*.tacc.utexas.edu`), load build tools via **
 
 ## Docs
 
-- `HPCPerfStats/monitor/LIKWID_MIGRATION.md`: historical note only (removed in 3.1 Phases 2+3; current design in `README.md` and **`monitor-x86-direct-perf.mdc`**).
+- `HPCPerfStats/docs/history/likwid-migration.md`: historical record only (LIKWID removed in 3.1; current design in `monitor/docs/explanation/x86-counters-and-roofline.md` and **`monitor-x86-direct-perf.mdc`**).

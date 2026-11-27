@@ -42,6 +42,16 @@ dist-hook:
 	fi
 
 EXTRA_DIST = README README.md \
+	docs/C_REFACTOR_CHECKLIST.md \
+	docs/how-to/build-the-rpm.md \
+	docs/how-to/deploy-to-nodes.md \
+	docs/how-to/run-correctness-campaign.md \
+	docs/how-to/profile-the-daemon.md \
+	docs/how-to/cross-compile.md \
+	docs/explanation/design.md \
+	docs/explanation/x86-counters-and-roofline.md \
+	docs/reference/source-modules.md \
+	docs/reference/legacy-formats.md \
 	third_party/nvidia-dcgm/README \
 	third_party/nvidia-dcgm/dcgm_agent.h \
 	third_party/nvidia-dcgm/dcgm_structs.h \

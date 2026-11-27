@@ -1,5 +1,5 @@
 ---
-description: Breaking monitor output changes — rename map, README, coordinated rollout
+description: Breaking monitor output changes — rename map, legacy-formats page, coordinated rollout
 globs:
   - HPCPerfStats/monitor/**
   - HPCPerfStats/hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml
@@ -24,7 +24,7 @@ Any change that breaks **historical** ingest or queries:
    - `types:` for typename moves
    - `events:` for **per-key** renames (not only typename)
    - `removed_legacy:` for retired typenames/keys
-2. **`monitor/README.md`** — migration table or rollout note (deploy monitor + consumer together when needed).
+2. **`monitor/docs/reference/legacy-formats.md`** — legacy vs current table for archives the older build wrote, plus the rollout note (deploy monitor + consumer together when needed).
 3. **Contract tests** — `test_*_schema_contract.c` or golden tests for new shape.
 4. **Consumer secondary plan** — structured what/why/rollout/verify section per **monitor-consumer-side-plan** (implementation still requires explicit user authorization).
 
@@ -32,6 +32,6 @@ Any change that breaks **historical** ingest or queries:
 
 - Default `enable_slow_tier 1` is valid when consumer parses tier markers.
 - Document **`enable_slow_tier 0`** only as escape hatch for old stacks.
-- Do not leave README claiming consumers “will mis-align” after consumer tier support ships.
+- Do not leave the monitor docs claiming consumers “will mis-align” after consumer tier support ships.
 
 Cross-links: **monitor-workspace-contract**, **monitor-readme-maintenance**, **monitor-emitted-variable-naming**.

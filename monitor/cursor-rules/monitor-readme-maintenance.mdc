@@ -1,5 +1,5 @@
 ---
-description: Keep monitor README.md (and tests README) aligned with real layout and workflows
+description: Keep the monitor README, monitor/docs quadrant pages (legacy-formats for migration tables) and tests README aligned with real layout and workflows
 globs:
   - HPCPerfStats/monitor/**
 alwaysApply: false
@@ -9,20 +9,22 @@ alwaysApply: false
 
 When a change under `HPCPerfStats/monitor/` affects **how developers build, test, or navigate the tree**, or **where major logic lives**, update documentation in the same change (or immediately after):
 
-1. **`HPCPerfStats/monitor/README.md`** — package overview, directory layout, build/verify flow, pointers to legacy `README` and `tests/README.md`, and the “Key source modules” table when modules are added, renamed, split, or removed.
-2. **`HPCPerfStats/monitor/tests/README.md`** — when only the test suite layout, `Makefile.am` rules, or `run_tests.sh` behavior changes.
+1. **`HPCPerfStats/monitor/README.md`** — landing page: package overview, directory layout, quick build and test, and the index of every page under `monitor/docs/`.
+2. **`HPCPerfStats/monitor/docs/reference/source-modules.md`** — the key source modules table and per-collector behaviour, when modules are added, renamed, split, or removed.
+3. **`HPCPerfStats/monitor/docs/how-to/*.md`** — build/RPM/fleet matrices (`build-the-rpm.md`), deploy order (`deploy-to-nodes.md`), correctness campaign and check inventory (`run-correctness-campaign.md`), profiling (`profile-the-daemon.md`), cross-compile (`cross-compile.md`).
+4. **`HPCPerfStats/monitor/tests/README.md`** — when only the test suite layout, `Makefile.am` rules, or `run_tests.sh` behavior changes.
 
-Do **not** duplicate the on-disk stats format in `README.md`; it lives in **`docs/RAW_DATA_FORMAT.md`** (format + Python reader) and the generated **`docs/METRICS_REFERENCE.md`** (per-key meanings), kept current under **monitor-raw-data-format-docs**. The plain-text **`README`** only points there.
+Do **not** duplicate the on-disk stats format in the README or the quadrant pages; it lives in **`docs/RAW_DATA_FORMAT.md`** (format + Python reader) and the generated **`docs/METRICS_REFERENCE.md`** (per-key meanings), kept current under **monitor-raw-data-format-docs**. The plain-text **`README`** only points there.
 
-Typical triggers: new top-level dirs, moved tests, new `src/*.c` units called out in conventions, configure/Automake behavior visible to contributors, or consumer contract / listend expectations noted in README today.
+Typical triggers: new top-level dirs, moved tests, new `src/*.c` units called out in conventions, configure/Automake behavior visible to contributors, or consumer contract / listend expectations noted in the docs.
 
 Also update when:
 
-- **Two-tier** consumer rollout status or `enable_slow_tier` guidance changes (**monitor-consumer-schema-migration**).
-- **Breaking migrations** (IB merge, GPU schema, typename/device/key renames) — add a short migration table.
-- **DEBUG shm** paths, env vars, or permissions change (**monitor-debug-shm**).
+- **Two-tier** consumer rollout status or `enable_slow_tier` guidance changes (`docs/explanation/design.md`; **monitor-consumer-schema-migration**).
+- **Breaking migrations** (IB merge, GPU schema, typename/device/key renames) — add a legacy vs current table to **`docs/reference/legacy-formats.md`**: decoding older archives is current consumer behaviour, so it lives there, not in a history record.
+- **DEBUG shm** paths, env vars, or permissions change (`docs/reference/source-modules.md`; **monitor-debug-shm**).
 
-When the **monitor tarball / RPM version** changes, follow **monitor-version-and-packaging** (canonical `configure.ac` + `hpcperfstats.spec`) and update **HPCPerfStats/README.md** if it still cites an old `hpcperfstats-X.Y-Z...rpm` example.
+New or moved pages follow **monitor-docs-structure-and-style** (placement, `EXTRA_DIST`, router, inbound links).
 
 When the **monitor tarball / RPM version** changes, follow **monitor-version-and-packaging** (canonical `configure.ac` + `hpcperfstats.spec`) and update **HPCPerfStats/README.md** if it still cites an old `hpcperfstats-X.Y-Z...rpm` example.
 

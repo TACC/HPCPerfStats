@@ -30,7 +30,8 @@
 #             length, default 20), COUNTER_CHECK_TIMEOUT (default 3600; release RPMs SKIP),
 #           PERF_RAW_FLOPS_CHECK / SCF_PERF_CHECK / PMU_SHARING_CHECK / FP_SLICES_CHECK
 #             (default 1; 0 = SKIP): the standalone counter checks wired from the inventory
-#             in monitor/README.md (NOT_RUN where the arch does not apply),
+#             in docs/how-to/run-correctness-campaign.md (NOT_RUN where the arch does
+#             not apply),
 #             EXTRA_CHECK_TIMEOUT (default 1800 per check),
 #           GOLDEN_DIR=/path|auto or GOLDEN_CHECK=1 (opt-in golden diff),
 #           HPCPERFSTATS_CONF=/path/to/hpcperfstats.conf, REPORT_DIR (default
@@ -325,7 +326,8 @@ run_extra_check() {
 }
 
 # run_canary_checks PY RESULTS SHM_DIR ENABLE_SLOW: the standalone counter checks that run
-# unattended as root in bounded time (README "Correctness check inventory").
+# unattended as root in bounded time (check inventory in
+# docs/how-to/run-correctness-campaign.md).
 run_canary_checks() {
   local py="$1" results="$2" shm_dir="$3" slow="$4" class grace=0 scf=0 x86=0 idle_pmu=0
   class="$("${py}" "${SCRIPT_DIR}/lib/counter_accuracy.py" arch --field class)" || class=other

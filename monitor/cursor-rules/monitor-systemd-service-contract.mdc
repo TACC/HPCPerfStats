@@ -29,7 +29,7 @@ alwaysApply: false
 ## Coupled updates
 
 - If writable paths change, update the RPM-owned directories, runtime defaults,
-  README privilege model, and `monitor-runtime-path-coherence.mdc`.
+  privilege model in `docs/explanation/design.md`, and `monitor-runtime-path-coherence.mdc`.
 - Keep `tests/test_hpcperfstats_service_sandbox.sh` and
   `tests/test_service_unit_lshw.sh` registered in `tests/Makefile.am`.
 - Verify the shell contracts and `rpmspec -P hpcperfstats.spec`; use

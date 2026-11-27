@@ -1514,8 +1514,14 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
     "patterns": [
       "HPCPerfStats/monitor/README.md",
       "HPCPerfStats/monitor/tests/README.md",
+      "HPCPerfStats/monitor/docs/how-to/*",
+      "HPCPerfStats/monitor/docs/explanation/*",
+      "HPCPerfStats/monitor/docs/reference/*",
       "monitor/README.md",
       "monitor/tests/README.md",
+      "monitor/docs/how-to/*",
+      "monitor/docs/explanation/*",
+      "monitor/docs/reference/*",
     ],
     "rules": [
       "monitor-readme-maintenance.mdc",

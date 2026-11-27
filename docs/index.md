@@ -31,6 +31,16 @@ Solve one task on a running site or in the checkout.
 - [Build Codon kernels](how-to/develop/build-codon-kernels.md)
 - [Add a CPU type](how-to/develop/add-a-cpu-type.md)
 
+### Build and run the monitor
+
+The monitor package (`hpcperfstatsd`) starts at its [landing page](../monitor/README.md).
+
+- [Build the monitor RPM](../monitor/docs/how-to/build-the-rpm.md)
+- [Deploy the monitor to nodes](../monitor/docs/how-to/deploy-to-nodes.md)
+- [Run a monitor correctness campaign](../monitor/docs/how-to/run-correctness-campaign.md)
+- [Profile the monitor daemon](../monitor/docs/how-to/profile-the-daemon.md)
+- [Cross-compile the monitor](../monitor/docs/how-to/cross-compile.md)
+
 ## Reference
 
 Look up code, configuration and contract facts.
@@ -38,6 +48,8 @@ Look up code, configuration and contract facts.
 - [Documentation style](reference/documentation-style.md)
 - [Monitor metrics reference](../monitor/docs/METRICS_REFERENCE.md)
 - [Monitor raw data format](../monitor/docs/RAW_DATA_FORMAT.md)
+- [Monitor source modules](../monitor/docs/reference/source-modules.md)
+- [Monitor legacy formats](../monitor/docs/reference/legacy-formats.md)
 - [Pipeline configuration](reference/pipeline-configuration.md)
 - [Compose services](reference/compose-services.md)
 - [`sync_timedb` state machine](reference/sync-timedb-state-machine.md)
@@ -60,6 +72,8 @@ Understand the design and its trade-offs.
 - [Pipeline concurrency](explanation/pipeline-concurrency.md)
 - [Codon runtime model](explanation/codon-runtime-model.md)
 - [Monitor naming scheme](explanation/monitor-naming-scheme.md)
+- [Monitor design](../monitor/docs/explanation/design.md)
+- [Monitor x86 counters and roofline](../monitor/docs/explanation/x86-counters-and-roofline.md)
 
 ## Records
 

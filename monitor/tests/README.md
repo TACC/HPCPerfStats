@@ -1,6 +1,6 @@
 # HPCPerfStats monitor tests
 
-This directory holds **automated tests** for the monitor package. For package layout, build flavors, and key `src/` modules, see **[../README.md](../README.md)**.
+This directory holds **automated tests** for the monitor package. For package layout see [../README.md](../README.md), for build flavors [build the RPM](../docs/how-to/build-the-rpm.md), and for the key `src/` modules [source modules](../docs/reference/source-modules.md).
 
 Production sources stay in `../src/`; tests are small drivers that compile and link selected `.c` files from `src/` (see `Makefile.am`).
 

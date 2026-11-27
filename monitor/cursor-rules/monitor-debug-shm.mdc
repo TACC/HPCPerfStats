@@ -41,6 +41,6 @@ alwaysApply: false
 - Unit + golden: `tests/test_stats_buffer_debug_shm.c`, `test_debug_shm_emit_*`, `test_debug_shm_schema_mirror.c`.
 - Assert gating helpers match `monitor_daemon_collect_to_ring` behavior.
 - Slug-named goldens: `tests/expected/shm_{schema,fast,full}_<capability_slug>.txt` (**monitor-shm-message-correctness**).
-- Document DEBUG requirement in **`monitor/README.md`** (**monitor-readme-maintenance**).
+- Document the DEBUG requirement in **`monitor/docs/reference/source-modules.md`** (DEBUG mirror section; **monitor-readme-maintenance**).
 
 Cross-links: **monitor-debug-vs-symbols**, **monitor-readme-maintenance**, **monitor-shm-message-correctness**.

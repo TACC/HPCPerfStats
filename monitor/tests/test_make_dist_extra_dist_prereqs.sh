@@ -151,4 +151,16 @@ for py in tests/*.py scripts/*.py scripts/lib/*.py; do
 done
 test "${missing_py}" -eq 0 || exit 1
 
+# Regression: every page under docs/ ships in the tarball (the monitor docs tree is part of the
+# package; a page added under docs/how-to/ etc. without an EXTRA_DIST entry was missing from dist).
+missing_doc=0
+for doc in $(find docs -type f \( -name '*.md' -o -name '*.tsv' \) | sort); do
+  # shellcheck disable=SC2086  # word-split the Makefile list
+  if ! grep -qE "(^|[[:space:]=/])${doc}([[:space:]\\\\]|$)" ${mk_files}; then
+    echo "FAIL: ${doc} is not listed in any Makefile.am EXTRA_DIST" >&2
+    missing_doc=1
+  fi
+done
+test "${missing_doc}" -eq 0 || exit 1
+
 echo "test_make_dist_extra_dist_prereqs passed"

@@ -239,84 +239,11 @@ for diagnosis and never feeds a headline number.
 
 ## 0b. Grace DRAM CAS verification (`arm_aarch64_imc` via direct perf on the SCF PMUs)
 
-On a Grace node, as root, with a C compiler that supports `-fopenmp` (`module load gcc` on
-TACC) for the read and write loads:
-
-```bash
-./measurement/bin/verify_grace_scf_imc.sh
-```
-
-It stops `hpcperfstats.service` for the run (restored on exit). The known loads are
-`scripts/canary_gemm_load.sh run --kernel read` (load phase) and `--kernel write` (store
-phase), each 8 GiB, 8 threads, 20 s, built into `<out>/load` (or `$HPCPERFSTATS_GEMM_PREFIX`)
-and pinned with `taskset` to NUMA node 0, so the array sits in socket 0 memory; their
-`read_load done total_bytes_read=` and `write_load done total_bytes_written=` lines are the
-exact byte counts of the timed passes (first touch happens in setup and is not counted). The
-write load overwrites every cache line of the array each pass with plain stores; write-allocate
-fills add DRAM reads equal to the bytes written, so the store phase compares only write
-counters, and CAS writes equal the bytes written because the array dwarfs the LLC. Against
-these the script checks: (A) the SCF units through kernel `perf stat`, independent of the
-daemon: `nvidia_scf_pmu_0/cmem_rd_data/` over the read load (`units_load`, 32-byte beats) and
-`nvidia_scf_pmu_0/cmem_wr_total_bytes/` over the write load (`units_store`, bytes), idle
-subtracted (`NOT_RUN` when `perf` or the events are missing); (B) a DEBUG
-build of the daemon run as a transient unit (broker unreachable, dumps to the result dir,
-`/dev/shm/hpcperfstatsd-scf-verify` mirror): the `arm_aarch64_imc` `scf0` `dram_cas_reads`
-delta across the read load and the `dram_cas_writes` delta across the write load
-(`daemon_store_dram_cas_writes`) each match the load's bytes in 64-byte CAS within 0.75-1.5x
-while `scf1` stays below 0.25x; (B2) with DCGM refreshing at
-`sample_freq`, `host_cpu_hw` user util on 8 pinned busy CPUs matches `host_cpu` `/proc/stat`
-user time within 5% and is not a sample behind mid-load; (C) the DCGM NVSwitch module is
-denied and not mapped. Output: `measurement/results/grace_scf_<host>_<UTC>/summary.txt` (daemon
-stdout/stderr in `daemon_output.log`, not the journal, which rate-limits the DEBUG build), last
-line `GRACE_SCF_VERIFY_OK` or `GRACE_SCF_VERIFY_FAIL`. Parsing and verdicts:
-`lib/grace_scf_verify.py` (unit-tested in `tests/test_grace_scf_verify.py`).
-
----
+`./measurement/bin/verify_grace_scf_imc.sh`: procedure and checks in [Run the correctness campaign](../docs/how-to/run-correctness-campaign.md#verify-grace-dram-cas-against-the-scf-pmus).
 
 ## 0c. GPU tensor-peak calibration (Blackwell HMMA / DMMA per SM per clock)
 
-`src/nvidia_gpu_estimate.c` has 0 for the HMMA and DMMA columns of CC 10.0 (GB200) and 12.0
-(RTX PRO 6000): NVIDIA publishes per-GPU tensor peaks but no per-SM rate or the clock behind
-them. This test-only tool measures them on one GPU against the DEBUG monitor's own `nvidia_gpu`
-row. It is not built by the RPM, the spec or `rpm_debug_shm_verify.sh` and is never linked into
-`hpcperfstatsd`: the daemon only dlopens vendor libraries, which are not on every node.
-
-On the GPU node, with the DEBUG monitor running and the GPU otherwise idle:
-
-```bash
-# 1. as the user, in HPCPerfStats/monitor (loads CUDA via Lmod)
-measurement/bin/gpu_tensor_calibrate.sh build
-# 2. as root: the exact line step 1 prints, of this form
-/<checkout>/monitor/measurement/bin/gpu_tensor_calibrate.sh run
-```
-
-`build` picks the newest `cuda` module >= 12.8 (Horizon needs `gcc/15.3.0 cuda/13.3`, read from
-`module -t spider`; `HPCPERFSTATS_CUDA_MODULES="gcc/15.3.0 cuda/13.3"` overrides), finds `nvcc`
-and cuBLAS (`<nvhpc>/math_libs/<TACC_CUDA_VER>/lib64` beside the CUDA tree, then the CUDA tree
-`lib64`) and builds `bin/gpu_tensor_calibrate.cu` into `measurement/results/gpu_tensor_calibrate/`
-(`--prefix` to change; `build-info.txt` records modules, paths, link mode, sha256). It links
-cudart and cuBLAS statically when `libcublas_static.a`, `libcublasLt_static.a`, `libculibos.a`
-and `libcudart_static.a` exist, so root needs no modules; otherwise it links the shared cuBLAS
-with an rpath and prints a `NOTE`. A missing module, `nvcc`, cuBLAS or `cublas_v2.h` is
-`NOT_RUN` (exit 3) with every path searched.
-
-`run` reads `/dev/shm/hpcperfstatsd-debug` (`--shm`), GPU `--device 0` (CUDA ordinals in PCI
-order, the `nvidia_gpu` row index). It keeps every `fast` payload, then runs cuBLAS GEMMs in
-turn: FP16 in / FP32 accumulate (`cublasGemmEx`, HMMA) at n = 8192 and 16384, DGEMM (DMMA) at
-4096 and 8192, each for 4 sample intervals (at least `--seconds`, default 20) with 3 idle
-intervals between (about 31 intervals in all). Each load prints its exact FLOPs (calls x 2n^3,
-warmup excluded) and its cudaEvent-timed seconds. `lib/gpu_calibrate_eval.py` averages
-`tensor_hmma_active` / `tensor_dmma_active` (%) and `gpu_sm_clock` (MHz) over the samples wholly
-inside each load except the first (DCGM fields can trail a sample), requires that activity
-steady (5 points) and the pipe idle before and after, and computes FLOP/s / (activity x SMs x
-clock). The two sizes must agree within 5%. A DGEMM that leaves `tensor_dmma_active` idle (no
-FP64 tensor pipe) gives `NOT_PRESENT` and a 0 column. Output:
-`measurement/results/gpu_tensor_<host>_<UTC>/` (`summary.txt`, `load_*.txt`, `samples/`), ending
-with `ROW {major, minor, lanes, {...}},` (the `g_peaks` row to paste) and
-`GPU_TENSOR_CALIBRATE_OK` / `_FAIL` / `_NOT_RUN`. The binary also targets sm_80 / sm_90: on an
-H100 / GH200 node the run should reproduce the CC 9.0 row's published 4096 / 256, a check of the
-method itself. Tests: `tests/test_gpu_toolchain.sh`, `tests/test_gpu_tensor_calibrate.sh`,
-`tests/test_gpu_calibrate_eval.py`.
+`measurement/bin/gpu_tensor_calibrate.sh build` then `run`: procedure in [Run the correctness campaign](../docs/how-to/run-correctness-campaign.md#calibrate-gpu-tensor-peaks).
 
 ---
 

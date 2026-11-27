@@ -232,7 +232,7 @@ Catalog (`monitor/src/stats_sentinel.h`, append-only):
 | `-1` | `NOT_UPDATED` | No collector set the key this cycle (skipped tick, early return). | bridgeable |
 | `-2` | `NOT_PRESENT` | The counter does not exist on this node (absent file, other CPU vendor's key). | breaks |
 | `-3` | `READ_FAILED` | Opening, reading or parsing the source failed. | bridgeable |
-| `-4` | `PERMISSION_DENIED` | The daemon was not allowed to read it. | breaks |
+| `-4` | `PERMISSION_DENIED` | The daemon was not allowed to read it (`EACCES` / `EPERM`). | breaks |
 | `-5` | `PMU_BUSY` | The hardware counter is in use by another program. | breaks |
 | `-6` | `NOT_SCHEDULED` | The perf event was not scheduled on a counter this interval. | breaks |
 | `-7` | `BACKEND_ERROR` | A library call (DCGM, NVML, InfiniBand MAD, XPUM) failed. | bridgeable |
@@ -249,6 +249,17 @@ gap). "Breaks" means start a new chain at the next good reading. A code a reader
 Without `$sentinels` (site setting `emit_value_sentinels 0`, or archives from before sentinels)
 an unreadable key carries its last value or 0, and nothing is negative.
 
+How the daemon fills these codes:
+
+- `$sentinels <catalog version>` follows `$build` in the header, and the capability slug in
+  `$build` carries `sent<N>` (it names the build, so it stays with `emit_value_sentinels 0`).
+- Each collect cycle first marks every key of the phase `NOT_UPDATED`; the stored reading
+  (`s_val`) is kept, so `E` counter arithmetic (mod 2^W) is unaffected. Rows of transient entities
+  (`host_proc` processes) are dropped after a cycle that touched none of their keys; rows of real
+  devices (cores, ports, GPUs, sockets, filesystems) persist, and an untouched key keeps `-1`.
+- Both CPU backends (`x86perf` and `arm`) bridge `host_cpu_hw` chains the same way.
+- The consumer's copy of the catalog is `hpcperfstats/lib/monitor_sentinel.py`.
+
 ## Fast and full samples (two-tier collection)
 
 With two-tier collection on (the default, `enable_slow_tier 1`; `$build` ends in `slowtier1`):
@@ -258,6 +269,13 @@ With two-tier collection on (the default, `enable_slow_tier 1`; `$build` ends in
 - every `sample_freq_slow` (default 600 s) it writes one whose rows say `@full` and carry every
   key;
 - the sample after a header block is always `@full`.
+
+Which keys are slow comes from a static `(type, key)` table plus a rule that makes every key
+ending in `_error` / `_errors` slow (`monitor/src/collect_tier.c`); a `KEYS` macro can also
+mark a key `R=S` directly. Every `$` payload is full: the daemon forces a full collect whenever
+it writes the header block (`monitor_daemon.c`), and `stats_buffer_row_tier_decide()`
+(`stats_buffer_rows.c`) never writes `@fast` rows after one. On fast ticks the daemon also skips
+collecting slow keys.
 
 All rows of one sample have the same tier. To read an `@fast` row, line its values up with the
 schema entries that lack `R=S`. With `enable_slow_tier 0` rows have no tier token and carry

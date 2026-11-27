@@ -30,7 +30,7 @@ architecture**. x86 core, uncore and RAPL counters are read by direct `perf_even
 shared `perf_util` helper, the same model as Grace (**`monitor-arm-direct-perf.mdc`**, whose laws
 1–4 and 9–11 this rule applies to x86). LIKWID (`likwid_*`, `cpu_counter_metrics_likwid_begin*`,
 `HPMinit` / `setupCounters` re-arm, `LIKWID_FORCE`, `HPCPERFSTATS_LIKWID_ACCESS`, PWR* eventsets,
-`--with-cpu-counter-backend=likwid`) must not come back. `LIKWID_MIGRATION.md` is history only.
+`--with-cpu-counter-backend=likwid`) must not come back. `docs/history/likwid-migration.md` is history only.
 
 ## Modules
 
@@ -145,5 +145,5 @@ flat. `pmu_running_time` ÷ `pmu_enabled_time` well below the solo share means a
 - **`monitor-arm-direct-perf.mdc`** — Grace readers and the shared `perf_util` helper.
 - **`monitor-value-sentinel-contract.mdc`** — sentinel codes, bridgeable vs chain-breaking, fault matrix.
 - **`monitor-emitted-variable-naming.mdc`**, **`monitor-schema-keys-headers.mdc`** — key names and `E,W=` tokens.
-- **`monitor-consumer-schema-migration.mdc`** — 3.1 x86 meaning changes (README migration table).
+- **`monitor-consumer-schema-migration.mdc`** — 3.1 x86 meaning changes (`monitor/docs/reference/legacy-formats.md`).
 - **`monitor-shm-message-correctness.mdc`** — x86 key checks in `scripts/lib/papi_shm_validate.py`, `x86perf` slug token.

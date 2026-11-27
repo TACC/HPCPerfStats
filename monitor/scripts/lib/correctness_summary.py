@@ -3,7 +3,7 @@
 
 ``rpm_debug_shm_verify.sh`` calls ``write`` once per run; the file lands next to the text reports
 (``test_runs/monitor/correctness_<host>_<slug>_<UTC>.json``). Schema version 1 (documented in
-monitor/README.md, locked by tests/test_correctness_summary.py):
+monitor/docs/how-to/run-correctness-campaign.md, locked by tests/test_correctness_summary.py):
 
   schema_version   int, bumped only on a breaking change
   generated_utc    ISO-8601 UTC, second resolution

@@ -24,7 +24,7 @@ alwaysApply: false
 - **Do not** key GH200 HBM class off marketing name substrings (e.g. `120GB`); use smi `memory.total` (≥140000 MiB → HBM3e).
 - **Prefer live probes** when present for FLOPS (NVML) and EDAC DRAM; for GH200 IO, C2C identity beats weak PCIe.
 - **KEYS names stay stable**; source enums document provenance (`cpu_peak_source` / `gpu_peak_source`).
-- **Operator verify** peaks by **host + time window**, never `jid` alone on `host_data` (see monitor `README.md` SQL).
+- **Operator verify** peaks by **host + time window**, never `jid` alone on `host_data` (see the SQL in `monitor/docs/explanation/x86-counters-and-roofline.md`).
 
 ## Related
 

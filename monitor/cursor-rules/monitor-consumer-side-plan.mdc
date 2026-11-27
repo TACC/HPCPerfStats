@@ -29,7 +29,7 @@ Use a clearly labeled section, e.g. **Consumer follow-up plan**, with:
 4. **Verification** — consumer tests or manual checks to run after both sides land.
 5. **Rename/migration** — YAML map entries, dashboard/query updates if applicable (**monitor-consumer-schema-migration**).
 
-Keep the plan actionable for a separate session or authorized consumer edit; it is not a substitute for **`monitor_variable_rename_map.yaml`** or **`monitor/README.md`** migration notes when those apply.
+Keep the plan actionable for a separate session or authorized consumer edit; it is not a substitute for **`monitor_variable_rename_map.yaml`** or **`monitor/docs/reference/legacy-formats.md`** migration notes when those apply.
 
 ## Monitor-only handoff
 

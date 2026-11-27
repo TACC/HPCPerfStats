@@ -54,7 +54,7 @@ Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
    `arm_aarch64_imc` reads SCF on its own perf fds and is the `perf_event` group). A type that only
    works with another group's backend goes **in that group**; the one such case is the 3.0-x
    baseline alias: when a baseline RPM's build-info carries one of `driver_map.GRACE_OVERLAY_FLAGS`
-   (a LIKWID (3.0) Grace overlay build, see `LIKWID_MIGRATION.md`), `arm_aarch64_imc` maps to
+   (a LIKWID (3.0) Grace overlay build, see `docs/history/likwid-migration.md`), `arm_aarch64_imc` maps to
    `arm_cpu`, because there it only waited for the overlay (c122-018 2026-11-05: its SOLO leg
    measured ~0, not the SCF cost). 3.1 builds never carry those flags. Build-info `cpu_backend` `dcgm` (RPMs
    before the `arm` rename) resolves like `arm`, and the 3.0-x x86 value `likwid` is only an

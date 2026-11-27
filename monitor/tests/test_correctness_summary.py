@@ -156,12 +156,13 @@ class Schema(unittest.TestCase):
         self.assertEqual(got["preflight"]["status"], "FAIL")
         self.assertEqual(got["message_structure"]["status"], "NOT_RUN")
 
-    def test_readme_documents_schema(self):
-        readme = (MONITOR / "README.md").read_text(encoding="utf-8")
+    def test_campaign_doc_documents_schema(self):
+        doc = MONITOR / "docs" / "how-to" / "run-correctness-campaign.md"
+        text = doc.read_text(encoding="utf-8")
         for name, _, _ in cs.CHECKS:
-            self.assertIn("`%s`" % name, readme, name)
+            self.assertIn("`%s`" % name, text, name)
         for key in TOP_KEYS | ARCH_KEYS:
-            self.assertIn("`%s`" % key, readme, key)
+            self.assertIn("`%s`" % key, text, key)
 
 
 class Cli(unittest.TestCase):

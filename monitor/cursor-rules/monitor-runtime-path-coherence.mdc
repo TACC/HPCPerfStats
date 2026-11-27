@@ -30,7 +30,7 @@ For a default dump, pid, config, or other persistent/runtime path, inspect and u
 4. `hpcperfstats.service` writable-path allowlists under `ProtectSystem=strict`.
 5. RPM `%install` creation, explicit mode, and `%files` ownership in
    `hpcperfstats.spec`.
-6. README privilege/deployment text and the smallest literal/unit/spec regression
+6. Privilege text in `docs/explanation/design.md`, deploy text in `docs/how-to/deploy-to-nodes.md`, and the smallest literal/unit/spec regression
    tests.
 
 ## Safety and verification

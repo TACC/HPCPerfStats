@@ -87,7 +87,7 @@ Usage: ./scripts/prepare_rpmbuild_dirs.sh [--debug-build | --measure-overhead [-
   --measure-arg ARG  Pass ARG to run_overhead_profile.sh (repeatable), e.g.
                      --measure-arg --max-hours --measure-arg 8
 
-  See README.md "DEBUG /dev/shm mirror" for the RPM debug workflow.
+  See docs/how-to/build-the-rpm.md for the RPM debug workflow.
 EOF
       exit 0
       ;;
