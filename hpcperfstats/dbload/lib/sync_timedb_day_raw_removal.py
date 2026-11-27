@@ -14,9 +14,9 @@ Attributes:
   VERIFY_STAGE_NONE: Attribute.
   VERIFY_STAGE_POST_SEAL: Attribute.
   VERIFY_STAGE_PRE_SEAL: Attribute.
-  _UNMANIFESTED_RAW_LOGGED: Last ``(adopted, not_in_sealed)`` logged per
-    day, so a sealed-only day's unmanifested-raw line repeats only when its
-    counts change.
+  _UNMANIFESTED_RAW_LOGGED: Last ``(adopted_sealed, adopted_unarchived)``
+    logged per day, so a sealed-only day's unmanifested-raw line repeats
+    only when its counts change.
   _log_day_raw_verify_complete: Attribute.
   remaining_raw_blocking_day_incomplete: Attribute.
 """
@@ -787,7 +787,7 @@ class _DayRawRemovalState:
     if self.delete_phase_done() or self.verification_complete():
       blocking = (
         self._blocking_manifest_paths_on_disk()
-        or self._adopt_unmanifested_sealed_raw()
+        or self._adopt_unmanifested_raw()
       )
       zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
       return {zst_path: blocking} if blocking else {}
@@ -1068,7 +1068,7 @@ class _DayRawRemovalState:
       path
       for path, entry in self._manifest_entries_on_disk()
       if self._entry_blocks_done(path, entry)
-    ] or self._adopt_unmanifested_sealed_raw()
+    ] or self._adopt_unmanifested_raw()
     if not blocking:
       return False
     with self._lock:
@@ -1204,25 +1204,27 @@ class _DayRawRemovalState:
         unmanifested.append(path)
     return unmanifested
 
-  def _adopt_unmanifested_sealed_raw(self) -> list[str]:
+  def _adopt_unmanifested_raw(self) -> list[str]:
     """
-    Record sealed-only day raw the manifest never listed but the zst holds.
+    Record sealed-only day raw the manifest never listed.
 
     A ``done`` / ``verification_complete`` manifest is read entry-only, so
     raw it never listed stayed on disk while the day claimed ``complete``
     (hpcperfstats01 2026-11-26: 09-15 listed 416 of 17,132 raw files). On a
-    sealed-only day (no open ``.tar``), each unlisted day raw file that is a
-    same-size member of the sealed member map (T0) is recorded as
-    ``skipped_not_in_archive``, so the sealed-only reclassify (DB gate) and
-    the DL-3 delete gate remove it. Raw the sealed copy lacks is only
-    logged: adopting it would restore the whole sealed day for an append.
-    An invalid map adopts nothing and queues its rebuild for a later pass.
+    sealed-only day (no open ``.tar``), every unlisted day raw file is
+    recorded as ``skipped_not_in_archive``: reason
+    ``unmanifested_sealed_raw`` when it is a same-size member of the sealed
+    member map (T0; the sealed-only reclassify and the DL-3 delete gate
+    remove it), else ``unmanifested_unarchived_raw`` (late raw: handed to
+    ingest/append, whose append restores the sealed day; day close then
+    reseals and deletes it). An invalid map adopts nothing, since the kind
+    cannot be told, and queues its rebuild for a later pass.
 
     Returns:
       list[str]: Paths recorded by this call (empty when none).
 
     Examples:
-      >>> _DayRawRemovalState()._adopt_unmanifested_sealed_raw()
+      >>> _DayRawRemovalState()._adopt_unmanifested_raw()
       ... # doctest: +SKIP
       ['/archive/c001.cluster/1757912400']
     """
@@ -1238,21 +1240,27 @@ class _DayRawRemovalState:
       if path not in listed and os.path.isfile(path)
     ]
     members = sealed_members_lookup(zst_path) if found else None
-    adopted = [
-      path for path in found if raw_path_in_sealed_members(path, members or {})
-    ]
+    adopted = [] if members is None else found
+    sealed_n = 0
     for path in adopted:
+      in_sealed = raw_path_in_sealed_members(path, members)
+      sealed_n += in_sealed
       self._record_entry(
-        path, zst_path, "skipped_not_in_archive", "unmanifested_sealed_raw"
+        path,
+        zst_path,
+        "skipped_not_in_archive",
+        "unmanifested_sealed_raw"
+        if in_sealed
+        else "unmanifested_unarchived_raw",
       )
-    counts = (len(adopted), len(found) - len(adopted))
+    counts = (sealed_n, len(adopted) - sealed_n)
     day_key = self.day_date.isoformat()
     logged = _UNMANIFESTED_RAW_LOGGED.get(day_key)
     if found and self.log_fn and logged != counts:
       _UNMANIFESTED_RAW_LOGGED[day_key] = counts
       self.log_fn(
         f"Day raw removal unmanifested raw day={day_key} "
-        f"adopted={counts[0]} not_in_sealed={counts[1]} "
+        f"adopted_sealed={counts[0]} adopted_unarchived={counts[1]} "
         f"sealed_map={'ok' if members is not None else 'unavailable'}",
         flush=True,
       )
@@ -2182,10 +2190,11 @@ class _DayRawRemovalState:
     member_name: str,
   ) -> list[str]:
     """
-    Resolve a tar member name to on-disk stats path candidates.
+    Resolve a tar member key to on-disk stats path candidates.
 
     Args:
-      member_name (str): Tar member basename (``get_tar_member_name`` form).
+      member_name (str): Member key ``<node>/<epoch>``
+        (``get_tar_member_name``), resolved under ``archive_data_dir``.
 
     Returns:
       List[str]: Existing file paths to try, longest-first.
@@ -2196,7 +2205,7 @@ class _DayRawRemovalState:
     name = str(member_name or "").strip()
     if not name:
       return []
-    candidates: list[str] = []
+    candidates = [os.path.join(self.archive_data_dir or "/", name)]
     if name.startswith("/"):
       candidates.append(name)
     else:

@@ -383,7 +383,10 @@ def test_iter_sealed_daily_archive_uses_gnu_extract_not_tarfile():
   from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as ah
 
   spool_src = inspect.getsource(ah._iter_sealed_daily_archive_spooled_members)
-  assert "_gnu_tar_extract_named_member" in spool_src
+  assert "_extract_member_copy" in spool_src
+  copy_src = inspect.getsource(ah._extract_member_copy)
+  assert "_gnu_tar_extract_named_member" in copy_src
+  assert "tarfile" not in copy_src
   assert "_run_gnu_tvf_file_members" in spool_src
   assert "extractfile" not in spool_src
   assert "tarfile.open" not in spool_src

@@ -128,6 +128,36 @@ def _members_sha256(members: dict[str, int]) -> str:
   return digest.hexdigest()
 
 
+def members_by_key(members: dict[str, int]) -> dict[str, int]:
+  """
+  Return ``members`` keyed by member key, keeping the max size.
+
+  Every prefix spelling of one raw file (``./hpcperfstats/archive/h/1``,
+  ``hpcperfstats/archive/h/1``, another root) is one ``<node>/<epoch>``
+  key (``get_tar_member_name``); the largest copy wins, as in the tar
+  listings.
+
+  Args:
+    members (dict[str, int]): Member name or key to byte size, as stored.
+
+  Returns:
+    dict[str, int]: Member key to the largest size.
+
+  Examples:
+    >>> members_by_key({"./a/h/1": 2, "b/h/1": 5})
+    {'h/1': 5}
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    get_tar_member_name,
+  )
+
+  out: dict[str, int] = {}
+  for name, size in members.items():
+    key = get_tar_member_name(str(name))
+    out[key] = max(int(size), out.get(key, int(size)))
+  return out
+
+
 def write_sealed_member_map(
   sealed_path: str,
   members: dict[str, int],
@@ -162,7 +192,7 @@ def write_sealed_member_map(
   if live is None or (identity is not None and identity != live):
     return False
   map_path = sealed_member_map_path(sealed_path)
-  clean = {str(k): int(v) for k, v in (members or {}).items()}
+  clean = members_by_key(members or {})
   payload = {
     "sealed_path": os.path.normpath(str(sealed_path)),
     "zst_identity": live,
@@ -227,7 +257,7 @@ def sealed_members_lookup(
     if isinstance(entries, dict) and doc.get("members_sha256") == (
       _members_sha256(entries)
     ):
-      members = {str(k): int(v) for k, v in entries.items()}
+      members = members_by_key(entries)
   if members is None:
     if request_rebuild:
       request_sealed_member_map_rebuild(sealed_path)
@@ -256,7 +286,11 @@ def raw_path_in_sealed_members(raw_path: str, members: dict[str, int]) -> bool:
     >>> raw_path_in_sealed_members("/nonexistent/1", {"nonexistent/1": 3})
     False
   """
-  name = str(raw_path).lstrip("/")
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    get_tar_member_name,
+  )
+
+  name = get_tar_member_name(str(raw_path))
   if name not in members:
     return False
   try:

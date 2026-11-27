@@ -47,6 +47,8 @@ Attributes:
   _DAY_CLOSE_DISQUALIFY_CODES: Attribute.
   _DAY_SCOPED_CLOSED_RAW_WALK: Shared batched raw-tree walk for
     ``build_day_scoped_closed_raw_by_gz`` (``_BatchedClosedRawWalk``).
+  _MEMBER_KEY_COLLISION_WARNED: Archives whose listing already logged a
+    member key collision (one WARN per archive per process).
   _SEALING_TARS: Normalized daily ``.tar`` paths whose seal holds the write
     lock right now (in-process; see ``tar_sealing``).
   _SEALING_TARS_LOCK: Guards ``_SEALING_TARS``.
@@ -139,6 +141,7 @@ from hpcperfstats.dbload.lib.zstd_cli import (
 )
 
 _SEALING_TARS: set[str] = set()
+_MEMBER_KEY_COLLISION_WARNED: set[str] = set()
 _SEALING_TARS_LOCK = threading.Lock()
 _SEAL_SLOTS_HELD: set[str] = set()
 
@@ -4158,20 +4161,65 @@ def collect_lock_sidecar_stats(
   }
 
 
-def get_tar_member_name(file_path: str) -> Any:
+def get_tar_member_name(file_path: str) -> str:
   """
-  Return the name used for a file inside a tar (path without leading slash).
+  Return the member key of a raw path or tar member name: ``<node>/<epoch>``.
+
+  Members are compared by their last two path components, so every prefix
+  spelling of one raw file (``./hpcperfstats/archive/...``,
+  ``hpcperfstats/archive/...``, ``/./...``, another archive root) is one key.
+  Names written into tars stay full paths (the clone append header).
 
   Args:
-    file_path (str): String for file path.
+    file_path (str): Raw stats path or stored tar member name.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    str: Last two components of the normalized path (fewer when shorter).
 
   Examples:
-    >>> get_tar_member_name("x")  # doctest: +SKIP
+    >>> get_tar_member_name("./hpcperfstats/archive/c001.vista/1757912400")
+    'c001.vista/1757912400'
+    >>> get_tar_member_name("/a//b")
+    'a/b'
   """
-  return file_path.lstrip("/")
+  parts = os.path.normpath(file_path).strip("/").split("/")
+  return "/".join(parts[-2:])
+
+
+def _member_key_rows(
+  tar_path: str, rows: list[tuple[str, int]]
+) -> list[tuple[str, int]]:
+  """
+  Re-key tar listing rows by ``get_tar_member_name``.
+
+  Two different stored names with one key log one WARN per archive naming
+  both; consumers keep the largest size for the key.
+
+  Args:
+    tar_path (str): Archive the rows were listed from.
+    rows (list[tuple[str, int]]): ``(stored name, size)`` in archive order.
+
+  Returns:
+    list[tuple[str, int]]: ``(key, size)`` in archive order.
+
+  Examples:
+    >>> _member_key_rows("/d/x.tar", [("./a/h/1", 3), ("a/h/1", 5)])
+    [('h/1', 3), ('h/1', 5)]
+  """
+  first: dict[str, str] = {}
+  out: list[tuple[str, int]] = []
+  for name, size in rows:
+    key = get_tar_member_name(name)
+    seen = first.setdefault(key, name)
+    if seen != name and tar_path not in _MEMBER_KEY_COLLISION_WARNED:
+      _MEMBER_KEY_COLLISION_WARNED.add(tar_path)
+      log_print(
+        f"WARN: tar member key collision tar={tar_path} key={key} "
+        f"names={seen},{name} (largest size kept)",
+        flush=True,
+      )
+    out.append((key, size))
+  return out
 
 
 def _tar_list_executable() -> Any:
@@ -6604,8 +6652,9 @@ def _run_gnu_tvf_file_members(
     archive_threads (bool): Archive (True) or ingest (False) zstd threads.
 
   Returns:
-    tuple[list[tuple[str, int]], int, str]: Occurrences ``(name, size)`` in
-    archive order, process exit code, and stderr text.
+    tuple[list[tuple[str, int]], int, str]: Occurrences ``(key, size)``
+    (``get_tar_member_name`` keys) in archive order, process exit code, and
+    stderr text.
 
   Raises:
     RuntimeError: When the child stdout pipe is missing.
@@ -6669,7 +6718,7 @@ def _run_gnu_tvf_file_members(
           p_decomp.wait(timeout=30)
       stderr_text = (tar_stderr or "") + (decomp_stderr or "")
       rc = 0 if (tar_rc == 0 and p_decomp.returncode == 0) else 1
-    return occurrences, rc, stderr_text
+    return _member_key_rows(tar_path, occurrences), rc, stderr_text
 
   proc = subprocess.Popen(
     [tar_bin, "tvf", tar_path],
@@ -6690,7 +6739,7 @@ def _run_gnu_tvf_file_members(
     if proc.stderr is not None:
       stderr_text = proc.stderr.read() or ""
     rc = proc.wait()
-  return occurrences, rc, stderr_text
+  return _member_key_rows(tar_path, occurrences), rc, stderr_text
 
 
 def _run_gnu_tf_member_names(archive_path: str) -> tuple[list[str], int, str]:
@@ -6832,7 +6881,7 @@ def _parse_tar_tvf_size_and_name(line: str) -> tuple[str, int] | None:
   name = " ".join(parts[name_idx:])
   if not name:
     return None
-  return (name, size)
+  return (os.path.normpath(name), size)
 
 
 def _read_tar_file_member_sizes_unlocked(tar_path: str) -> Any:
@@ -8445,7 +8494,7 @@ def tar_has_duplicate_file_members(tar_path: str) -> Any:
         parsed = _parse_tar_tvf_size_and_name(line)
         if parsed is None:
           continue
-        name, _size = parsed
+        name = get_tar_member_name(parsed[0])
         if name in seen:
           return True
         seen.add(name)
@@ -8506,13 +8555,13 @@ def _gnu_tf_file_member_map_despite_fail(tar_path: str) -> dict[str, int]:
   """
   Parse file member names from ``tar tf`` stdout when ``tvf`` parsing fails.
 
-  Byte sizes are unknown (``0``); callers use name counts for extract checks.
+  Byte sizes are unknown (``0``); callers use key counts for extract checks.
 
   Args:
     tar_path (str): Path to daily ``.tar``.
 
   Returns:
-    dict[str, int]: Member name to ``0`` placeholder size.
+    dict[str, int]: Member key to ``0`` placeholder size.
 
   Examples:
     >>> _gnu_tf_file_member_map_despite_fail("/missing.tar")  # doctest: +SKIP
@@ -8531,7 +8580,7 @@ def _gnu_tf_file_member_map_despite_fail(tar_path: str) -> dict[str, int]:
     name = str(raw_line or "").strip()
     if not name or name.startswith("tar:"):
       continue
-    members[name] = 0
+    members[get_tar_member_name(name)] = 0
   return members
 
 
@@ -8745,13 +8794,14 @@ def _rewrite_daily_tar_largest_member_wins(
       if not member.isfile():
         continue
       file_n += 1
-      prev = file_keep.get(member.name)
+      name = get_tar_member_name(member.name)
+      prev = file_keep.get(name)
       if (
         prev is None
         or member.size > prev[0]
         or (member.size == prev[0] and idx > prev[1])
       ):
-        file_keep[member.name] = (member.size, idx)
+        file_keep[name] = (member.size, idx)
   if skip_without_duplicates and file_n == len(file_keep):
     return False
   # The rewrite is a full second copy of the tar (A16; refused under space
@@ -8768,7 +8818,7 @@ def _rewrite_daily_tar_largest_member_wins(
           phase=yield_phase,
         )
         if member.isfile():
-          keep = file_keep.get(member.name)
+          keep = file_keep.get(get_tar_member_name(member.name))
           if keep is None or keep[1] != idx:
             continue
           fobj = tin.extractfile(member)
@@ -9931,31 +9981,60 @@ def repair_truncated_daily_tar_in_place(
     return False
 
 
-def _resolved_extracted_member_path(extract_dir: str, member_name: str) -> str:
+def _extract_member_copy(
+  source_path: str,
+  key: str,
+  size: int,
+  work_root: str,
+  *,
+  from_zst: bool = False,
+  archive_threads: bool = True,
+) -> tuple[str, str]:
   """
-  Return the extracted file path under ``extract_dir`` for ``member_name``.
+  Extract the copy of member ``key`` that has ``size`` bytes.
+
+  Every stored spelling of ``key`` is extracted into a new directory under
+  ``work_root`` (``hps_union_extract_*``, swept as scratch); the file whose
+  key and size match is returned. The caller removes the directory.
 
   Args:
-    extract_dir (str): Staging directory GNU tar extracted into.
-    member_name (str): Archive member name from the union map.
+    source_path (str): Open ``.tar`` or sealed ``.tar.zst`` / ``.tar.gz``.
+    key (str): Member key (``get_tar_member_name``).
+    size (int): Byte size of the wanted copy (the listing's largest).
+    work_root (str): Directory that receives the extract directory.
+    from_zst (bool): ``source_path`` is sealed (also detected by suffix).
+    archive_threads (bool): Archive (True) or ingest (False) zstd threads.
 
   Returns:
-    str: Absolute file path, or empty when the member is missing.
+    tuple[str, str]: Extract directory, and the matching file path or
+    ``""`` when no extracted copy has that key and size.
 
   Examples:
-    >>> _resolved_extracted_member_path("/tmp", "missing.bin")
-    ''
+    >>> import tempfile
+    >>> work, path = _extract_member_copy(
+    ...   "/missing.tar", "h/1", 1, tempfile.gettempdir()
+    ... )
+    >>> path, shutil.rmtree(work)
+    ('', None)
   """
-  direct = os.path.join(extract_dir, member_name)
-  if os.path.isfile(direct):
-    return direct
-  base = os.path.basename(member_name)
-  if not base:
-    return ""
-  for root, _dirs, files in os.walk(extract_dir):
-    if base in files and not base.startswith("._"):
-      return os.path.join(root, base)
-  return ""
+  work = tempfile.mkdtemp(prefix="hps_union_extract_", dir=work_root)
+  if _gnu_tar_extract_named_member(
+    source_path,
+    key,
+    work,
+    from_zst=from_zst,
+    archive_threads=archive_threads,
+  ):
+    for root, _dirs, files in os.walk(work):
+      for name in files:
+        path = os.path.join(root, name)
+        if (
+          not name.startswith("._")
+          and get_tar_member_name(os.path.relpath(path, work)) == key
+          and os.path.getsize(path) == int(size)
+        ):
+          return work, path
+  return work, ""
 
 
 def _gnu_tar_union_env() -> dict[str, str]:
@@ -9983,11 +10062,15 @@ def _gnu_tar_extract_named_member(
   archive_threads: bool = True,
 ) -> bool:
   """
-  Extract one named member with GNU/BSD ``tar -x`` (sealed via ``zstd -d -c``).
+  Extract every member matching a key with GNU ``tar -x`` (sealed via ``zstd``).
+
+  ``--no-anchored`` matches the key at any ``/`` boundary, so every stored
+  prefix spelling of ``<node>/<epoch>`` is extracted (``a/xb/c`` does not
+  match ``b/c``); ``--no-wildcards`` keeps the key literal.
 
   Args:
     source_path (str): Open ``.tar`` or sealed ``.tar.zst`` / ``.tar.gz``.
-    member_name (str): Member to extract (not a full archive scan).
+    member_name (str): Member key (``get_tar_member_name``) to extract.
     extract_dir (str): Destination directory for the member file.
     from_zst (bool): True when caller knows ``source_path`` is sealed zst
       (also auto-detected from path suffix).
@@ -10006,6 +10089,7 @@ def _gnu_tar_extract_named_member(
     run_subprocess_with_progress,
   )
 
+  match_args = ["--no-anchored", "--no-wildcards", member_name]
   fmt = detect_compressed_format(source_path)
   use_pipe = from_zst or fmt in ("zst", "gz")
   if use_pipe:
@@ -10028,7 +10112,7 @@ def _gnu_tar_extract_named_member(
       if decomp.stdout is None:
         return False
       result = run_subprocess_with_progress(
-        [tar_bin, "-x", "-f", "-", "-C", extract_dir, member_name],
+        [tar_bin, "-x", "-f", "-", "-C", extract_dir, *match_args],
         progress_path=os.path.join(
           extract_dir,
           os.path.basename(member_name),
@@ -10060,7 +10144,7 @@ def _gnu_tar_extract_named_member(
     source_path,
     "-C",
     extract_dir,
-    member_name,
+    *match_args,
   ]
   progress_path = os.path.join(extract_dir, os.path.basename(member_name))
   try:
@@ -10150,7 +10234,7 @@ def _copy_union_member_into_tar(
 
   Args:
     dest_tar_path (str): Merge tmp path (``tar -r`` destination).
-    member_name (str): Member basename to copy.
+    member_name (str): Member key (``get_tar_member_name``) to copy.
     expected_size (int): Expected byte size in the union map.
     tar_path (str): Open daily tar path.
     zst_path (str): Sealed zst sibling path.
@@ -10176,38 +10260,21 @@ def _copy_union_member_into_tar(
   if os.path.isfile(zst_path):
     sources.append((zst_path, True))
   for source_path, from_zst in sources:
-    if not _gnu_tar_extract_named_member(
+    work, extracted = _extract_member_copy(
       source_path,
       member_name,
+      expected_size,
       extract_dir,
       from_zst=from_zst,
-    ):
-      continue
-    extracted = _resolved_extracted_member_path(extract_dir, member_name)
-    if not extracted:
-      continue
-    try:
-      size_ok = int(os.path.getsize(extracted)) == int(expected_size)
-    except OSError:
-      size_ok = False
-    if not size_ok:
-      with contextlib.suppress(OSError):
-        os.remove(extracted)
-      continue
-    member_rel = os.path.relpath(extracted, extract_dir)
-    if member_rel.startswith(".."):
-      with contextlib.suppress(OSError):
-        os.remove(extracted)
-      continue
-    appended = _gnu_tar_append_extracted_member(
-      dest_tar_path,
-      extract_dir,
-      member_rel,
     )
-    with contextlib.suppress(OSError):
-      os.remove(extracted)
-    if appended:
-      return True
+    try:
+      # The stored name (relative to the extract dir) is written back.
+      if extracted and _gnu_tar_append_extracted_member(
+        dest_tar_path, work, os.path.relpath(extracted, work)
+      ):
+        return True
+    finally:
+      shutil.rmtree(work, ignore_errors=True)
   return False
 
 
@@ -11117,25 +11184,16 @@ def _iter_sealed_daily_archive_spooled_members(
     rel_path = _member_spool_relative_path(member_name)
     dest = os.path.join(spool_root, rel_path)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
-    if not _gnu_tar_extract_named_member(
-      sealed_path,
-      member_name,
-      spool_root,
-      archive_threads=True,
-    ):
-      if on_member_skipped is not None:
-        on_member_skipped()
-      continue
-    extracted = _resolved_extracted_member_path(spool_root, member_name)
-    if not extracted or not os.path.isfile(extracted):
-      if on_member_skipped is not None:
-        on_member_skipped()
-      continue
-    if os.path.abspath(extracted) != os.path.abspath(dest):
-      with contextlib.suppress(OSError):
-        if os.path.isfile(dest):
-          os.remove(dest)
+    work, extracted = _extract_member_copy(
+      sealed_path, member_name, size_int, spool_root
+    )
+    if extracted:
       os.replace(extracted, dest)
+    shutil.rmtree(work, ignore_errors=True)
+    if not extracted:
+      if on_member_skipped is not None:
+        on_member_skipped()
+      continue
     yield member_name, dest
 
 

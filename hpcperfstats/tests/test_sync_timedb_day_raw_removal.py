@@ -2966,7 +2966,8 @@ def test_done_sealed_only_day_deletes_unmanifested_sealed_raw(
   A sealed-only day whose manifest is ``done`` but lists only a few files
   claimed ``complete`` every pass while ~76% of its on-disk raw had a
   same-size sealed copy (09-15: 416 entries, 17,132 raw files). Raw with a
-  sealed copy is deleted; raw the sealed copy lacks stays on disk.
+  sealed copy is deleted; late raw the sealed copy lacks is adopted, handed
+  to ingest/append, kept on disk, and holds the day open.
   """
   from hpcperfstats.dbload.lib import (
     sync_timedb_job_reconstruct as jr,
@@ -3017,6 +3018,15 @@ def test_done_sealed_only_day_deletes_unmanifested_sealed_raw(
     "stats_file_head_ingested_in_db",
     lambda _p: True,
   )
+  handed = []
+  real_handoff = qo._handoff_retryable_paths_to_ingest
+
+  def _spy_handoff(client, tar, paths, **kwargs):
+    paths = list(paths)
+    handed.extend(paths)
+    return real_handoff(client, tar, paths, **kwargs)
+
+  monkeypatch.setattr(qo, "_handoff_retryable_paths_to_ingest", _spy_handoff)
   outcomes = []
   for _claim in range(4):
     outcomes.append(
@@ -3027,12 +3037,20 @@ def test_done_sealed_only_day_deletes_unmanifested_sealed_raw(
         log_fn=lambda *a, **k: None,
       )
     )
-    if outcomes[-1] == "complete" and not any(s.exists() for s in sealed):
-      break
-  assert outcomes[-1] == "complete", outcomes
+  assert "complete" not in outcomes, outcomes
   assert not any(s.exists() for s in sealed), "sealed raw deleted"
   assert late.exists(), "raw with no sealed copy is never deleted"
-  assert not os.path.exists(tar_path), "no restore of the sealed day"
+  entry = (
+    _make_coordinator(tmp_path)
+    ._get_or_create_day(tar_path)
+    ._manifest["entries"][str(late)]
+  )
+  assert (entry["status"], entry["reason"]) == (
+    "skipped_not_in_archive",
+    "unmanifested_unarchived_raw",
+  )
+  assert str(late) in handed, "late raw handed to ingest/append"
+  assert not os.path.exists(tar_path), "day close itself never restores"
 
 
 def test_enospc_injection_append_seal_rebuild_salvage_no_loss(
@@ -3067,3 +3085,229 @@ def test_enospc_injection_append_seal_rebuild_salvage_no_loss(
   )
   assert open(tar_path, "rb").read() == cut
   assert seg_a.exists() and seg_b.exists()
+
+
+# --- DE-36: ``./``-prefixed tar member names (hpcperfstats01 2026-11-26) ---
+
+
+def _dot_slash_production_day(tmp_path, day, prefix="./"):
+  """Open tar + zst hold raw only under ``prefix`` names; one raw grew.
+
+  ``prefix`` replaces the leading ``/`` of each raw path (``./``: the
+  hpcperfstats01 spelling; ``/mnt/old_root/``: another archive root).
+
+  Returns ``(tar_path, zst, segs, grown)`` with a manifest whose grown raw
+  is ``skipped_size_mismatch`` under its ``/./`` key (the 10-17 shape).
+  """
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True, exist_ok=True)
+  segs = []
+  for hour in (1, 2):
+    ts = int(datetime(day.year, day.month, day.day, hour).timestamp())
+    seg = host / str(ts)
+    seg.write_text(f"{ts} job1 cn001\nline {hour}\n")
+    os.utime(seg, (ts, ts))
+    segs.append(seg)
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir(exist_ok=True)
+  zst = str(tgz_dir / f"{day:%Y-%m-%d}.tar.zst")
+  tar_path = daily_tar_path_from_compressed(zst)
+  with tarfile.open(tar_path, "w") as tf:
+    for seg in segs:
+      tf.add(str(seg), arcname=prefix + str(seg).lstrip("/"))
+  atomic_seal_tar_to_zst(
+    tar_path,
+    zst,
+    num_threads=1,
+    compress_level=3,
+    keep_uncompressed_tar=True,
+    log_fn=None,
+  )
+  grown = segs[1]
+  ts = int(grown.name)
+  grown.write_text(grown.read_text() + "grew after the old copy\n" * 40)
+  os.utime(grown, (ts, ts))
+  state = _make_coordinator(tmp_path)._get_or_create_day(tar_path)
+  dot_key = "/." + str(grown)
+  state._record_entry(str(segs[0]), zst, "verified", "verified")
+  state._record_entry(dot_key, zst, "skipped_size_mismatch", "size_mismatch")
+  with state._lock:
+    _save_manifest(state._manifest_path, state._manifest)
+  return tar_path, zst, segs, grown
+
+
+def test_dot_slash_member_names_match_their_raw_path(tmp_path):
+  """Both spellings of one raw resolve to the same tar member (DE-36)."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    filter_files_to_add_to_archive,
+    get_mutable_tar_authority_member_map,
+    get_verified_files_to_remove,
+  )
+
+  day = datetime(2026, 10, 17)
+  tar_path, _zst, segs, grown = _dot_slash_production_day(tmp_path, day)
+  dot_grown = "/." + str(grown)
+  authority = get_mutable_tar_authority_member_map(tar_path)
+  assert set(authority) == {get_tar_member_name(str(s)) for s in segs}
+  assert filter_files_to_add_to_archive(
+    [str(segs[0]), str(grown), dot_grown], authority
+  ) == [str(grown), dot_grown], "grown raw needs append under both spellings"
+  _append_member(tar_path, grown)
+  authority = get_mutable_tar_authority_member_map(tar_path)
+  assert authority[get_tar_member_name(str(grown))] == grown.stat().st_size
+  assert (
+    filter_files_to_add_to_archive([str(grown), dot_grown], authority) == []
+  )
+  assert get_verified_files_to_remove(
+    [str(segs[0]), str(grown), dot_grown], authority
+  ) == [str(segs[0]), str(grown), dot_grown]
+
+
+@pytest.mark.parametrize("prefix", ["./", "/mnt/old_root/"])
+def test_dot_slash_size_mismatch_day_closes_end_to_end(
+  tmp_path, monkeypatch, prefix
+):
+  """hpcperfstats01 2026-10-17: ``./`` member split stalled day close.
+
+  Also run with the old copy under another absolute root (DE-37).
+
+  Real ``_run_day_close_job`` + coordinator + tar/zst and the real append
+  worker body (clone append): day close hands the grown raw to ingest, the
+  append worker appends it, the day reseals, every raw is deleted, and the
+  sealed archive holds the full-size member (INV-COPY).
+  """
+  import hpcperfstats.dbload.sync_timedb as st
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
+
+  day = datetime(2026, 10, 17)
+  _tar_path, zst, segs, grown = _dot_slash_production_day(tmp_path, day, prefix)
+  sizes = {get_tar_member_name(str(s)): s.stat().st_size for s in segs}
+  monkeypatch.setattr(
+    cfg, "get_host_name_ext", lambda: "cluster.integration.test"
+  )
+  monkeypatch.setattr(cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    cfg, "get_daily_archive_dir_path", lambda: str(tmp_path / "daily")
+  )
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_ingest_readiness."
+    "stats_file_head_ingested_in_db",
+    lambda _p: True,
+  )
+  monkeypatch.setattr(st, "_path_ready_via_file_complete_mark", lambda _p: True)
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+
+  def _day_close():
+    return qo._run_day_close_job(
+      "2026-10-17",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+    )
+
+  assert _day_close() == "yielded", "grown raw handed to ingest/append"
+  appended = st.archive_stats_files((zst, [str(grown)]))
+  assert appended.ok and not (appended.soft_requeue or appended.gate_skipped)
+  outcomes = []
+  for _claim in range(6):
+    outcomes.append(_day_close())
+    if outcomes[-1] == "complete":
+      break
+  assert outcomes[-1] == "complete", outcomes
+  assert not any(s.exists() for s in segs), "every raw deleted"
+  members = validate_sealed_daily_archive_for_raw_removal(zst, log_fn=None)[1]
+  assert members and all(
+    members.get(name) == size for name, size in sizes.items()
+  ), "sealed archive holds every raw at its full size (INV-COPY)"
+  assert grown.name in {os.path.basename(n) for n in members}
+
+
+def test_done_sealed_only_day_restores_and_reseals_late_unarchived_raw(
+  tmp_path, monkeypatch
+):
+  """01 2026-11-26: late raw in no archive (08-06 files modified 09-12).
+
+  Real ``_run_day_close_job`` + coordinator + the real append worker body:
+  a ``done`` sealed-only day adopts its unlisted raw (one sealed, one late
+  and absent from the zst), hands the late raw to ingest/append, the append
+  restores the sealed day and appends it, then day close reseals, deletes
+  both raw and returns ``complete`` with both members sealed at full size.
+  """
+  import hpcperfstats.dbload.sync_timedb as st
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_sealed_member_map import (
+    sealed_members_lookup,
+  )
+
+  day = datetime(2026, 8, 6)
+  sealed_seg, late = _two_segments(tmp_path, day)
+  tar_path, zst = _seal_day(tmp_path, sealed_seg, day)
+  os.remove(tar_path)
+  late_ts = int(datetime(2026, 9, 12).timestamp())
+  os.utime(late, (late_ts, late_ts))
+  sizes = {
+    get_tar_member_name(str(s)): s.stat().st_size for s in (sealed_seg, late)
+  }
+  state = _make_coordinator(tmp_path)._get_or_create_day(tar_path)
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    _save_manifest(state._manifest_path, state._manifest)
+  monkeypatch.setattr(
+    cfg, "get_host_name_ext", lambda: "cluster.integration.test"
+  )
+  monkeypatch.setattr(cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    cfg, "get_daily_archive_dir_path", lambda: str(tmp_path / "daily")
+  )
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_ingest_readiness."
+    "stats_file_head_ingested_in_db",
+    lambda _p: True,
+  )
+  monkeypatch.setattr(st, "_path_ready_via_file_complete_mark", lambda _p: True)
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  handed = []
+  real_handoff = qo._handoff_retryable_paths_to_ingest
+
+  def _spy_handoff(client, tar, paths, **kwargs):
+    paths = list(paths)
+    handed.extend(paths)
+    return real_handoff(client, tar, paths, **kwargs)
+
+  monkeypatch.setattr(qo, "_handoff_retryable_paths_to_ingest", _spy_handoff)
+
+  def _day_close():
+    return qo._run_day_close_job(
+      "2026-08-06",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+    )
+
+  before = [_day_close() for _claim in range(3)]
+  assert "complete" not in before and str(late) in handed, before
+  assert late.exists() and not sealed_seg.exists()
+  appended = st.archive_stats_files((zst, [str(late)]))
+  assert appended.ok and not (appended.soft_requeue or appended.gate_skipped)
+  outcomes = []
+  for _claim in range(8):
+    outcomes.append(_day_close())
+    if outcomes[-1] == "complete":
+      break
+  assert outcomes[-1] == "complete", outcomes
+  assert not (sealed_seg.exists() or late.exists()), "both raw deleted"
+  members = sealed_members_lookup(zst, request_rebuild=False)
+  assert members is not None and all(
+    members.get(name) == size for name, size in sizes.items()
+  ), "sealed map holds both raw at full size (INV-COPY)"

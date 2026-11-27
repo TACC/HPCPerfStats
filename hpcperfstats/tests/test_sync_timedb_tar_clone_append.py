@@ -31,9 +31,6 @@ from hpcperfstats.dbload.lib import (
   sync_timedb_progress_io as pio,
   sync_timedb_tar_clone_append as tca,
 )
-from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-  get_tar_member_name,
-)
 
 GIB = 1 << 30
 
@@ -87,7 +84,7 @@ def test_clone_append_roundtrip_gnu_and_tarfile(tmp_path):
   rc, lines = _gnu_list(tar)
   assert rc == 0 and len(lines) == 7
   assert _tarfile_sizes(tar) == {
-    get_tar_member_name(p): os.path.getsize(p) for p in paths
+    p.lstrip("/"): os.path.getsize(p) for p in paths
   }
   out = tmp_path / "x"
   out.mkdir()
@@ -230,9 +227,9 @@ def test_clone_append_giant_mixed_format(tmp_path):
   assert rc == 0 and len(lines) == 2
   assert str(9 * GIB + 12345) in lines[1]
   sizes = _tarfile_sizes(tar)
-  assert sizes[get_tar_member_name(str(giant))] == 9 * GIB + 12345
+  assert sizes[str(giant).lstrip("/")] == 9 * GIB + 12345
   with tarfile.open(tar, "r:") as tf:
-    m = tf.getmember(get_tar_member_name(str(giant)))
+    m = tf.getmember(str(giant).lstrip("/"))
     with tf.extractfile(m) as fh:
       fh.seek(9 * GIB)
       assert fh.read(10) == b"tail-bytes"
@@ -507,7 +504,7 @@ def test_salvage_cuts_truncated_clone_written_tar_cleanly(tmp_path):
   res = helpers.salvage_truncated_tar_prefix(str(tar), log_fn=None)
   assert res.status == "salvaged", res
   with tarfile.open(tar, "r:") as tf:  # strict reader: no dangling pax header
-    assert [m.name for m in tf] == [get_tar_member_name(p) for p in paths[:2]]
+    assert [m.name for m in tf] == [p.lstrip("/") for p in paths[:2]]
   assert helpers.verify_tar_archive_readable(str(tar))
   # The salvaged tar takes further clone appends.
   res2 = tca.clone_append(str(tar), [paths[2]])

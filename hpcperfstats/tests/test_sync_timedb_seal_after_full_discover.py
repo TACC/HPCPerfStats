@@ -195,7 +195,9 @@ def _day_raw(tmp_path, monkeypatch, sealed=None):
   monkeypatch.setattr(
     ah, "build_day_scoped_closed_raw_by_gz", _no_shared_collect
   )
-  members = {str(in_zst).lstrip("/"): 3} if sealed is None else sealed
+  members = (
+    {ah.get_tar_member_name(str(in_zst)): 3} if sealed is None else sealed
+  )
   monkeypatch.setattr(
     "hpcperfstats.dbload.lib.sync_timedb_sealed_member_map.sealed_members_lookup",
     lambda *_a, **_k: members,

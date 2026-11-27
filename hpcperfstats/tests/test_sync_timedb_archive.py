@@ -103,18 +103,18 @@ from hpcperfstats.dbload.sync_timedb_archive import (
 
 
 def test_get_tar_member_name_absolute_path():
-  """Path with leading slash returns path without leading slash."""
-  assert get_tar_member_name("/var/stats/cn001/123") == "var/stats/cn001/123"
+  """An absolute raw path keys by its ``<node>/<epoch>`` components."""
+  assert get_tar_member_name("/var/stats/cn001/123") == "cn001/123"
 
 
 def test_get_tar_member_name_relative_path():
-  """Relative path unchanged (no leading slash)."""
-  assert get_tar_member_name("var/stats/cn001/123") == "var/stats/cn001/123"
+  """A relative member name keys the same as its absolute raw path."""
+  assert get_tar_member_name("var/stats/cn001/123") == "cn001/123"
 
 
 def test_get_tar_member_name_multiple_slashes():
-  """Only leading slash is stripped."""
-  assert get_tar_member_name("/a/b/c") == "a/b/c"
+  """Repeated and leading slashes do not change the key."""
+  assert get_tar_member_name("//a//b/c") == "b/c"
 
 
 # --- resolve_preferred_archive_path_for_read ---
@@ -174,7 +174,7 @@ def test_gnu_tf_member_map_despite_fail_parses_listing(tmp_path):
     inner.write_text("abc")
     tf.add(str(inner), arcname="hpcperfstats/archive/host/1787501621")
   members = helpers._gnu_tf_file_member_map_despite_fail(str(tar_path))
-  assert "hpcperfstats/archive/host/1787501621" in members
+  assert members == {"host/1787501621": 0}
 
 
 def test_repair_truncated_tar_missing_eof_blocks_in_place(

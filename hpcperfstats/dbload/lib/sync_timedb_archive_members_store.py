@@ -34,6 +34,9 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   load_persistence_document,
   save_persistence_document,
 )
+from hpcperfstats.dbload.lib.sync_timedb_sealed_member_map import (
+  members_by_key,
+)
 from hpcperfstats.dbload.lib.sync_timedb_store_lock_timing import TimedRLock
 
 
@@ -1428,9 +1431,9 @@ class SyncTimedbArchiveMembersStore:
           if not isinstance(body, dict) or not body.get("complete"):
             continue
           members = body.get("members") or {}
-          members_ready[str(identity)] = {
-            str(member): int(size) for member, size in members.items()
-          }
+          # Day files written before members were keyed by <node>/<epoch>
+          # (get_tar_member_name) hold full names; re-key on load.
+          members_ready[str(identity)] = members_by_key(members)
       shard = self._shard(day)
       with shard.lock:
         if skip_payload is not None:
