@@ -47,8 +47,6 @@ Ingest is **never** gated on day-close completion. Day-close waits for filesyste
 
 - `run_sync_timedb_supervisor_loop`, `ArchiveJanitor` tick/debt/heap, `handoff_priority_paths`, oldest/youngest **chunk gate**, dual CLI `backlog`/`current`, proximity heartbeat, janitor candidate-report stall watchdogs as coordinator, post-chunk hygiene scheduler.
 
-Historical soak signatures for those names live under **Historical B-era sections** in `docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md` — not production law.
-
 ## Overlap
 
 - Coordinator laws: **`sync-timedb-queue-orchestrator-contract.mdc`**

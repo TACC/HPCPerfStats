@@ -44,4 +44,3 @@ Bare `log_print("INFO: populate empty recover deferred … reason=archive_append
 - `sync-timedb-ingest-pool-io-coordination.mdc` — populate wait / append-inflight defer contracts; required-test list.
 - `duplicate-threshold-helper-mandate.mdc` — three+ copy rate-limit blocks → shared `_rate_limited_day_info_log`.
 - `compose-operator-terminal-commands.mdc` — do not ask operators for unfiltered pipeline firehose; rate-limited signatures keep greps usable.
-- `docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md` — RC-ER: expect rate-limited `empty recover deferred` with optional `suppressed_n=`, not a continuous stream.

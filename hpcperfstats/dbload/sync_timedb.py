@@ -5744,7 +5744,7 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> CloneAppendResult:
     try:
       return clone_append(tar_path, present, log_fn=log_print)
     except ProgressIdleError as exc:
-      # Operator grep token (OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md).
+      # Operator grep token (docs/reference/sync-timedb-stall-signatures.md).
       raise RuntimeError(
         f"tar append idle stall path={tar_path} idle_s={getattr(exc, 'idle_s', None)}",
       ) from exc

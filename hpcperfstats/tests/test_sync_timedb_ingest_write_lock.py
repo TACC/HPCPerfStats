@@ -142,7 +142,7 @@ def test_write_stats_payload_resets_connection_after_bulk_create_error(
 
 def test_operator_docs_have_no_writer_shard_tokens():
   operator = (
-    _CHECKOUT / "docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md"
+    _CHECKOUT / "docs/reference/sync-timedb-stall-signatures.md"
   ).read_text(
     encoding="utf-8",
   )

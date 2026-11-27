@@ -40,4 +40,3 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 - Coordinator laws: **`sync-timedb-queue-orchestrator-contract.mdc`**
 - Day-close A laws: **`sync-timedb-archive-janitor-contract.mdc`**
 - Battery: **`sync-timedb-change-regression-gate.mdc`**
-- Historical B-era soak greps: `docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`

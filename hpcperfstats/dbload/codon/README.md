@@ -41,4 +41,4 @@ Benches/inventory stay under `tests/experiments/codon/`.
 | `VERSION` | Pinned Codon release (must match Dockerfile `CODON_VERSION`) |
 
 Contract: `hpcperfstats/cursor-rules/codon-sync-timedb-parse-contract.mdc`.
-Operator note: `docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md` (Codon parse bridge).
+Operator note: `docs/how-to/operate/verify-sync-timedb.md` (Verify the Codon parse bridge).

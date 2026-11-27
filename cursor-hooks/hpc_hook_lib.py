@@ -1918,7 +1918,8 @@ def sync_timedb_plan_todo_issues(plan_markdown: str) -> list[str]:
   if not SYNC_TIMEDB_PLAN_VERIFY_TODO_RE.search(plan_markdown):
     issues.append(
       "sync_timedb plan YAML must include operator-stall-verify-doc todo "
-      "(OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md; sync-timedb-change-regression-gate.mdc)",
+      "(docs/how-to/operate/verify-sync-timedb.md; "
+      "sync-timedb-change-regression-gate.mdc)",
     )
   return issues
 

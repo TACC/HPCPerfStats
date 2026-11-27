@@ -21,7 +21,7 @@ Solve one task on a running site or in the checkout.
 
 - [Upgrade the stack](how-to/operate/upgrade-the-stack.md)
 - [Recover RabbitMQ](how-to/operate/recover-rabbitmq.md)
-- Verify `sync_timedb`
+- [Verify `sync_timedb`](how-to/operate/verify-sync-timedb.md)
 - [Migrate to PostgreSQL 18](how-to/operate/migrate-to-postgresql-18.md)
 
 ### Develop in the checkout
@@ -43,7 +43,7 @@ Look up code, configuration and contract facts.
 - [Compose services](reference/compose-services.md)
 - `sync_timedb` state machine
 - `sync_timedb` threads and processes
-- `sync_timedb` stall signatures
+- [`sync_timedb` stall signatures](reference/sync-timedb-stall-signatures.md)
 - `update_metrics` state machine
 - [Test layout](reference/test-layout.md)
 - Web UI metrics

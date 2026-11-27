@@ -1,6 +1,6 @@
 # sync_timedb parallelism model
 
-This document describes how `sync_timedb` uses **in-process thread pools**, **day_close thread executors**, **ephemeral burst thread pools**, and **subprocess CLI** (zstd/tar). Production coordinator is **`run_sync_timedb_queue_orchestrator`** (`sync-timedb-queue-orchestrator-contract.mdc`). Complements operator stall verification (`OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`).
+This document describes how `sync_timedb` uses **in-process thread pools**, **day_close thread executors**, **ephemeral burst thread pools**, and **subprocess CLI** (zstd/tar). Production coordinator is **`run_sync_timedb_queue_orchestrator`** (`sync-timedb-queue-orchestrator-contract.mdc`). Complements operator stall verification (`docs/how-to/operate/verify-sync-timedb.md`).
 
 **Throughput campaign:** interpreted baseline, bottleneck ranking, and experiment backlog live in [`SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md`](SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md). Do not treat the production ingest width as final until that campaign’s scaling artifact and durable-throughput/lock-wait evidence exist.
 
@@ -99,7 +99,7 @@ Prewarm summary token **`populate_recovering`** indicates transient fnctl recove
 
 ## Operator stall signals
 
-Historical exit **124** / `Pool imap stalled` / `MultiprocessingWorkerExitError` text is spawn-pool archaeology. Live `sync_timedb` census is job-store / members-store sidecars plus `[thread:ingest-pool]` / `[thread:populate-pool]` titles. See `OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`.
+Historical exit **124** / `Pool imap stalled` / `MultiprocessingWorkerExitError` text is spawn-pool archaeology. Live `sync_timedb` census is job-store / members-store sidecars plus `[thread:ingest-pool]` / `[thread:populate-pool]` titles. See `docs/reference/sync-timedb-stall-signatures.md`.
 
 ## Normalization policy
 

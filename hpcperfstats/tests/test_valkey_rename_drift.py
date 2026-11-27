@@ -40,7 +40,6 @@ _ALLOWED_PATHS = {
   # Live test asserts the compat field is not surfaced.
   "hpcperfstats/site/lib/machine/tests/test_valkey_cache_live.py",
   # Dated incident / audit records.
-  "docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md",
   "docs/artifacts/update_metrics_stall_audit_2026-05-12.md",
   "docs/SECURITY_AUDIT.md",
   "docs/SECURITY_REMEDIATION_BACKLOG.md",

@@ -235,7 +235,7 @@ It logs to `test_runs/day-close-loop-regression-battery-<timestamp>.log` and cov
 - fd `-X` GNU stat discover, day-raw-removal samples (including ghost-deleted retry), and the day-close hot-path `populate_active` owner vs complete-map (`test_sync_timedb_day_close_cooperation.py`).
 - gz-only migrate nested lock (`already_locked` / `nested_lock` in `test_sync_timedb_archive.py`) and `--jid` ingest-only (`test_sync_timedb_jid.py`).
 
-The site verification that follows (T0/T1/T2 and the `--jid` smoke) is in [`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`](../../OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md).
+The site verification that follows (T0/T1/T2 and the `--jid` smoke) is in [Verify sync_timedb after a deploy](../operate/verify-sync-timedb.md).
 `sync_timedb.py --jid <JID>` is ingest-only (+/-1h pad around job start and end, plus one earlier and one later raw stats file per host), with no archival or day close; its host unit test:
 
 ```bash

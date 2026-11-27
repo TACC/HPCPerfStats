@@ -128,7 +128,7 @@ exclude_types = frozenset(
 )
 
 # Default host_proc KEYS matching monitor/src/proc.c. Proc-field ingest is a
-# T0 smoke contract (docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md), not a stall fix.
+# T0 smoke contract (docs/how-to/operate/verify-sync-timedb.md), not a stall fix.
 HOST_PROC_KEYS = (
   "uid",
   "vm_peak",

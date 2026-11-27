@@ -117,7 +117,7 @@ repos:
         name: mdformat (staged Markdown, .mdformat.toml)
         entry: bash -c '../.venv/bin/mdformat "$@"' --
         language: system
-        files: &md_lint_files ^(README\.md|docs/reference/documentation-style\.md|docs/index\.md|docs/tutorials/install-hpcperfstats\.md|docs/reference/(compose-services|pipeline-configuration)\.md|docs/explanation/(architecture|pipeline-concurrency)\.md|docs/how-to/develop/(run-tests|run-sync-timedb-benchmarks|diagnose-update-metrics)\.md|docs/reference/(test-layout|release-notes)\.md|docs/how-to/operate/(upgrade-the-stack|recover-rabbitmq|migrate-to-postgresql-18)\.md)$
+        files: &md_lint_files ^(README\.md|docs/reference/documentation-style\.md|docs/index\.md|docs/tutorials/install-hpcperfstats\.md|docs/reference/(compose-services|pipeline-configuration)\.md|docs/explanation/(architecture|pipeline-concurrency)\.md|docs/how-to/develop/(run-tests|run-sync-timedb-benchmarks|diagnose-update-metrics)\.md|docs/reference/(test-layout|release-notes)\.md|docs/how-to/operate/(upgrade-the-stack|recover-rabbitmq|migrate-to-postgresql-18|verify-sync-timedb)\.md|docs/reference/sync-timedb-stall-signatures\.md)$
         exclude: &md_lint_exclude ^(docs/history/|docs/measurements/|test_runs/|docs/MONITOR_VARIABLES\.md$|monitor/docs/METRICS_REFERENCE\.md$)|(^|/)node_modules/
         pass_filenames: true
       - id: pymarkdown

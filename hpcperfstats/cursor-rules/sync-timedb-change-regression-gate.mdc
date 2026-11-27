@@ -15,7 +15,7 @@ Long-horizon ingest stalls (6h+ on backlog catch-up) are **not** caught by a 15-
 When the task touches ingest stall, day-close, the in-process job store, or archive finalize:
 
 1. Read **`sync-timedb-queue-orchestrator-contract.mdc`** and the live plan [sync-timedb-queue-redesign](.cursor/plans/sync-timedb-queue-redesign.plan.md) **Execution slices** (do not re-litigate A vs B).
-2. Read [`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`](../../docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md) **Queue orchestrator era** T0/T1/T2 (not T0-only on backlog sites). Historical B-era sections are soak archaeology only.
+2. Read [`docs/how-to/operate/verify-sync-timedb.md`](../../docs/how-to/operate/verify-sync-timedb.md) T0/T1/T2 (not T0-only on backlog sites) and the signatures in [`docs/reference/sync-timedb-stall-signatures.md`](../../docs/reference/sync-timedb-stall-signatures.md).
 
 ## Mandatory regression battery
 
@@ -46,7 +46,7 @@ Retired B modules (`test_sync_timedb_supervisor.py`, `test_sync_timedb_janitor.p
 
 Ship and keep enabled on catch-up deployments:
 
-- Operator census = `{archive_dir}/.sync_timedb_job_store.json`, `{archive_dir}/.sync_timedb_archive_members/{day}.json`, and `[thread:populate-pool]` titles (see OPERATOR doc). Empty sidecars ≠ caught up — reconstruct from disk+DB.
+- Operator census = `{archive_dir}/.sync_timedb_job_store.json`, `{archive_dir}/.sync_timedb_archive_members/{day}.json`, and `[thread:populate-pool]` titles (`docs/reference/sync-timedb-stall-signatures.md`). Empty sidecars ≠ caught up — reconstruct from disk+DB.
 - Do **not** port janitor candidate reports / `ingest_stall_watchdog` / chunk-gate stalls as coordinator products (B-11).
 
 ## Plan authoring (sync_timedb plans)
@@ -54,7 +54,7 @@ Ship and keep enabled on catch-up deployments:
 Per **`plan-creation-contract.mdc`**, every live plan touching `sync_timedb` YAML must include todos:
 
 - `run-full-battery` (or `regression-battery-script`) — run Phase 1b battery pre/post fix; log to `test_runs/`
-- `operator-stall-verify-doc` (or equivalent) — T1/T2 verify on backlog sites; cite `OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`
+- `operator-stall-verify-doc` (or equivalent) — T1/T2 verify on backlog sites; cite `docs/how-to/operate/verify-sync-timedb.md`
 
 Hooks validate plan disk YAML when `CreatePlan` triggers sync_timedb paths (`sync_timedb_plan_todo_issues`).
 
@@ -66,7 +66,7 @@ After a failed ``proc_data`` / ``host_data`` ``bulk_create`` in ``_write_stats_p
 2. **Reset** the Django/psycopg connection (``rollback`` + ``close_old_connections``) before ``_insert_*_individually``; a mid-command socket otherwise yields ``another command is already in progress`` on every remaining row.
 3. On InterfaceError / desync during a row ``save``, reset **once**, retry that row once, then **abort** the file write path — do not log N identical desync lines for the rest of the frame.
 
-Regression: ``test_write_stats_payload_timeout_not_swallowed_into_single_insert``, ``test_write_stats_payload_resets_connection_after_bulk_create_error``, ``test_insert_rows_individually_desync_resets_once_then_aborts``. Post-deploy T0: see ``docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`` (InterfaceError spam section).
+Regression: ``test_write_stats_payload_timeout_not_swallowed_into_single_insert``, ``test_write_stats_payload_resets_connection_after_bulk_create_error``, ``test_insert_rows_individually_desync_resets_once_then_aborts``. Post-deploy T0: see ``docs/how-to/operate/verify-sync-timedb.md`` (Troubleshooting, cascading already in progress inserts).
 
 ## Between-chunk pending reconcile (handoff + TTL)
 

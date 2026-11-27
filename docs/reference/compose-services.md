@@ -394,7 +394,7 @@ Compose `stop_grace_period` per service:
 `db` gets 30m before SIGKILL, and so do `db_pg18` and `rabbitmq`.
 A shorter pipeline override SIGKILLs mid-drain.
 `scripts/rebuild_pipeline.sh` stop timeouts match: `HPCPERFSTATS_PIPELINE_STOP_TIMEOUT` defaults to 480 and `HPCPERFSTATS_WEB_STOP_TIMEOUT` stays 30.
-SIGTERM-driven exit 143 is the T0 expectation in [`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`](../OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md) when the wall clock covers the drain.
+SIGTERM-driven exit 143 is the T0 expectation in [Verify sync_timedb after a deploy](../how-to/operate/verify-sync-timedb.md#run-t0) when the wall clock covers the drain.
 
 ## Logging
 

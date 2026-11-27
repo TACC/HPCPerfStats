@@ -38,7 +38,9 @@ def test_job_store_kind_native_queue_api():
 def test_operator_census_uses_disk_sidecars_and_thread_titles():
   """Live T0 census must use job-store sidecars and populate thread titles."""
   root = Path(__file__).resolve().parents[2]
-  stall = (root / "docs" / "OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md").read_text()
+  stall = (
+    root / "docs" / "reference" / "sync-timedb-stall-signatures.md"
+  ).read_text()
   assert ".sync_timedb_job_store.json" in stall
   assert "[thread:populate-pool]" in stall
   assert "job:v1:queue:ingest" not in stall

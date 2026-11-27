@@ -168,7 +168,7 @@ Defences against OOM, outermost first:
 
 `sync_ingest_pool_processes` is also the Codon worker count, one worker per ingest thread, each with its own Codon runtime and Boehm GC; threads sharing one runtime would serialize on Boehm's allocation lock.
 Do not raise it above 64 (toward 96 or 128) without watching census `job_store_wait_s` / `job_store_hold_s` and confirming `[thread:job-store-persist]` owns sidecar I/O.
-Parse width 128 on a deep ZSET can futex-stall claim and ACK when wait tokens dominate ([`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`](../OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md)).
+Parse width 128 on a deep ZSET can futex-stall claim and ACK when wait tokens dominate ([Stall patterns](../reference/sync-timedb-stall-signatures.md#stall-patterns)).
 
 On the dev host (w64, 100g cgroup, 1 MiB windows), 32 workers peaked at 29.0 GiB combined worker RSS and 56.9 GiB cgroup, and 64 workers at 35.5 GiB and 64.7 GiB, with no OOM; both were DB-bound at about 155-160k `tup_inserted`/s.
 Worker RSS counts toward the tree RSS roof, so on Horizon (51.2 GiB roof) lower the width to 32 if ingest admit defers.
@@ -213,7 +213,7 @@ Dev soaks (128 GiB cgroup, width 64, release off):
 - Uncapped: 275 MiB/min, peaking at 42.8 GiB.
 
 `rss_release` has not fired in any soak (RSS fell under the roof when the first file cohort completed); unit tests cover it.
-On a site, filter the full pipeline log for `rss_hold\|rss_release` ([`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`](../OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md)).
+On a site, filter the full pipeline log for `rss_hold\|rss_release` ([Memory admission lines](../reference/sync-timedb-stall-signatures.md#memory-admission-lines)).
 
 ### In-flight raw-byte admit
 

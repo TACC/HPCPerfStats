@@ -66,4 +66,4 @@ flag or deny edits until it was Read this turn (`RouterEntry["docs"]` in
 - **`sync-timedb-db-before-archive-contract.mdc`** — DB proof before append or raw removal.
 - **`sync-timedb-persistence-contract.mdc`** — sidecar registry and versioning.
 - **`sync-timedb-change-regression-gate.mdc`** — regression battery for every sync_timedb change.
-- **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`** — operator-side dead-end verification.
+- **`docs/how-to/operate/verify-sync-timedb.md`** — operator-side dead-end verification.
