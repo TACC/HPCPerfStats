@@ -5,10 +5,14 @@ When the extension is missing, unloadable, flips the process GIL on, or returns
 a fingerprint mismatch sentinel, callers keep the CPython
 ``IncrementalStatsParser`` path.
 
-Production Codon entry is **in-process** with ``N`` sticky slots (per-slot
-locks). ``N`` is ``sync_ingest_pool_processes`` from the INI, capped at
-``MAX_CODON_SLOTS``. Popen stdio workers are not the pipeline path. No
-process-wide serialize lock.
+``N`` is ``sync_ingest_pool_processes`` from the INI, capped at
+``MAX_CODON_SLOTS``. On the free-threaded build with the baked ``.so``,
+file-owned parses run in ``N`` Codon worker processes
+(``codon_mode=process_pool``, ``_use_codon_file_process_pool``) because
+threads sharing one Codon runtime contend on Boehm's allocation lock.
+Line-batch parses stay in-process on ``N`` sticky slots with per-slot locks;
+``HPCPERFSTATS_CODON_PROCESS_POOL=1`` routes them through the workers too
+(tests only). No process-wide serialize lock.
 
 Attributes:
   CODON_CARRY_BRIDGE_MAX_KEY: Reserved carry key holding the INI sentinel
@@ -16,7 +20,8 @@ Attributes:
   logger: Module logger for import/runtime Codon bridge diagnostics.
   CODON_EXT_ENV: Legacy env override for extension module import name (tests).
   CODON_FORCE_DISABLE_ENV: When set to a truthy value, always use CPython.
-  CODON_PROCESS_POOL_ENV: When ``1``/true, opt in to legacy Popen workers (tests).
+  CODON_PROCESS_POOL_ENV: When ``1``/true, line-batch parses also use the
+    Codon worker processes (tests).
   CODON_PARSE_DIR: Baked pyext directory (``/opt/hpcperfstats/codon_parse``).
   MAX_CODON_SLOTS: Hard cap matching Codon kernel banks (128).
   DEFAULT_CONTEXT_POOL_FRACTION: Default stripe fraction (1.0).
@@ -27,7 +32,8 @@ Attributes:
   _slot_locks: Per-slot ``threading.Lock`` list (in-process / test path).
   _slot_held: Current native Codon hold count (census).
   _slot_held_lock: Guards ``_slot_held``.
-  _codon_workers: Popen Codon stdio servers for FT baked ``.so`` path.
+  _codon_workers: Codon worker processes (stdio servers) for the FT baked
+    ``.so`` path.
   _codon_worker_cv: Condition guarding worker checkout / busy flags.
   _codon_atexit_registered: Whether ``atexit`` kill-only shutdown is registered.
   _codon_load_lock: Serializes the first Codon import and bank warmup.

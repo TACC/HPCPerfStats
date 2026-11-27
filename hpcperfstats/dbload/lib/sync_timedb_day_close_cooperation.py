@@ -438,7 +438,8 @@ def log_janitor_day_close_yield(
 
 class JanitorDeferTracker:
   """
-  Per-tar defer streak for starvation cap (in-memory on ArchiveJanitor).
+  Per-tar defer streak and backoff for day_close jobs (in-memory, one per
+  queue orchestrator process: ``_DAY_CLOSE_YIELD_BACKOFF``).
 
   Attributes:
     _by_tar: Attribute.

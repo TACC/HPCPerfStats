@@ -1887,8 +1887,8 @@ def merge_maintenance_skip_daily_tar_paths(
   Union caller skip paths with days that have unmapped closed raw on disk.
 
   Scheduled/startup maintenance must apply the same unmapped-closed-raw gate as
-  ArchiveJanitor ``TAR_DROP`` ticks so a day cannot lose its ``.tar`` while
-    closed raw remains.
+  the day_close ``.tar`` drop so a day cannot lose its ``.tar`` while closed
+  raw remains.
 
   Args:
     skip_daily_tar_paths (bool): Whether to enable skip daily tar paths.
