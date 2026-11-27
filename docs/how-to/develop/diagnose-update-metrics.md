@@ -3,7 +3,7 @@
 This page shows how to time, check and troubleshoot the `update_metrics` scheduler from the checkout.
 It is for developers and operators; use it when metrics fall behind, a pass stalls, or a change to the columnar metrics path needs a parity check.
 
-The scheduler states, listing phases and census format are in [`docs/UPDATE_METRICS_STATE_MACHINE.md`](../../UPDATE_METRICS_STATE_MACHINE.md); the INI keys are in [Pipeline configuration](../../reference/pipeline-configuration.md#update_metrics-pools).
+The scheduler states, listing phases and census format are in the [update_metrics state machine](../../reference/update-metrics-state-machine.md); the INI keys are in [Pipeline configuration](../../reference/pipeline-configuration.md#update_metrics-pools).
 
 ## Prerequisites
 
@@ -150,7 +150,7 @@ When listing is finished and only deferred not-ready jids remain, the pass ends 
 
 ## Related
 
-- [`docs/UPDATE_METRICS_STATE_MACHINE.md`](../../UPDATE_METRICS_STATE_MACHINE.md)
+- [update_metrics state machine](../../reference/update-metrics-state-machine.md)
 - [Pipeline configuration](../../reference/pipeline-configuration.md)
 - [Pipeline concurrency](../../explanation/pipeline-concurrency.md#update_metrics-memory-admission)
 - [Run tests](run-tests.md)

@@ -30,7 +30,7 @@ Solve one task on a running site or in the checkout.
 - [Run `sync_timedb` benchmarks](how-to/develop/run-sync-timedb-benchmarks.md)
 - [Diagnose `update_metrics`](how-to/develop/diagnose-update-metrics.md)
 - Build Codon kernels
-- Add a CPU type
+- [Add a CPU type](how-to/develop/add-a-cpu-type.md)
 
 ## Reference
 
@@ -41,13 +41,13 @@ Look up code, configuration and contract facts.
 - [Monitor raw data format](../monitor/docs/RAW_DATA_FORMAT.md)
 - [Pipeline configuration](reference/pipeline-configuration.md)
 - [Compose services](reference/compose-services.md)
-- `sync_timedb` state machine
-- `sync_timedb` threads and processes
+- [`sync_timedb` state machine](reference/sync-timedb-state-machine.md)
+- [`sync_timedb` threads and processes](reference/sync-timedb-threads-and-processes.md)
 - [`sync_timedb` stall signatures](reference/sync-timedb-stall-signatures.md)
-- `update_metrics` state machine
+- [`update_metrics` state machine](reference/update-metrics-state-machine.md)
 - [Test layout](reference/test-layout.md)
 - Web UI metrics
-- Analysis architectures
+- [Analysis architectures](reference/analysis-architectures.md)
 - Security posture
 - [Release notes](reference/release-notes.md)
 - Monitor variables consumer map
@@ -66,7 +66,7 @@ Understand the design and its trade-offs.
 Records describe what was true at a date and are not maintained.
 
 - [Measurements](measurements/): paper evidence for monitor overhead.
-- History: dated reviews, campaigns and rollouts.
+- [History](history/): dated reviews, campaigns, rollouts and incidents.
 - [Plan template](plans/PLAN_TEMPLATE.md): the template for live plans.
 
 [diataxis]: https://diataxis.fr/

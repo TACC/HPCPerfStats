@@ -3106,7 +3106,7 @@ def test_domain_rule_read_issues_last_turn_ignores_prior_turn_edit():
   assert any("read after first edit" in item for item in full_issues)
 
 
-STATE_DOC = "docs/SYNC_TIMEDB_STATE_MACHINE.md"
+STATE_DOC = "docs/reference/sync-timedb-state-machine.md"
 STATE_DOC_READ_PATH = f"/repo/HPCPerfStats/{STATE_DOC}"
 ORCHESTRATOR_PATH = "hpcperfstats/dbload/lib/sync_timedb_queue_orchestrator.py"
 
@@ -3150,7 +3150,7 @@ def test_doc_read_issues_requires_read_before_first_edit():
     f"Doc read after first edit/plan: {STATE_DOC}"
   ]
   # A same-named file outside the router doc path does not count.
-  other = _tool_row("Read", "/repo/notes/SYNC_TIMEDB_STATE_MACHINE.md.bak")
+  other = _tool_row("Read", "/repo/notes/sync-timedb-state-machine.md.bak")
   assert lib.doc_read_issues([STATE_DOC], [other, edit]) != []
 
 

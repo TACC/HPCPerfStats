@@ -24,7 +24,7 @@ globs: hpcperfstats/dbload/lib/conf_parser.py,hpcperfstats.ini.example,services-
 
 1. Update every table row, default, formula, log marker and script name on those pages that the change affects. Copy values from code, not memory.
 2. Keep `hpcperfstats.ini.example` and the pages in agreement on keys and defaults (`hpcperfstats-ini-format.mdc`).
-3. If the change also affects `docs/SYNC_TIMEDB_STATE_MACHINE.md`, update that per `sync-timedb-state-machine-contract.mdc`; the concurrency page may summarise but must not contradict it.
+3. If the change also affects `docs/reference/sync-timedb-state-machine.md`, update that per `sync-timedb-state-machine-contract.mdc`; the concurrency page may summarise but must not contradict it.
 4. Run `hpcperfstats/tests/test_core_docs_drift_guard.py` (INI keys/defaults cited on the pages must match `INI_OPTION_DEFAULTS`).
 
 ## Overlap

@@ -208,13 +208,13 @@ The ledger format (columns, kinds and the keep, fix, drop and ask statuses) is i
 
 All tools are pip packages in the host `.venv`, run as `repo: local` pre-commit hooks.
 
-| Tool (version)                                                                                    | Stage                 | Role                                                                                                          |
-| ------------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------- |
-| [mdformat] 0.7.22 with `mdformat-gfm` 1.0.0, `mdformat-gfm-alerts` 2.1.0, `mdformat-tables` 1.0.0 | commit                | Formatter, `--wrap keep --number` from `.mdformat.toml`; keeps one-sentence lines, tables, alerts and fences. |
-| [PyMarkdown] (`pymarkdownlnt` 0.9.42)                                                             | commit, changed files | Structure lint with `.pymarkdown.json`; MD013 on for code only; MD051 and MD059 on.                           |
-| [Vale] 3.28.1 (pip wrapper) with the local `HPC` style                                            | commit                | Prose lint with `.vale.ini`; skips code spans and fences.                                                     |
-| codespell 2.4.3                                                                                   | commit                | Spelling with `.codespellrc`; ignore words `cna` and `unparseable`.                                           |
-| `hpcperfstats/tests/test_docs_layout.py`                                                          | pre-push              | Offline link, anchor and reference-link check, plus naming and page anatomy.                                  |
+| Tool (version)                                                                                    | Stage                 | Role                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [mdformat] 0.7.22 with `mdformat-gfm` 1.0.0, `mdformat-gfm-alerts` 2.1.0, `mdformat-tables` 1.0.0 | commit                | Formatter, `--wrap keep --number` from `.mdformat.toml`; keeps one-sentence lines, tables, alerts and fences.                                                                                   |
+| [PyMarkdown] (`pymarkdownlnt` 0.9.42)                                                             | commit, changed files | Structure lint with `.pymarkdown.json`; MD013 on for code only; MD051 and MD059 on; MD011 off (it misreads code spans such as `str(x)[:5]`); HTML comments allowed for generated-block markers. |
+| [Vale] 3.28.1 (pip wrapper) with the local `HPC` style                                            | commit                | Prose lint with `.vale.ini`; skips code spans and fences.                                                                                                                                       |
+| codespell 2.4.3                                                                                   | commit                | Spelling with `.codespellrc`; ignore words `cna` and `unparseable`.                                                                                                                             |
+| `hpcperfstats/tests/test_docs_layout.py`                                                          | pre-push              | Offline link, anchor and reference-link check, plus naming and page anatomy.                                                                                                                    |
 
 The Vale rules split into two levels:
 

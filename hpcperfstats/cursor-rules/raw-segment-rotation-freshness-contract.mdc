@@ -12,7 +12,7 @@ globs: hpcperfstats/listend.py,hpcperfstats/lib/ingest_rotation.py,hpcperfstats/
 
 1. **Monitor `$` rotation** — the only event that closes a host's raw segment. It fires on daemon start (`monitor.c`), config reload (`monitor_daemon.c`), job end and the `MONITOR_DAEMON_SCHEMA_ROTATE_SEC` timer (6 h, `monitor/src/monitor_daemon.h`). The next rotation time is **not predictable** from the consumer side.
 2. **listend** (`append_monitor_payload_to_archive`, `$` branch) unlinks `current`, keeps the closed digit-epoch file, links a new epoch, and queues one `ingest_rotation:v1:{fqdn}` entry on the recent-host writer thread (`hpcperfstats/lib/ingest_rotation.py`): `{rotated_at, closed_epoch, closed_bytes, new_epoch, closed_last_sample_at}`, `LTRIM 0 7`, TTL `RECENT_HOST_TTL_SECONDS`. `closed_last_sample_at` comes from `read_stats_file_tail_identity` on the closed file **in the writer thread**, never on the consume / archive path. A failed tail read stores `null`. Ack, pause, archive and DB-gate behavior are unchanged (`listend-live-db-ingest-contract.mdc`).
-3. **sync_timedb** skips the active segment (`stats_file_is_active_segment` in `sync_timedb_archive_helpers.py`; state machine in `docs/SYNC_TIMEDB_STATE_MACHINE.md`), so `host_data` can only reach the newest **closed** segment. A lag of up to one rotation period is by design.
+3. **sync_timedb** skips the active segment (`stats_file_is_active_segment` in `sync_timedb_archive_helpers.py`; state machine in `docs/reference/sync-timedb-state-machine.md`), so `host_data` can only reach the newest **closed** segment. A lag of up to one rotation period is by design.
 4. **Freshness consumers** (Admin Monitor ingest coverage in `hpcperfstats/dbload/lib/ingest_coverage.py::derive_host_status`, future readiness checks) derive freshness **only** from that record:
    - `closed_until` = newest `rotated_at`; `open_segment_age_s` = now − `closed_until` (shown, never flagged — no `monitor_quiet` status);
    - `ingest_backlog_s` = `closed_last_sample_at` − newest `host_data.time` (floor 0, whole seconds, both monitor sample clocks);
@@ -33,6 +33,6 @@ globs: hpcperfstats/listend.py,hpcperfstats/lib/ingest_rotation.py,hpcperfstats/
 ## Overlap
 
 - **`listend-live-db-ingest-contract.mdc`** — `$` rotate hardlinks, ack/archive ordering, queued Valkey writer.
-- **`sync-timedb-state-machine-contract.mdc`** + **`docs/SYNC_TIMEDB_STATE_MACHINE.md`** — active-segment skip.
+- **`sync-timedb-state-machine-contract.mdc`** + **`docs/reference/sync-timedb-state-machine.md`** — active-segment skip.
 - **`update-metrics-columnar-codon-contract.mdc`** — the consumed side of the same Admin Monitor section (`FrameIndex._select`).
 - Monitor side: `monitor/cursor-rules/monitor-consumer-side-plan.mdc` cross-links here for `monitor_daemon` rotation edits.

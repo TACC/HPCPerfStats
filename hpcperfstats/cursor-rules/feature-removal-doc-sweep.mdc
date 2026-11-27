@@ -20,7 +20,7 @@ When **removing** a plot module, API field, SPA tab, or analysis surface that us
 | Area | Action |
 |------|--------|
 | `docs/using-the-website-as-a-researcher.md` | Remove or rewrite sections that reference the retired surface; add history row when user-visible. |
-| `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md` | Remove stale capability bullets. |
+| `docs/reference/analysis-architectures.md` | Remove stale capability bullets. |
 | `docs/`, `artifacts/` gap/compliance reports | Remove or update matrices that still list the feature. |
 | Frontend `variableMetadata*.js` | Remove tooltips/labels for retired fields when UI no longer shows them. |
 

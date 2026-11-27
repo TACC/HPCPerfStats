@@ -1,4 +1,4 @@
-"""Drift guard: docs/UPDATE_METRICS_STATE_MACHINE.md covers the backfill lane."""
+"""Drift guard: the update_metrics state doc covers the backfill lane."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 ROOT = os.path.dirname(
   os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
-DOC = os.path.join(ROOT, "docs", "UPDATE_METRICS_STATE_MACHINE.md")
+DOC = os.path.join(ROOT, "docs", "reference", "update-metrics-state-machine.md")
 
 
 @pytest.fixture(scope="module")
@@ -19,7 +19,7 @@ def doc():
 
 
 def test_state_doc_has_backfill_lane_section(doc):
-  assert "### §4.5 Backfill lane" in doc
+  assert "### Section 4.5 Backfill lane" in doc
 
 
 def test_state_doc_lists_backfill_states_and_storage(doc):
@@ -61,7 +61,11 @@ def test_state_doc_knob_defaults_match_conf_parser(doc):
     "metrics_backfill_max_jobs_per_hour",
   ):
     default = cfg.INI_OPTION_DEFAULTS[key]
-    row = next(
-      line for line in doc.splitlines() if line.startswith(f"| `{key}` |")
+    # mdformat pads table cells, so compare stripped cells, not raw text.
+    cells = next(
+      cells
+      for line in doc.splitlines()
+      if (cells := [c.strip() for c in line.strip().strip("|").split("|")])
+      and cells[0] == f"`{key}`"
     )
-    assert f"| {default} |" in row, (key, row)
+    assert cells[1] == default, (key, cells)

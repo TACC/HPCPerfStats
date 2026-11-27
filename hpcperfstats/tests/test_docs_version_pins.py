@@ -17,7 +17,7 @@ PYPROJECT = "pyproject.toml"
 
 VALKEY_UPGRADE_DOC = "docs/how-to/operate/upgrade-the-stack.md"
 TOOLS_README = "hpcperfstats-tools/README.md"
-METRICS_STATE_DOC = "docs/UPDATE_METRICS_STATE_MACHINE.md"
+METRICS_STATE_DOC = "docs/reference/update-metrics-state-machine.md"
 RABBITMQ_RECOVERY_DOC = "docs/how-to/operate/recover-rabbitmq.md"
 PG18_MIGRATION_DOC = "docs/how-to/operate/migrate-to-postgresql-18.md"
 RELEASE_NOTES_DOC = "docs/reference/release-notes.md"
@@ -77,7 +77,7 @@ def test_metrics_contract_version_in_state_doc_matches_code():
     found.group(1)
     for anchor in re.finditer(r"METRICS_CONTRACT_VERSION", doc)
     for found in [
-      re.search(r"currently\s+\**(\d+)", doc[anchor.end() : anchor.end() + 400])
+      re.search(r"\bvalue\s+(\d+)\b", doc[anchor.end() : anchor.end() + 400])
     ]
     if found
   ]

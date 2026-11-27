@@ -205,7 +205,7 @@ Durable plot and detail embeds live in PostgreSQL as `job_plot_artifact` and `jo
 The monitor publishes `host_data.type` strings (from C `stats_type.st_name` and the schema), and analysis code treats those names as the contract.
 Intel IMC ordering, PMC priority, AMD (per-family `amd_x86_uncore_df_{rome,milan,genoa,turin}`, `amd_x86_rapl`; core counters in `host_cpu_hw`), ARM and Grace paths, and roofline nominal peaks must stay aligned with what the monitor can emit.
 
-The canonical Python references (`hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc`, [`hpcperfstats/analysis/README_ARCH_AGNOSTIC.md`](../../hpcperfstats/analysis/README_ARCH_AGNOSTIC.md)):
+The canonical Python references (`hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc`, [Analysis architectures](../reference/analysis-architectures.md)):
 
 - `hpcperfstats/dbload/lib/monitor_naming/canonical.py`: `INTEL_IMC_STATS_TYPES` and related type name sets; `monitor_naming/legacy.py` holds the legacy alias names that ingest and analysis read from older `host_data` rows and archives.
 - `hpcperfstats/analysis/metrics/lib/plot/roofline_peaks.py`: peak tables and inference.

@@ -1,4 +1,4 @@
-"""Drift guard: docs/SYNC_TIMEDB_STATE_MACHINE.md covers every inventoried state."""
+"""Drift guard: the sync_timedb state machine reference lists every state."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 ROOT = os.path.dirname(
   os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
-DOC = os.path.join(ROOT, "docs", "SYNC_TIMEDB_STATE_MACHINE.md")
+DOC = os.path.join(ROOT, "docs", "reference", "sync-timedb-state-machine.md")
 
 
 @pytest.fixture(scope="module")

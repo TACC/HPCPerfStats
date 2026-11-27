@@ -53,7 +53,7 @@ HPCPerfStats ingests **`host_data.type`** values produced by the monitor executa
 2. Extend **`roofline_peaks.py`** `ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS` for new Intel IMC canonical keys.
 3. Add regression tests: `test_monitor_analysis_typename_contract.py`, `test_monitor_naming_resolve.py`, parsing canonical/legacy tests.
 4. Do not edit `HPCPerfStats/monitor/` without explicit approval; analysis must match shipped `.st_name` values.
-5. Keep **`hpcperfstats/analysis/README_ARCH_AGNOSTIC.md`** aligned when behavior-visible.
+5. Keep **`docs/reference/analysis-architectures.md`** (and `docs/how-to/develop/add-a-cpu-type.md` for new CPU types) aligned when behavior-visible.
 
 ## Overlap
 

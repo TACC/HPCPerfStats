@@ -230,7 +230,7 @@ An oversized file admitted alone passes the headroom gate, and the file-cache ga
 
 ## update_metrics memory admission
 
-`update_metrics` admits jobs by estimated memory as well as by count (sliding session admission in [`docs/UPDATE_METRICS_STATE_MACHINE.md`](../UPDATE_METRICS_STATE_MACHINE.md)).
+`update_metrics` admits jobs by estimated memory as well as by count ([admission](../reference/update-metrics-state-machine.md#admission) in the update_metrics state machine).
 Count alone would let a burst of large backfill jobs, each holding its fetch peak, a parked `HANDOFF` frame, a copy shipped to its prewarm worker and the plot objects, drive the process past host memory.
 
 A job's estimate is `estimated_sample_count` x learned rows per host-minute (floored at `METRICS_ROWS_PER_HOST_MINUTE`) x `METRICS_PEAK_BYTES_PER_ROW`, plus the metrics pivot grids, which are linear in host-minutes.
@@ -294,7 +294,7 @@ Each backfill job is one `COPY (FORMAT BINARY)` reader plus the prewarm, like a 
 The lane keeps a scheduler pass open while old jobs remain and relists the fresh days in place every `metrics_scheduler_pass_interval_s`, so the sweep runs continuously at its slot share.
 A bump of `METRICS_CONTRACT_VERSION` makes every job stale, so the whole database is swept again, newest first.
 The once-a-minute `metrics census` line carries `backfill=slots:k/n,...` and the hourly-refreshed `backfill_db(hourly)=stale:,...`.
-Details are in [`docs/UPDATE_METRICS_STATE_MACHINE.md`](../UPDATE_METRICS_STATE_MACHINE.md) section 4.5.
+Details are in [Section 4.5 Backfill lane](../reference/update-metrics-state-machine.md#section-45-backfill-lane).
 
 ## Metrics window-coverage readiness
 
@@ -436,5 +436,5 @@ Parsable-but-unmapped raw still blocks until ingest and archive catch up.
 - [Pipeline configuration](../reference/pipeline-configuration.md)
 - [Compose services](../reference/compose-services.md)
 - [Architecture](architecture.md)
-- [`docs/SYNC_TIMEDB_STATE_MACHINE.md`](../SYNC_TIMEDB_STATE_MACHINE.md)
-- [`docs/UPDATE_METRICS_STATE_MACHINE.md`](../UPDATE_METRICS_STATE_MACHINE.md)
+- [sync_timedb state machine](../reference/sync-timedb-state-machine.md)
+- [update_metrics state machine](../reference/update-metrics-state-machine.md)

@@ -197,7 +197,7 @@ Canonical interpreted baseline and ongoing optimization ledger for durable
 `sync_timedb` backlog drain. Raw run artifacts stay under
 `test_runs/sync_timedb_bench/` and `test_runs/sync_timedb_campaign/`.
 
-Operational parallelism model: [`SYNC_TIMEDB_PARALLELISM.md`](SYNC_TIMEDB_PARALLELISM.md).
+Operational parallelism model: [sync_timedb threads and processes](reference/sync-timedb-threads-and-processes.md).
 Live plan: workspace `.cursor/plans/sync-timedb-campaign-knee.plan.md`
 (kickoff complete: `.cursor/plans/sync-timedb-campaign-kickoff.plan.md`;
 parent design: `.cursor/plans/sync-timedb-throughput-scaling.plan.md`).

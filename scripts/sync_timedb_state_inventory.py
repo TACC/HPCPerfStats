@@ -16,13 +16,14 @@ emits, as JSON:
   setter / quarantine function, keyed by ``file:function:callee``.
 
 The drift guard (``test_sync_timedb_state_doc_registry.py``) runs
-``build_inventory`` and fails when ``docs/SYNC_TIMEDB_STATE_MACHINE.md`` does
+``build_inventory`` and fails when ``STATE_DOC`` does
 not mention an inventoried value or lacks a gate-closure row for a call site,
 so exhaustiveness holds for future code, not only today's.
 
 Attributes:
   DYNAMIC_BEGIN: Start marker of the generated doc block.
   DYNAMIC_END: End marker of the generated doc block.
+  STATE_DOC: Checkout-relative path of the state machine reference page.
   GATE_CALLEES: Callee names whose call sites need a gate-closure row.
   STATE_KEYS: Keyword / dict keys whose string values are inventoried.
   REPO_ROOT: Checkout root (parent of ``scripts/``).
@@ -404,6 +405,7 @@ def build_inventory(root: str = REPO_ROOT) -> dict[str, Any]:
 
 DYNAMIC_BEGIN = "<!-- BEGIN GENERATED: dynamic producers -->"
 DYNAMIC_END = "<!-- END GENERATED: dynamic producers -->"
+STATE_DOC = "docs/reference/sync-timedb-state-machine.md"
 
 
 def render_dynamic_appendix(inv: dict[str, Any]) -> str:
@@ -430,10 +432,21 @@ def render_dynamic_appendix(inv: dict[str, Any]) -> str:
     file_, func, _line = item["where"].rsplit(":", 2)
     key = f"`{file_.split('/')[-1]}:{func}` {item['key']}"
     rows.setdefault(key, set()).add(item["expr"].replace("|", "\\|"))
-  lines = [DYNAMIC_BEGIN, "", "| Site | Expressions |", "|---|---|"]
-  for key in sorted(rows):
-    exprs = "; ".join(f"`{e}`" for e in sorted(rows[key]))
-    lines.append(f"| {key} | {exprs} |")
+  table = [("Site", "Expressions")] + [
+    (key, "; ".join(f"`{e}`" for e in sorted(rows[key])))
+    for key in sorted(rows)
+  ]
+  # Pad columns the way mdformat-tables does, so the lint hook leaves the
+  # generated block byte-identical and the drift guard still matches it.
+  widths = [max(3, *(len(row[i]) for row in table)) for i in range(2)]
+  table.insert(1, tuple("-" * w for w in widths))
+  lines = [DYNAMIC_BEGIN, ""]
+  lines += [
+    "| "
+    + " | ".join(c.ljust(w) for c, w in zip(row, widths, strict=True))
+    + " |"
+    for row in table
+  ]
   lines += ["", DYNAMIC_END]
   return "\n".join(lines)
 
@@ -464,12 +477,12 @@ def main(argv: list[str] | None = None) -> int:
   parser.add_argument(
     "--write-doc",
     action="store_true",
-    help="rewrite the generated block in docs/SYNC_TIMEDB_STATE_MACHINE.md",
+    help=f"rewrite the generated block in {STATE_DOC}",
   )
   args = parser.parse_args(argv)
   inv = build_inventory()
   if args.write_doc:
-    doc = os.path.join(REPO_ROOT, "docs", "SYNC_TIMEDB_STATE_MACHINE.md")
+    doc = os.path.join(REPO_ROOT, STATE_DOC)
     with open(doc, encoding="utf-8") as fh:
       text = fh.read()
     head, _sep, rest = text.partition(DYNAMIC_BEGIN)

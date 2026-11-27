@@ -137,7 +137,7 @@ Django's `django.utils.timezone.utc` is restored in `hpcperfstats_site/settings.
 - `hpcperfstats/analysis/metrics/tests/test_metrics_persist_provenance.py`: Version and coverage stamps, skip recorder, failed-final persist
 - `test_metrics_sample_persist.py`: `test_mark_jids_metrics_dirty_stamps_never_processed_jobs_outside_window`
 - `hpcperfstats/site/lib/machine/tests/test_migrations.py`: `test_0043_*` migration checks (run through `tests/run_db_pytest_workflow.sh`)
-- `hpcperfstats/tests/test_update_metrics_state_doc.py`: Drift guard for `docs/UPDATE_METRICS_STATE_MACHINE.md`
+- `hpcperfstats/tests/test_update_metrics_state_doc.py`: Drift guard for `docs/reference/update-metrics-state-machine.md`
 - `hpcperfstats/tests/test_update_metrics_db_offload_medium_confidence.py`: Compose: DB oracles for metrics DB offloads (`job_arc` SQL bucket drop, live distinct PL/pgSQL, large-job time-slot COPY per host per slot, `jid_table` index probes, plot sum function, bounds `time__lt` slices); needs migration `0034_metrics_host_data_sql_functions`
 - `hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage.py`: Window-coverage readiness helpers and legacy fallback (mocks)
 - `hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage_compose.py`: Compose: defer->ready when early `host_data` is inserted

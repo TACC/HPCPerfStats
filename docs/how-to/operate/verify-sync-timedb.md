@@ -187,7 +187,7 @@ Manifest reasons `not_head_ingested` and `not_sample_ingested` stay retryable.
 
 ## Verify dead-end remediation
 
-Dead-end recovery is described in the [sync_timedb state machine](../../SYNC_TIMEDB_STATE_MACHINE.md).
+Dead-end recovery is described in the [sync_timedb state machine](../../reference/sync-timedb-state-machine.md).
 Check these lines per tier:
 
 | Tier | Expected lines                                                                                                                                                                                                                                                                                                                                                                       |

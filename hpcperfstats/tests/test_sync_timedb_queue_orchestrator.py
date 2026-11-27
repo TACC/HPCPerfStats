@@ -234,9 +234,11 @@ def test_handoff_retryable_paths_skips_when_job_store_missing(tmp_path):
 
 
 def test_parallelism_doc_covers_band_reservation():
-  """SYNC_TIMEDB_PARALLELISM.md must document hot/catchup reserved slots."""
+  """The threads-and-processes reference documents hot/catchup slots."""
   root = Path(__file__).resolve().parents[2]
-  text = (root / "docs" / "SYNC_TIMEDB_PARALLELISM.md").read_text()
+  text = (
+    root / "docs/reference/sync-timedb-threads-and-processes.md"
+  ).read_text()
   assert "hot_cap" in text
   assert "catchup_cap" in text
   assert "job:v1" in text
