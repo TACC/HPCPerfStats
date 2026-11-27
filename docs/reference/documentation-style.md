@@ -202,6 +202,7 @@ Merging or moving existing pages keeps every unique technical detail and drops o
 8. Run the drift guard, the layout test, the linters and the pinned tests; add `make check` for monitor pages.
 
 `<LEDGER>` is the ledger file; `<DESTINATIONS>` is the list of new pages.
+The ledger format (columns, kinds and the keep, fix, drop and ask statuses) is in the docstring of `scripts/doc_fact_coverage.py`.
 
 ## Lint toolchain
 
