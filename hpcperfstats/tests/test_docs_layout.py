@@ -53,37 +53,15 @@ RECORD_DIRS = ("docs/history/", "docs/measurements/", "docs/plans/")
 LINK_CHECKED_EXTRA = ("README.md", "docs/plans/PLAN_TEMPLATE.md")
 ALLOWED_READMES = frozenset({"docs/measurements/README.md"})
 
-# Pre-quadrant files that exist until their merge group moves or deletes them.
-# Each group removes its own entries in the commit that moves the file;
-# test_legacy_allowed_entries_still_exist fails on an entry left behind, and
-# a new file outside the quadrant and record directories fails placement.
+# Files outside the quadrant and record directories that stay at their path
+# (diagrams, the generated def inventory, the monitor docs that make check
+# and rule links pin). Remove an entry in the commit that moves or deletes
+# its file; test_legacy_allowed_entries_still_exist fails on an entry left
+# behind, and any other file outside those directories fails placement.
 LEGACY_ALLOWED = frozenset(
   {
     "docs/HPCPerfStats Data Flow.pdf",
     "docs/HPCPerfstatsBasicArch.pdf",
-    "docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md",
-    "docs/SYNC_TIMEDB_CAMPAIGN_PATCH_INDEX.md",
-    "docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md",
-    "docs/artifacts/per_jid_duplicate_query_exceptions.md",
-    "docs/artifacts/per_jid_reuse_sweep_report_2026-04-22.md",
-    "docs/artifacts/rule_compliance_report.md",
-    "docs/artifacts/stress/.gitkeep",
-    "docs/artifacts/stress/stress_report_20260406T180559Z.json",
-    "docs/artifacts/stress/stress_report_20260406T180631Z.json",
-    "docs/artifacts/stress/stress_report_20260406T221120Z.json",
-    "docs/artifacts/stress/stress_report_20260406T221241Z.json",
-    "docs/artifacts/stress/stress_report_20260406T221342Z.json",
-    "docs/artifacts/stress/stress_report_20260406T221511Z.json",
-    "docs/artifacts/stress/stress_report_20260406T221549Z.json",
-    "docs/artifacts/stress/stress_report_20260407T002508Z.json",
-    "docs/artifacts/stress/stress_report_20260407T002601Z.json",
-    "docs/artifacts/stress/stress_report_20260407T002755Z.json",
-    "docs/artifacts/stress/stress_report_20260407T002834Z.json",
-    "docs/artifacts/stress/stress_report_20260407T003051Z.json",
-    "docs/artifacts/stress/stress_report_20260407T003132Z.json",
-    "docs/artifacts/update_metrics_review_2026-10-30.md",
-    "docs/artifacts/update_metrics_speedup_followup.md",
-    "docs/artifacts/update_metrics_stall_audit_2026-05-12.md",
     "docs/python_def_inventory.json",
     "monitor/docs/C_REFACTOR_CHECKLIST.md",
     "monitor/docs/METRICS_REFERENCE.md",

@@ -1,5 +1,7 @@
 # Node monitor measurement kit (HUST 2026)
 
+Historical record, 2026-11-06. Not maintained.
+
 Operator scripts and parsers for **compute-node** captures: the whole-machine overhead
 profile of the release RPM (`bin/run_overhead_profile.sh`, or
 `scripts/prepare_rpmbuild_dirs.sh --measure-overhead` to build and measure in one step),

@@ -4,7 +4,7 @@ This page shows how to run the `sync_timedb` ingest throughput benchmarks and so
 It is for developers measuring ingest changes; use it when a parse, write or concurrency change needs a timed A/B before it lands.
 
 Benchmark results are screening evidence, not production INI changes.
-Campaign results live in the ledger [`docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md`](../../SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md); the patch index is [`docs/SYNC_TIMEDB_CAMPAIGN_PATCH_INDEX.md`](../../SYNC_TIMEDB_CAMPAIGN_PATCH_INDEX.md).
+Past campaign results are in the [throughput campaign record](../../history/sync-timedb-throughput-campaign.md).
 
 ## Prerequisites
 
@@ -200,7 +200,7 @@ The listend archive append benchmark is `../.venv/bin/python3 scripts/bench_list
 
 ## Related
 
-- [`docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md`](../../SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md)
+- [Throughput campaign record](../../history/sync-timedb-throughput-campaign.md)
 - [Pipeline concurrency](../../explanation/pipeline-concurrency.md#ingest-memory)
 - [Pipeline configuration](../../reference/pipeline-configuration.md#ingest-pools)
 - [Run tests](run-tests.md)

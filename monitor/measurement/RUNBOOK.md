@@ -1,5 +1,7 @@
 # Node monitor measurement runbook
 
+Historical record, 2026-11-18. Not maintained.
+
 Operator instructions for **AUTHOR_NOTES** items that run on cluster **compute nodes**
 (or a dedicated, reserved node for the overhead profile and jitter). Capture on the **same host class** you will
 cite (Stampede3 SPR vs Horizon GPU are different machines and different site confs).

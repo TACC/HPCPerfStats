@@ -15,7 +15,7 @@ the testing docs in the same task:
 |------|-------|
 | `HPCPerfStats/docs/how-to/develop/run-tests.md` | Prerequisites, commands, compose workflows, opt-in suites, frontend build and tests, coverage, accessibility, git hooks and static analysis, memory profiling, troubleshooting |
 | `HPCPerfStats/docs/reference/test-layout.md` | Test layers, where tests live, markers and gates, runners, test modules, contract tests, frontend coverage, pre-merge matrix |
-| `HPCPerfStats/docs/how-to/develop/run-sync-timedb-benchmarks.md` | sync_timedb benchmark and loaded-soak procedure (`docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md` stays the results ledger) |
+| `HPCPerfStats/docs/how-to/develop/run-sync-timedb-benchmarks.md` | sync_timedb benchmark and loaded-soak procedure (earlier results: `docs/history/sync-timedb-throughput-campaign.md`) |
 | `HPCPerfStats/docs/how-to/develop/diagnose-update-metrics.md` | update_metrics diagnosis workflow, columnar parity, stall reasons |
 
 ## Trigger conditions

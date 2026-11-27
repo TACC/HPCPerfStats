@@ -5,7 +5,7 @@ It is for `update_metrics` developers and for operators reading the scheduler ce
 
 A job here means metrics (`metrics_data`) and its artifacts (job plots, job detail, multiprecision mix, per-type detail); a job is finished only when both succeeded.
 The companion page for ingest is the [sync_timedb state machine](sync-timedb-state-machine.md).
-The [update_metrics review of 2026-10-30](../artifacts/update_metrics_review_2026-10-30.md) is the evidence behind the rationale lines below.
+The [update_metrics review of 2026-10-30](../history/update-metrics-review-2026-10-30.md) is the evidence behind the rationale lines below.
 
 Code:
 

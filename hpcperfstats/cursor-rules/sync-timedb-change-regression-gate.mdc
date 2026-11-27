@@ -87,7 +87,7 @@ Regression: ``test_write_stats_payload_timeout_not_swallowed_into_single_insert`
 Changing **`sync_ingest_pool_processes`** (or recommending a new production ingest width) requires:
 
 1. A scaling artifact under `test_runs/sync_timedb_bench/` from **`tests/run_sync_timedb_benchmark_workflow.sh`** (rootless Podman per **`podman-runtime.mdc`**), or an explicit operator handoff when the Podman/`/data` runtime prerequisite fails closed.
-2. Durable-throughput and lock-wait evidence summarized in **`docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md`**.
+2. Durable-throughput and lock-wait evidence summarized in the commit message (earlier campaign record: `docs/history/sync-timedb-throughput-campaign.md`).
 3. Host-safe harness green: `tests/sync_timedb_benchmark` (and the compose benchmark workflow above for free-threaded long studies).
 
 Do not ship an INI-only thread-count change without that evidence trail. A rising census `ingest=` queued slope is not a stop. The retain meter for the queue-shrink campaign is that slope, not `ratio_listend_over_full_ingest`.

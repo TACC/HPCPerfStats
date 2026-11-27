@@ -1,5 +1,7 @@
 # sync_timedb Throughput Campaign
 
+Historical record, 2026-10-26. Not maintained.
+
 Living ledger for the fresh throughput campaign that started 2026-10-15.
 The ranked work below is the active theme. Everything through 2026-10-14
 (E1–E18, width studies, knee, contention) is preserved under
@@ -197,7 +199,7 @@ Canonical interpreted baseline and ongoing optimization ledger for durable
 `sync_timedb` backlog drain. Raw run artifacts stay under
 `test_runs/sync_timedb_bench/` and `test_runs/sync_timedb_campaign/`.
 
-Operational parallelism model: [sync_timedb threads and processes](reference/sync-timedb-threads-and-processes.md).
+Operational parallelism model: [sync_timedb threads and processes](../reference/sync-timedb-threads-and-processes.md).
 Live plan: workspace `.cursor/plans/sync-timedb-campaign-knee.plan.md`
 (kickoff complete: `.cursor/plans/sync-timedb-campaign-kickoff.plan.md`;
 parent design: `.cursor/plans/sync-timedb-throughput-scaling.plan.md`).

@@ -14,7 +14,7 @@ Ephemeral **test execution artifacts** and **runtime verification notes** belong
 | Committed (repo docs) | Local only (`test_runs/`) |
 |-----------------------|---------------------------|
 | **`docs/how-to/develop/run-tests.md`** — how to run tests, prerequisites, workflow commands | Dated run summaries, pass/fail tables, agent verification notes |
-| **`docs/plans/`**, **`docs/artifacts/`** — design baselines and interpreted findings | Raw JSON/stdout captures from a specific machine run |
+| **`docs/history/`**, **`docs/measurements/`** — dated records and interpreted findings | Raw JSON/stdout captures from a specific machine run |
 | Test source (`test_*.py`, `tests/run_*_workflow.sh`) | Compose orchestrator transcripts, Podman env snapshots |
 
 ## Required output paths

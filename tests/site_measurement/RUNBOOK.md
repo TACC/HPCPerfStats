@@ -1,5 +1,7 @@
 # Site and pipeline measurement runbook
 
+Historical record, 2026-10-27. Not maintained.
+
 Operator instructions for **AUTHOR_NOTES** items that need the **Django API**, **Compose**
 stack, or author protocols (screenshots, tickets, roofline). Node monitor captures are
 documented in [`monitor/measurement/RUNBOOK.md`](../../monitor/measurement/RUNBOOK.md).

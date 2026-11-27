@@ -1,5 +1,7 @@
 # Figure 4 (GPU roofline) evidence checklist (AUTHOR_NOTES item 8)
 
+Historical record, 2026-10-27. Not maintained.
+
 Do **not** claim the plotted job is unoptimized because of system
 misbehavior, application structure, or a mistuned roof unless you have
 that evidence. The current paper treats Figure 4 as a **capability

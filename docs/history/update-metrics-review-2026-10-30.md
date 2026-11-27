@@ -1,5 +1,7 @@
 # update_metrics review (2026-10-30, code at 0a232d38)
 
+Historical record, 2026-10-30. Not maintained.
+
 Scope: `update_metrics.py`, `lib/metrics.py` (run / compute / persist /
 gate failure), `lib/metrics_sliding_session.py`,
 `lib/metrics_idle_slot_supplement.py`, `job_plot_artifacts.py`,

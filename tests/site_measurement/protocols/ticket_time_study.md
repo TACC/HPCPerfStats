@@ -1,5 +1,7 @@
 # Ticket-time study (AUTHOR_NOTES item 7)
 
+Historical record, 2026-10-27. Not maintained.
+
 The hung-job write-up currently uses a **staff-reported order of magnitude**
 (hour → minutes). That is not a timed ticket study.
 

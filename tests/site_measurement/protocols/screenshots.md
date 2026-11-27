@@ -1,5 +1,7 @@
 # Full-page Job List and Job Detail screenshots (AUTHOR_NOTES item 6)
 
+Historical record, 2026-10-27. Not maintained.
+
 Reviewer 3 asked for one or two figures of the **entire** Job List / Job Detail UI.
 The `.tex` currently includes plot crops, not a full portal shell.
 

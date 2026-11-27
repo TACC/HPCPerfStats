@@ -1,5 +1,7 @@
 # Operator: host_data 5-column uniqueness (Phase 1 decompress)
 
+Historical record, 2026-11-14. Not maintained.
+
 > **Status: completed fleet-wide (2026-11).** hpcperfstats01–04 all run the 5-column `UNIQUE (time, host, type, event, dev)` (`0032`), have the duplicate indexes dropped (`0045`), and have the compression policy restored and pinned to 01:00. The rest of this page is reference for a **new site** (a fresh install needs none of it: `0032` passes on an empty `host_data`) or for repairing a site that recorded an older `0032` without its work (see *Sites that applied an older `0032`* below). hpcperfstats03 took the large-site path: backfill with the host/jid indexes and the 4-column UNIQUE dropped, `0032` SQL run by hand (it had recorded the old soft-skip), then the nightly policy compressed every chunk older than 8 days (8.5 TB → 171 GB) and the three secondary indexes were rebuilt on the remaining uncompressed chunks.
 >
 > **Retired scripts.** The helpers below moved to `scripts/retired/` (`decompress_host_data_chunks.sh`, `backfill_host_data_null_dev.sh`) and are listed under *Retired* in the README. They still work for a new site or a repair; the current fleet does not need them.
@@ -100,7 +102,7 @@ Then redeploy the Phase 1 image and let `migrate` apply `0030` for real.
 
 
 
-The PostgreSQL 15 catalog upgrade is in [Upgrade the stack](how-to/operate/upgrade-the-stack.md#upgrade-the-timescale-catalog-on-postgresql-15).
+The PostgreSQL 15 catalog upgrade is in [Upgrade the stack](../how-to/operate/upgrade-the-stack.md#upgrade-the-timescale-catalog-on-postgresql-15).
 
 ---
 

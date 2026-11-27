@@ -1,5 +1,7 @@
 # Site and pipeline measurement kit (HUST 2026)
 
+Historical record, 2026-10-27. Not maintained.
+
 Operator scripts for **central stack** captures: Compose pipeline scale, storage HA
 facts, portal **API** query latency, ticket-time study helpers, screenshots/roofline
 protocols, and the paper-facing `emit_paper_facts.py` ledger.

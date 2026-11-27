@@ -1,7 +1,7 @@
 ---
 description: Production must not require .env or shell env flags for site config already in hpcperfstats.ini
 alwaysApply: false
-globs: docker-compose*.yaml,hpcperfstats.ini.example,services-conf/resolve_proxy_ssl_certs_dir.py,HPCPerfStats/README.md,README.md,docs/how-to/operate/upgrade-the-stack.md,hpcperfstats/dbload/sync_timedb.py,hpcperfstats/dbload/lib/sync_timedb_parsing.py,hpcperfstats/dbload/lib/conf_parser.py,docs/how-to/operate/verify-sync-timedb.md,docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md,docs/tutorials/install-hpcperfstats.md,docs/reference/compose-services.md,docs/reference/pipeline-configuration.md,docs/explanation/pipeline-concurrency.md,.cursor/plans/**
+globs: docker-compose*.yaml,hpcperfstats.ini.example,services-conf/resolve_proxy_ssl_certs_dir.py,HPCPerfStats/README.md,README.md,docs/how-to/operate/upgrade-the-stack.md,hpcperfstats/dbload/sync_timedb.py,hpcperfstats/dbload/lib/sync_timedb_parsing.py,hpcperfstats/dbload/lib/conf_parser.py,docs/how-to/operate/verify-sync-timedb.md,docs/tutorials/install-hpcperfstats.md,docs/reference/compose-services.md,docs/reference/pipeline-configuration.md,docs/explanation/pipeline-concurrency.md,.cursor/plans/**
 ---
 
 # No Production `.env` For INI Config
