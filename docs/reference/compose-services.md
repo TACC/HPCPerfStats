@@ -43,7 +43,7 @@ Startup then runs, in order:
    Schema changes ship as reviewed, committed migration files; production startup never runs `makemigrations`.
 2. `collectstatic --noinput --clear`, which empties disk `STATIC_ROOT` of unused leftovers and repopulates it; it omits `*.map` source maps.
 3. A check for the SPA shells under `STATIC_ROOT/frontend/{machine,pub}/index.html`; if the image lacks them, web fail-closes.
-   Volume fingerprint heal after a later image rebuild is in [Upgrade the stack](../upgrade.md).
+   Volume fingerprint heal after a later image rebuild is in [Upgrade the stack](../how-to/operate/upgrade-the-stack.md#spa-static-files).
 4. Brotli-11 and Gzip-9 sidecars beside compressible static files (hashed Next chunks, Django and DRF admin assets).
 5. A publish of `STATIC_ROOT` and `MEDIA_ROOT` onto the shared tmpfs volumes `staticfiles_ram` and `media_ram`, which `proxy` mounts at `/srv/static` and `/srv/media`.
 
@@ -112,7 +112,7 @@ Without it the pipeline cgroup is unlimited (`memory.max` is `max`) and `sync_ti
 
 As a second guard, `supervisor_startup.sh` sets the pipeline's `oom_score_adj` to +500, inherited by every daemon, so a host-level OOM kills an ingest daemon before a Postgres backend.
 podman-compose ignores a compose `oom_score_adj` key, so it is not in compose.
-Recreating after limit changes is in [Upgrade the stack](../upgrade.md).
+Recreating after limit changes is in [Upgrade the stack](../how-to/operate/upgrade-the-stack.md#change-pipeline-limits).
 
 ### Cluster syslog
 
@@ -222,27 +222,50 @@ The `0032` Phase 2 policy restore (`add_compression_policy`) re-pins the same sc
 `db_pg18` runs the homemade `hpcperfstats-db` image built from `services-conf/db.Dockerfile` (PostgreSQL 18 + TimescaleDB, WAL compression through `/opt/lz4`).
 `./scripts/rebuild_full_site.sh` builds it with Clang ThinLTO through `services-conf/bake_clang_flags.sh`.
 
+| Item                     | Contract                                                                                                                                             |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base                     | `alpine:3.24.x` pinned by `ARG ALPINE_VERSION` (never `latest`)                                                                                      |
+| PostgreSQL and Timescale | SHA-pinned `ARG PG_VERSION` and `ARG TIMESCALEDB_VERSION`; Timescale built without `APACHE_ONLY`                                                     |
+| `/opt` libraries         | Source-built jemalloc, zlib-ng, lz4 and zstd, with an rpath on `postgres` and the zstd CLI; PostgreSQL configured `--without-icu --without-liburing` |
+| Toolchain                | Clang 22 ThinLTO with `-march=native`; bake on the production CPU                                                                                    |
+| Volume                   | `/var/lib/postgresql` (PG18 layout)                                                                                                                  |
+| Runtime settings         | The `db` settings (`shared_buffers=64GB`, WAL and bgwriter, committed `hba_file`) plus `io_method=worker` and `io_workers=8`                         |
+
+The Timescale catalog updates itself.
+On every start of an existing data directory, `services-conf/db-docker-entrypoint.sh` runs `ALTER EXTENSION timescaledb UPDATE` in each database whose catalog is older than the image, on a socket-only temporary server with the Timescale background workers off; the healthcheck stays red until it finishes.
+Bumping `ARG TIMESCALEDB_VERSION` therefore means rebuilding and recreating `db_pg18`, with no manual `ALTER EXTENSION`.
+
+To read the result:
+
+```bash
+podman-compose -p hpcperfstats logs db_pg18 2>&1 \
+  | grep 'timescaledb auto-update'
+```
+
+A `FAILED` line (no update path in the image) or a `newer than image` line (image rolled back) leaves the catalog alone, and Postgres still starts; fix it by hand.
+After an unclean stop, crash recovery runs inside that temporary server (`redo in progress` in the log, TCP `Connection refused`) for as long as it needs; do not restart the container meanwhile.
+
 ## db_pg18
 
 `db_pg18` is the optional dual-run PostgreSQL 18 service: profile `pg18-migrate`, network alias `db18`.
 It shares the `db` server settings, uses the same `shm_size: "16gb"`, and adds `io_method=worker` (the PostgreSQL 18 I/O worker pool).
 `/data/hpcperfstats_db/pg18` backs `postgres_data_pg18` and must be owned by uid and gid 70.
-The logical migration runbook is [`docs/OPERATOR_PG18_MIGRATION.md`](../OPERATOR_PG18_MIGRATION.md); the cutover overlay is `docker-compose.pg18-primary.yaml`.
+The logical migration runbook is [Migrate to PostgreSQL 18](../how-to/operate/migrate-to-postgresql-18.md); the cutover overlay is `docker-compose.pg18-primary.yaml`.
 
 ## valkey
 
 `valkey` is a dedicated container (`docker.io/valkey/valkey:9.2.0-alpine3.24`, Valkey 9.2), run as `valkey-server` so the image entrypoint drops root; network alias `valkey`.
 It is the shared instance for the Django cache (TTL keys), the listend auxiliaries and the ingest coverage results ([Valkey roles](../explanation/architecture.md#valkey-roles)).
 
-| Setting     | Value                                                                                                              |
-| ----------- | ------------------------------------------------------------------------------------------------------------------ |
-| Memory cap  | `maxmemory 16gb`                                                                                                   |
-| Eviction    | `volatile-lru`: Django cache keys keep a TTL and stay evictable                                                    |
-| Threads     | `--io-threads 4`                                                                                                   |
-| Persistence | None (`appendonly no`)                                                                                             |
-| Socket      | `/run/valkey/valkey.sock` on the `valkey_runtime` named volume, shared with `web` and `pipeline` (not a host bind) |
-| TCP         | `6379`, for `valkey-cli` and external Valkey URLs                                                                  |
-| Healthcheck | TCP `PING` and socket `PING`, so `ps` shows health                                                                 |
+| Setting     | Value                                                                                                                                                                                                   |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Memory cap  | `maxmemory 16gb`                                                                                                                                                                                        |
+| Eviction    | `volatile-lru`: Django cache keys keep a TTL and stay evictable                                                                                                                                         |
+| Threads     | `--io-threads 4`                                                                                                                                                                                        |
+| Persistence | None (`appendonly no`)                                                                                                                                                                                  |
+| Socket      | `/run/valkey/valkey.sock` (`--unixsocketperm 777`) on the `valkey_runtime` named volume, shared with `web` and `pipeline` (not a host bind); `services-conf/valkey_entrypoint.sh` creates `/run/valkey` |
+| TCP         | `6379`, for `valkey-cli` and external Valkey URLs                                                                                                                                                       |
+| Healthcheck | TCP `PING` and socket `PING`, so `ps` shows health                                                                                                                                                      |
 
 Never use an `allkeys-*` policy: it would evict Django and `listend` keys that carry no TTL.
 Size the host so Valkey can use its cap alongside Postgres `shm_size` and `shared_buffers`.
@@ -252,7 +275,7 @@ podman-compose can then create `hpcperfstats_valkey_1` and never start it, so `l
 The startup wait reads `[CACHE] valkey_location`, remaps the Compose hostname `valkey` (including a baked `valkey://valkey:6379/1`) to `unix:///run/valkey/valkey.sock?db=1`, and falls back to that socket URL when the INI key is missing.
 
 Valkey holds no durable user data: flushing it is safe after a cold start, at the cost of cache misses and plot rebuilds.
-Valkey image bumps on an existing host are in [Upgrade the stack](../upgrade.md).
+Valkey image bumps on an existing host are in [Upgrade the stack](../how-to/operate/upgrade-the-stack.md#bump-the-valkey-image).
 
 ## rabbitmq
 
@@ -264,22 +287,23 @@ It publishes AMQP 5672 (image `rabbitmq:*-management-alpine`); the management HT
 RabbitMQ's default `vm_memory_high_watermark` is 40% of detected host RAM, which can OOM the box under thousands of monitor publishers.
 Compose sets `mem_limit: 96g` and `memswap_limit: 96g`, and mounts `services-conf/rabbitmq_vm_memory.conf` (`vm_memory_high_watermark.absolute = 64GiB`).
 Publishers block about 32 GiB below the cgroup hard wall, before Erlang `binary_alloc` fails at the limit.
-On hosts with less than 96 GiB RAM, lower `mem_limit`, `memswap_limit` and the absolute watermark together, then recreate `rabbitmq` as in [Upgrade the stack](../upgrade.md).
+On hosts with less than 96 GiB RAM, lower `mem_limit`, `memswap_limit` and the absolute watermark together, then recreate `rabbitmq` as in [Upgrade the stack](../how-to/operate/upgrade-the-stack.md#recreate-the-broker-after-a-config-change).
 
 ### Broker settings
 
 | Setting            | Value                                                                                                                                                                          |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Erlang allocator   | `ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`: address-order best-fit binary allocator and 512 KiB largest multiblock carriers, against fragmentation under many publishers |
-| Logging            | Console `warning` (not `info`); connection and channel at `error`                                                                                                              |
+| Logging            | Console `warning` (not `info`); connection and channel at `error` (`services-conf/rabbitmq_logging.conf`)                                                                      |
 | Crash dumps        | Off: `ERL_CRASH_DUMP_SECONDS=0`, `ulimits.core: 0`                                                                                                                             |
 | Default queue type | `services-conf/rabbitmq_default_queue_type.conf` (`default_queue_type = quorum`); new durable monitor ingest queues are quorum                                                 |
 | Frame size         | `services-conf/rabbitmq_frame_max.conf` (`frame_max = 131072`, the RabbitMQ default), matching pika `LISTEND_AMQP_FRAME_MAX`                                                   |
+| Node name          | Static `hostname: rabbitmq-prod` and `RABBITMQ_NODENAME=rabbit@rabbitmq-prod`, so recreates add no `rabbit@*` mnesia trees                                                     |
 | Management login   | `loopback_users.guest = false` in `services-conf/rabbitmq_management.conf`, so `web` can authenticate to `rabbitmq`                                                            |
 
 `stop_grace_period: 30m` gives the broker time for orderly shutdown (quorum and mnesia) before SIGKILL.
-Recreate `rabbitmq` after changing limits, the watermark, logging, crash-dump knobs or `ERL_FLAGS`; recreate `rabbitmq` and `pipeline` after changing `rabbitmq_frame_max.conf` ([Upgrade the stack](../upgrade.md)).
-Existing brokers and the quorum default are in [Upgrade the stack](../upgrade.md); recovery and preserve-extract are in [`docs/OPERATOR_RABBITMQ_RECOVERY.md`](../OPERATOR_RABBITMQ_RECOVERY.md).
+Recreate `rabbitmq` after changing limits, the watermark, logging, crash-dump knobs or `ERL_FLAGS`; recreate `rabbitmq` and `pipeline` after changing `rabbitmq_frame_max.conf` ([Upgrade the stack](../how-to/operate/upgrade-the-stack.md#recreate-the-broker-after-a-config-change)).
+Existing brokers and the quorum default are in [Upgrade the stack](../how-to/operate/upgrade-the-stack.md#recreate-the-broker-after-a-config-change); recovery and preserve-extract are in [Recover RabbitMQ](../how-to/operate/recover-rabbitmq.md).
 
 ### Broker monitoring
 
@@ -322,7 +346,7 @@ Set `proxy_ssl_source.device` in `docker-compose.yaml` and, for Let's Encrypt, t
 Never point production `proxy_ssl_source.device` at `tests/fixtures/proxy-ssl`.
 
 After a certificate renew or a change of TLS source path, restart `proxy` only (`podman-compose -p hpcperfstats restart proxy`); no image rebuild is needed.
-Image rebuilds that leave `proxy` running are in [Upgrade the stack](../upgrade.md).
+Image rebuilds that leave `proxy` running are in [Upgrade the stack](../how-to/operate/upgrade-the-stack.md#choose-a-rebuild-script).
 
 The entrypoint also regenerates the OCSP `resolver` include from the container `/etc/resolv.conf`, waits for SPA HTML under `/srv/static/frontend/{machine,pub}/index.html`, and may write private diagnostic CSP includes under `/etc/nginx/` (never under `/srv/static`).
 Certificates without an AIA OCSP URL do not staple, which must not take the site offline.
@@ -395,7 +419,7 @@ Production site configuration stays in `hpcperfstats.ini` and `docker-compose.ya
 `./scripts/rebuild_full_site.sh` builds `web`, `proxy` and `db_pg18` with `podman build` (Clang ThinLTO through `services-conf/bake_clang_flags.sh` on Alpine `db` and `proxy` and Debian `python-build`), then runs `podman-compose down` and `up -d --no-build`.
 It builds the `db_pg18` image but does not start its container.
 CPython always bakes with upstream `--enable-optimizations` (no custom Clang profile-guided rebuild flags).
-The per-service rebuild scripts are in [Upgrade the stack](../upgrade.md); never use `up --build` for a refresh.
+The per-service rebuild scripts are in [Upgrade the stack](../how-to/operate/upgrade-the-stack.md#choose-a-rebuild-script); never use `up --build` for a refresh.
 
 ## Common commands
 
@@ -509,4 +533,4 @@ Grep the pipeline log for `queue_orchestrator day_close claim`, `queue_orchestra
 - [Pipeline configuration](pipeline-configuration.md)
 - [Pipeline concurrency](../explanation/pipeline-concurrency.md)
 - [Architecture](../explanation/architecture.md)
-- [Upgrade the stack](../upgrade.md)
+- [Upgrade the stack](../how-to/operate/upgrade-the-stack.md)

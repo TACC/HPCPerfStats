@@ -5,7 +5,7 @@ Live logical COPY of Timescale ``host_data`` chunks from PG15 to PG18.
 Do **not** restore ``_timescaledb_catalog`` from the source. Target must already
 have an empty Django-migrated ``host_data`` hypertable. Watermark filtering is
 best-effort while writers stay on PG15; freeze + verify is required before
-cutover (see ``docs/OPERATOR_PG18_MIGRATION.md``).
+cutover (see ``docs/how-to/operate/migrate-to-postgresql-18.md``).
 
 Uses **psycopg** (already in the ``web`` image) for catalog queries and binary
 COPY streaming with an explicit, type-checked column list - no PostgreSQL client

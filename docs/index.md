@@ -19,10 +19,10 @@ Solve one task on a running site or in the checkout.
 
 ### Operate a site
 
-- Upgrade the stack
-- Recover RabbitMQ
+- [Upgrade the stack](how-to/operate/upgrade-the-stack.md)
+- [Recover RabbitMQ](how-to/operate/recover-rabbitmq.md)
 - Verify `sync_timedb`
-- Migrate to PostgreSQL 18
+- [Migrate to PostgreSQL 18](how-to/operate/migrate-to-postgresql-18.md)
 
 ### Develop in the checkout
 
@@ -49,7 +49,7 @@ Look up code, configuration and contract facts.
 - Web UI metrics
 - Analysis architectures
 - Security posture
-- Release notes
+- [Release notes](reference/release-notes.md)
 - Monitor variables consumer map
 
 ## Explanation

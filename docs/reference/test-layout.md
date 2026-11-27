@@ -197,7 +197,7 @@ Run them from `hpcperfstats-tools` with `python -m pytest`.
 
 ## Deploy and proxy contract tests
 
-The rebuild scripts are in [`docs/upgrade.md`](../upgrade.md) and the proxy contract is in [Compose services](compose-services.md#proxy); these tests lock them.
+The rebuild scripts are in [Upgrade the stack](../how-to/operate/upgrade-the-stack.md#choose-a-rebuild-script) and the proxy contract is in [Compose services](compose-services.md#proxy); these tests lock them.
 
 - `scripts/test_rebuild_pipeline.sh`, `scripts/test_rebuild_full_site.sh`: The pipeline `memory.high` write stays commented out in both rebuild scripts (`rebuild_pipeline.sh` builds `hpcperfstats-pipeline-refresh`)
 - `hpcperfstats/tests/test_rebuild_proxy_script.py`: `scripts/rebuild_proxy.sh` with a fake podman: build while the old proxy serves, recreate only `proxy`, image id and `nginx -t` checks

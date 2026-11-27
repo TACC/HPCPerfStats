@@ -1,4 +1,4 @@
-# PG18 cutover overlay (docs/OPERATOR_PG18_MIGRATION.md Phase E).
+# PG18 cutover overlay (docs/how-to/operate/migrate-to-postgresql-18.md Phase E).
 #
 # Activated per site by adding this file to the include: list in the site
 # docker-compose.yaml, right after docker-compose.defaults.yaml. Because the

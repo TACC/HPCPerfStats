@@ -14,7 +14,7 @@ A change to it is a redeploy: rebuild the image and recreate the containers.
 
 In `hpcperfstats.ini.example`, each setting has a one-line `#` comment directly above it.
 Keys whose value is the `conf_parser` code default appear commented (`# key = default`); active lines are required keys or overrides.
-`scripts/rewrite_hpcperfstats_ini.sh` brings an older site `hpcperfstats.ini` onto the current example layout ([Upgrade the stack](../upgrade.md)).
+`scripts/rewrite_hpcperfstats_ini.sh` brings an older site `hpcperfstats.ini` onto the current example layout ([Upgrade the stack](../how-to/operate/upgrade-the-stack.md#rewrite-the-site-ini)).
 
 The sections:
 

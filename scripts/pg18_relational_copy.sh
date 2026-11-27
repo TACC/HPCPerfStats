@@ -1,7 +1,7 @@
 #!/bin/sh
 # Freeze-time copy of every public table except host_data / django_migrations
 # from Hub PG15 (`db`) into PG18. Runs INSIDE db_pg18 (PG18 client tools), fed
-# over stdin from the checkout (docs/OPERATOR_PG18_MIGRATION.md Phase D):
+# over stdin from the checkout (docs/how-to/operate/migrate-to-postgresql-18.md Phase D):
 #
 #   podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 \
 #     sh -s < scripts/pg18_relational_copy.sh

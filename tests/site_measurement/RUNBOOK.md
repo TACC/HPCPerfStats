@@ -93,7 +93,7 @@ docker compose logs --timestamps --since 4h pipeline
 ```
 
 Fill `storage_ha.json` from site practice. The kit will not invent a replica count or RPO.
-`pg_dump` in `docs/OPERATOR_PG18_MIGRATION.md` is a **cutover** procedure, not HA.
+`pg_dump` in `docs/how-to/operate/migrate-to-postgresql-18.md` is a **cutover** procedure, not HA.
 
 ### db — WAL settings (not a backup policy)
 

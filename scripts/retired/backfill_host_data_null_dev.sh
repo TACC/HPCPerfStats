@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # RETIRED (2026-11): the host_data dev-uniqueness migration (0032) is complete
 # fleet-wide. Kept only for a new site or a 0032 repair; see
-# docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md.
+# docs/history/host-data-dev-uniqueness-rollout.md.
 # Parallel host_data.dev NULL → '' backfill before Stage 2 UNIQUE (0032).
-# See docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md.
+# See docs/history/host-data-dev-uniqueness-rollout.md.
 #
 # Sliding pool of N concurrent chunk UPDATEs (N from CLI). Progress is remaining
 # uncompressed chunks from the Timescale catalog (no host_data NULL row probes).
@@ -25,7 +25,7 @@
 # chunk of a stopped run is a safe resume point). Unset = every chunk.
 #
 # On success writes the host_data.dev completion marker that migration 0032
-# requires; any failed chunk exits 1 without it (OPERATOR_HOST_DATA_DEV_UNIQUENESS.md).
+# requires; any failed chunk exits 1 without it (docs/history/host-data-dev-uniqueness-rollout.md).
 set -euo pipefail
 
 CONCURRENCY="${1:-30}"

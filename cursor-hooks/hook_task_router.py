@@ -546,7 +546,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
       "services-conf/db.Dockerfile",
       "services-conf/db-docker-*.sh",
       "scripts/pg18_host_data_chunk_copy.py",
-      "docs/OPERATOR_PG18_MIGRATION.md",
+      "docs/how-to/operate/migrate-to-postgresql-18.md",
       "hpcperfstats/tests/test_dockerfile_db_postgres.py",
       "hpcperfstats/tests/test_pg18_chunk_copy.py",
     ],
@@ -562,6 +562,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
       "docker-compose.yaml",
       "services-conf/rabbitmq_vm_memory.conf",
       "services-conf/rabbitmq_*.conf",
+      "docs/how-to/operate/recover-rabbitmq.md",
     ],
     "rules": [
       "rabbitmq-memory-cgroup-contract.mdc",
@@ -640,7 +641,8 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     "id": "readme_install",
     "patterns": [
       "HPCPerfStats/README.md",
-      "docs/upgrade.md",
+      "docs/how-to/operate/*.md",
+      "docs/reference/release-notes.md",
       "docs/tutorials/install-hpcperfstats.md",
       "docs/reference/compose-services.md",
     ],

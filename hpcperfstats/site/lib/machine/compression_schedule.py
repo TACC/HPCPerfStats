@@ -89,7 +89,8 @@ def _policy_job_id(cursor: Any, *, required: bool = False) -> int | None:
   if row is None and required:
     raise RuntimeError(
       "host_data compression policy missing; 0032 did not really run, so "
-      "this migration stays unapplied (docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)"
+      "this migration stays unapplied "
+      "(docs/history/host-data-dev-uniqueness-rollout.md)"
     )
   return None if row is None else int(row[0])
 

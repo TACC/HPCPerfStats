@@ -1,7 +1,7 @@
 # Install HPCPerfStats
 
 This tutorial takes a new Rocky Linux host from nothing to a running HPCPerfStats site, then connects cluster nodes to it.
-It is for HPC operators doing a fresh install; for an existing stack, follow [Upgrade the stack](../upgrade.md) instead.
+It is for HPC operators doing a fresh install; for an existing stack, follow [Upgrade the stack](../how-to/operate/upgrade-the-stack.md) instead.
 
 You build the central container stack first, then the node monitor RPM, then wire the scheduler and accounting into it.
 Every value you are asked to set has a reference entry in [Pipeline configuration](../reference/pipeline-configuration.md) or [Compose services](../reference/compose-services.md).
@@ -367,4 +367,4 @@ Next, tune pools and memory for the host size in [Pipeline configuration](../ref
 - [Compose services](../reference/compose-services.md)
 - [Pipeline configuration](../reference/pipeline-configuration.md)
 - [Architecture](../explanation/architecture.md)
-- [Upgrade the stack](../upgrade.md)
+- [Upgrade the stack](../how-to/operate/upgrade-the-stack.md)

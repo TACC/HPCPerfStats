@@ -266,7 +266,7 @@ services:
           - db
 
   # Homegrown PG18 + Timescale (jemalloc/zlib-ng/lz4/zstd). Dual-run only
-  # during logical migrate — see docs/OPERATOR_PG18_MIGRATION.md. Hostname `db`
+  # during logical migrate — see docs/how-to/operate/migrate-to-postgresql-18.md. Hostname `db`
   # stays on Hub PG15 until cutover. Start with:
   #   docker compose --profile pg18-migrate up -d db_pg18
   db_pg18:

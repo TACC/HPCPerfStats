@@ -12,7 +12,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 OVERLAY = REPO / "docker-compose.pg18-primary.yaml"
-RUNBOOK = REPO / "docs" / "OPERATOR_PG18_MIGRATION.md"
+RUNBOOK = REPO / "docs" / "how-to" / "operate" / "migrate-to-postgresql-18.md"
 INCLUDE_LINE = "  - docker-compose.defaults.yaml"
 OVERLAY_LINE = "  - docker-compose.pg18-primary.yaml"
 
@@ -30,6 +30,11 @@ def _service_command(service: str) -> list[str]:
   text = (REPO / "docker-compose.defaults.yaml").read_text()
   doc = yaml.load(text, Loader=_ResetLoader)  # noqa: S506 - SafeLoader subclass
   return [str(x) for x in doc["services"][service]["command"]]
+
+
+def _runbook_logical_lines() -> str:
+  """Runbook text with shell backslash continuations joined into one line."""
+  return re.sub(r"\\\n\s*", " ", RUNBOOK.read_text())
 
 
 def _guc(command: list[str], name: str) -> str | None:
@@ -154,7 +159,7 @@ def test_cutover_include_survives_explicit_file_flag(
 
 def test_runbook_up_commands_name_their_services() -> None:
   """Bare `up -d` after a compose edit recreates rabbitmq/valkey too."""
-  for line in RUNBOOK.read_text().splitlines():
+  for line in _runbook_logical_lines().splitlines():
     for cmd in re.findall(r"podman-compose[^;&|\n]*? up -d[^;&|\n]*", line):
       words = [w for w in cmd.split(" up -d", 1)[1].split() if w]
       services = [w for w in words if not w.startswith("-")]
@@ -195,7 +200,7 @@ def test_runbook_detached_runs_disable_inherited_restart() -> None:
   """Side-agent catch (2026-11-15): one-shot `run -d` containers inherit
   web's restart: always, so a finished copy restarted another full pass and
   a failing C2 looped on hpcperfstats02. Every detached start must turn it off."""
-  text = RUNBOOK.read_text()
+  text = _runbook_logical_lines()
   starts = re.findall(r"run -d [^\n]*?--name (\S+)[^\n]*", text)
   assert starts, "no detached runs found"
   for line in re.findall(r"[^\n]*run -d [^\n]*--name \S+[^\n]*", text):

@@ -1,7 +1,7 @@
 ---
 description: Homemade Alpine PG18+Timescale image, io_method=worker, logical migrate — not pg_upgrade
 alwaysApply: false
-globs: services-conf/db.Dockerfile,docker-compose.yaml,scripts/pg18_host_data_chunk_copy.py,docs/OPERATOR_PG18_MIGRATION.md
+globs: services-conf/db.Dockerfile,docker-compose.yaml,scripts/pg18_host_data_chunk_copy.py,docs/how-to/operate/migrate-to-postgresql-18.md
 ---
 
 # PostgreSQL custom image and PG18 logical migrate
@@ -41,11 +41,11 @@ globs: services-conf/db.Dockerfile,docker-compose.yaml,scripts/pg18_host_data_ch
 - **PG18 indexes dropped for the bulk copy:** `--drop-target-indexes` saves `pg_get_indexdef` of every non-constraint `host_data` index to `<state stem>.indexes.json` (never overwritten) and drops them; `--restore-target-indexes --maintenance-work-mem 2GB` (runbook C2, after the bulk copy, before D1, copy not running) recreates missing **or invalid** ones: non-unique with `timescaledb.transaction_per_chunk` (before any `WHERE`), UNIQUE plain (TimescaleDB rejects per-chunk for UNIQUE), then fails closed on any invalid `host_data` index. Rebuilding UNIQUE with compressed chunks works on 2.31 and still enforces uniqueness / `ON CONFLICT`.
 - **Forbidden:** full-table `count(*) FROM host_data` gates during the freeze window (decompresses all of PG15) — the freeze pass `verified_rows=` total is the gate.
 - Relational tables at freeze: **`scripts/pg18_relational_copy.sh`** inside `db_pg18` (same table set check, parallel `pg_dump -Fd` / `pg_restore --data-only --disable-triggers`, exact per-table counts, ANALYZE). No hand-maintained TRUNCATE list.
-- Freeze order and verify steps: **`docs/OPERATOR_PG18_MIGRATION.md`**.
+- Freeze order and verify steps: **`docs/how-to/operate/migrate-to-postgresql-18.md`**.
 - **Forbidden:** `pg_dump -t host_data` alone; cutover without freeze; `host_data` UPDATE/DELETE repair tools between the catch-up pass and the freeze pass.
 
 ## Overlap
 
 - **`postgres-docker-shared-memory.mdc`** — shm still 16gb on both containers
-- **`readme-installation-sync.mdc`** / **`compose-operator-terminal-commands.mdc`** — fresh install in README; PG18 dual-run operator steps in **`docs/upgrade.md`**
+- **`readme-installation-sync.mdc`** / **`compose-operator-terminal-commands.mdc`** — fresh install in README; PG18 dual-run operator steps in **`docs/how-to/operate/migrate-to-postgresql-18.md`**
 - **`compose-required-for-data-services-changes.mdc`** — validate with compose workflows when DB wiring changes

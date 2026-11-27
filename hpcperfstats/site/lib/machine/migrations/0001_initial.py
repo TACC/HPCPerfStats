@@ -3,7 +3,7 @@
 host_data value / arc / delta are double precision. Databases migrated before
 that change (the Hub PG15 ``db``) were created with ``real`` and keep it: they
 never re-run 0001, and PG15 is retired at the PG18 cutover. PG18 is always
-created fresh from these migrations (``docs/OPERATOR_PG18_MIGRATION.md``).
+created fresh from these migrations (``docs/how-to/operate/migrate-to-postgresql-18.md``).
 """
 import django.contrib.postgres.fields
 from django.db import migrations, models

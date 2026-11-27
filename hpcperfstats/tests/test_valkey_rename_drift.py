@@ -39,12 +39,14 @@ _ALLOWED_PATHS = {
   "hpcperfstats/site/lib/machine/tests/test_api_helpers.py",
   # Live test asserts the compat field is not surfaced.
   "hpcperfstats/site/lib/machine/tests/test_valkey_cache_live.py",
-  # Operator cutover instructions and dated incident / audit records.
-  "docs/upgrade.md",
+  # Dated incident / audit records.
   "docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md",
   "docs/artifacts/update_metrics_stall_audit_2026-05-12.md",
   "docs/SECURITY_AUDIT.md",
   "docs/SECURITY_REMEDIATION_BACKLOG.md",
+  # Release notes record the one-time Redis -> Valkey cutover (Q30): the
+  # retired service, container, volume, socket and INI key names.
+  "docs/reference/release-notes.md",
   # Style guide names Redis as the banned term that Vale rewrites to Valkey.
   "docs/reference/documentation-style.md",
   # Vale vocabulary: the substitution rule that rewrites Redis to Valkey.

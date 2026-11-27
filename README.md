@@ -21,7 +21,7 @@ The `hpcperfstats` container stack runs RabbitMQ to receive that data, a Django/
 ## Install
 
 Follow [Install HPCPerfStats](docs/tutorials/install-hpcperfstats.md) for a fresh install of the central stack and the node monitor.
-For an existing stack (rebuilds, Valkey, INI, volume and RabbitMQ changes, PostgreSQL 18 dual-run), use [docs/upgrade.md](docs/upgrade.md) instead.
+For an existing stack (rebuilds, Valkey, INI, volume and RabbitMQ changes, PostgreSQL 18 dual-run), use [Upgrade the stack](docs/how-to/operate/upgrade-the-stack.md) instead.
 
 ## Quick start
 

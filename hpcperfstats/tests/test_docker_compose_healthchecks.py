@@ -10,11 +10,15 @@ import yaml
 _INSTALL_TUTORIAL = "docs/tutorials/install-hpcperfstats.md"
 _COMPOSE_SERVICES_DOC = "docs/reference/compose-services.md"
 _ARCHITECTURE_DOC = "docs/explanation/architecture.md"
+_PIPELINE_CONFIG_DOC = "docs/reference/pipeline-configuration.md"
+_UPGRADE_DOC = "docs/how-to/operate/upgrade-the-stack.md"
+_RELEASE_NOTES_DOC = "docs/reference/release-notes.md"
+_RABBITMQ_RECOVERY_DOC = "docs/how-to/operate/recover-rabbitmq.md"
 _G1_DOCS = (
   "README.md",
   _INSTALL_TUTORIAL,
   _COMPOSE_SERVICES_DOC,
-  "docs/reference/pipeline-configuration.md",
+  _PIPELINE_CONFIG_DOC,
   _ARCHITECTURE_DOC,
   "docs/explanation/pipeline-concurrency.md",
 )
@@ -264,17 +268,17 @@ def test_compose_services_and_architecture_valkey_policy_is_volatile_lru():
   services = (repo_root / _COMPOSE_SERVICES_DOC).read_text()
   architecture = (repo_root / _ARCHITECTURE_DOC).read_text()
   install = (repo_root / _INSTALL_TUTORIAL).read_text()
-  upgrade = (repo_root / "docs" / "upgrade.md").read_text()
+  pipeline_config = (repo_root / _PIPELINE_CONFIG_DOC).read_text()
   assert "volatile-lru" in services
   for text in (services, architecture, install):
     assert "allkeys-lru" not in text
-  for text in (services, upgrade):
+  for text in (services, pipeline_config):
     assert "unix:///run/valkey/valkey.sock" in text
-    assert (
-      "--io-threads 4" in text
-      or "`--io-threads` **4**" in text
-      or "**`--io-threads 4`**" in text
-    )
+  assert (
+    "--io-threads 4" in services
+    or "`--io-threads` **4**" in services
+    or "**`--io-threads 4`**" in services
+  )
 
 
 def test_docker_compose_web_and_pipeline_do_not_depend_on_valkey():
@@ -330,15 +334,17 @@ def test_docker_compose_valkey_unix_socket_volume_is_shared():
 
 
 def test_install_tutorial_is_fresh_only_and_upgrade_doc_holds_existing_stack():
-  """Installation stays greenfield; existing-stack playbooks live in docs/upgrade.md."""
+  """Installation stays greenfield; existing-stack playbooks live in the
+  upgrade how-to and one-time cutovers in the release notes."""
   repo_root = Path(__file__).resolve().parents[2]
   readme = (repo_root / "README.md").read_text()
   tutorial = (repo_root / _INSTALL_TUTORIAL).read_text()
-  upgrade = (repo_root / "docs" / "upgrade.md").read_text()
+  upgrade = (repo_root / _UPGRADE_DOC).read_text()
+  release_notes = (repo_root / _RELEASE_NOTES_DOC).read_text()
   assert readme.index("## Install") < readme.index("## Quick start")
-  assert "docs/upgrade.md" in readme
+  assert _UPGRADE_DOC in readme
   assert _INSTALL_TUTORIAL in readme
-  assert "../upgrade.md" in tutorial
+  assert "../how-to/operate/upgrade-the-stack.md" in tutorial
   install = tutorial.split("## Before you begin", 1)[1].split(
     "## What you built", 1
   )[0]
@@ -358,17 +364,22 @@ def test_install_tutorial_is_fresh_only_and_upgrade_doc_holds_existing_stack():
     assert phrase not in install, phrase
   required_in_upgrade = (
     "podman-compose -p hpcperfstats pull valkey",
-    "Upgrading from an older ini layout",
-    "docker-compose.app.yaml",
     "pg18-migrate",
     "./scripts/rebuild_frontend.sh",
     "./scripts/rebuild_pipeline.sh",
-    "OPERATOR_PG18_MIGRATION.md",
+    "migrate-to-postgresql-18.md",
+  )
+  # One-time cutovers (Q3): legacy INI sections and the obsolete app overlay.
+  required_in_release_notes = (
+    "Upgrading from an older ini layout",
+    "docker-compose.app.yaml",
   )
   # PG18 runs io_method=worker; no io_uring sysctl/seccomp steps remain.
   assert "io_uring" not in upgrade
   for phrase in required_in_upgrade:
     assert phrase in upgrade, phrase
+  for phrase in required_in_release_notes:
+    assert phrase in release_notes, phrase
 
 
 def test_docker_compose_rabbitmq_defaults_to_guest_credentials():
@@ -392,7 +403,7 @@ def test_docker_compose_rabbitmq_sets_erl_flags_allocator_tuning():
 
   assert expected in rabbitmq_block
   services = (repo_root / _COMPOSE_SERVICES_DOC).read_text()
-  upgrade = (repo_root / "docs" / "upgrade.md").read_text()
+  upgrade = (repo_root / _UPGRADE_DOC).read_text()
   assert expected in services
   assert "ERL_FLAGS" in upgrade
 
@@ -504,7 +515,7 @@ def test_docker_compose_rabbitmq_disables_crash_dumps():
   assert "ulimits:" in rabbitmq_block
   assert "core: 0" in rabbitmq_block
   services = (repo_root / _COMPOSE_SERVICES_DOC).read_text()
-  upgrade = (repo_root / "docs" / "upgrade.md").read_text()
+  upgrade = (repo_root / _UPGRADE_DOC).read_text()
   assert "ERL_CRASH_DUMP_SECONDS=0" in services
   assert "ERL_CRASH_DUMP_SECONDS" in upgrade
 
@@ -535,7 +546,7 @@ def test_docker_compose_rabbitmq_stop_grace_period_is_30m():
 def test_operator_rabbitmq_recovery_runbook_exists():
   """Preserve/extract recovery doc required; never-delete without OK."""
   repo_root = Path(__file__).resolve().parents[2]
-  path = repo_root / "docs" / "OPERATOR_RABBITMQ_RECOVERY.md"
+  path = repo_root / _RABBITMQ_RECOVERY_DOC
   text = path.read_text()
   assert path.is_file()
   assert "preserve" in text.lower()
@@ -546,7 +557,7 @@ def test_operator_rabbitmq_recovery_runbook_exists():
   assert "classic" in text.lower()
   assert "rabbitmq-watcher" in text
   services = (repo_root / _COMPOSE_SERVICES_DOC).read_text()
-  assert "OPERATOR_RABBITMQ_RECOVERY.md" in services
+  assert "recover-rabbitmq.md" in services
   assert "rabbitmq-watcher" in services
 
 

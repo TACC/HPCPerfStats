@@ -12,7 +12,7 @@ Operator-facing setup lives in **`docs/tutorials/install-hpcperfstats.md`** (the
 ## Canonical documents
 
 - **`docs/tutorials/install-hpcperfstats.md`** — **fresh install** only: prerequisites and copy/paste first-boot commands a blank host needs; it links `docs/reference/compose-services.md` and `docs/reference/pipeline-configuration.md` for the wiring details.
-- **[`docs/upgrade.md`](docs/upgrade.md)** — **existing stacks** only: image rebuilds, Valkey/INI/volume layout, RabbitMQ recreate, PG18 dual-run, SPA fingerprint heal. Do **not** put those playbooks into the install tutorial.
+- **`docs/how-to/operate/upgrade-the-stack.md`** — **existing stacks** only: image rebuilds, Valkey bump, INI rewrite, RabbitMQ recreate and minor upgrade, Timescale catalog bump, SPA fingerprint heal; **`docs/how-to/operate/migrate-to-postgresql-18.md`** for the PG18 dual-run; **`docs/reference/release-notes.md`** for one-time cutovers (renamed services, keys, volumes). Do **not** put those playbooks into the install tutorial.
 
 ## Change categories that require install-doc updates
 
@@ -22,20 +22,20 @@ Use this checklist when touching the listed areas. If any row applies, extend or
 |----------|------------------|---------------|
 | **Compose services and wiring** | `docker-compose.yaml`, `docker-compose.yaml` (+ `.example`), service names, `depends_on`, networks, images, commands, env defaults | Document how to start/stop, what runs where, new/changed services, ports published to the host. Write commands as **`podman-compose -p hpcperfstats exec <service>`** (same form as `compose-operator-terminal-commands.mdc` item 7), not hardcoded `container_name` strings or `docker compose`; when `name:` / project naming changes, audit the **Common commands** table in `docs/reference/compose-services.md`. The site **`docker-compose.yaml`** **`include:`**s **`docker-compose.defaults.yaml`** and is found by default file discovery, so pass no **`-f`** (never `-f docker-compose.app.yaml`). |
 | **Host-visible ports and firewall** | Published ports (`514`, `80`/`443`, DB/Valkey/RMQ only-on-internal-network vs exposed) | Call out inbound firewall / syslog forwarder targets; avoid implying ports that no longer exist |
-| **Volumes and data paths** | Bind mounts under `/data/hpcperfstats_*`, named volumes, `/hpcperfstats/` layout, log/accounting/archive dirs, `ssh_keys` and **`proxy_ssl_source`** devices | Fresh-host directory creation; **existing-volume** moves go in **`docs/upgrade.md`** |
+| **Volumes and data paths** | Bind mounts under `/data/hpcperfstats_*`, named volumes, `/hpcperfstats/` layout, log/accounting/archive dirs, `ssh_keys` and **`proxy_ssl_source`** devices | Fresh-host directory creation; **existing-volume** moves go in **`docs/reference/release-notes.md`** |
 | **Container resource limits** | `shm_size` for Postgres, `mem_limit`, Valkey `maxmemory`, sysctl overrides in compose | Operator prerequisites or tuning guidance when defaults change (e.g. shared memory, Valkey memory cap; pool sizing cross-reference **`docs/reference/pipeline-configuration.md`**) |
 | **Linux host prerequisites** | Rootless subordinate IDs, `/data` Podman storage, kernel sysctl (`vm.overcommit_memory`), ulimits | Persistent bootstrap/reboot guidance when Valkey, DB, or rootless Podman requires host-level settings |
 | **Immutable config and examples** | `hpcperfstats.ini.example`, new required `[SECTION]` keys, deprecated keys | Mirror copy/edit steps and field tables under Installation; keep example and `docs/reference/pipeline-configuration.md` in lockstep |
 | **Service configs operators must copy** | Tracked `supervisord.conf` (no `cp`); rsync via wrapper + optional/site `rsync_data.sh` with tracked `.example` fallback (guarded until enabled); committed `nginx.conf` (no TLS path edit — certs via **`proxy_ssl_source`** settings volume + entrypoint materialization); syslog-ng fragments | Install docs must not instruct supervisord `cp …example`; document wrapper + enable path for rsync; **`proxy_ssl_source.device`** + optional **`HPCPERFSTATS_SSL_CERTS_REL`** (no `.env`) + **`compose restart proxy`** after renew; restart implications |
-| **Bootstrap / one-shot first boot** | New `manage.py` or documented migrate/collectstatic order, new mandatory seeds | Add or adjust tutorial commands so a blank deploy succeeds. PG18 / Timescale catalog hops: **`docs/upgrade.md`** |
+| **Bootstrap / one-shot first boot** | New `manage.py` or documented migrate/collectstatic order, new mandatory seeds | Add or adjust tutorial commands so a blank deploy succeeds. PG18 / Timescale catalog hops: **`docs/how-to/operate/migrate-to-postgresql-18.md`** / **`docs/how-to/operate/upgrade-the-stack.md`** |
 | **External integrations documented at deploy** | Cluster syslog (`[SYSLOG]`), RabbitMQ from monitors, accounting/rsync | Ports, INI knobs, forwarder examples—stay aligned with code defaults |
 
 ## Required behavior
 
 1. Identify whether the change touches **operator setup**, **first-boot**, **upgrade**, or **host prerequisites**.
 2. If it is **fresh install / first-boot**, update **`docs/tutorials/install-hpcperfstats.md`** (and the compose-services reference) so a reader gets correct paths, ports, INI keys, and commands—including **“why”** when a sysctl or volume requirement is non-obvious.
-3. If it is an **existing-stack upgrade** (rebuild, migrate, recreate, legacy layout), update **`docs/upgrade.md`** and keep a one-line pointer from the tutorial — do not expand the tutorial with upgrade procedures.
-4. Write these pages per **`docs-current-state-only.mdc`**: current behaviour only, no changelog, "previously"/"no longer" text or old defaults (upgrade history belongs in **`docs/upgrade.md`**).
+3. If it is an **existing-stack upgrade** (rebuild, migrate, recreate, legacy layout), update **`docs/how-to/operate/upgrade-the-stack.md`** (one-time cutovers: **`docs/reference/release-notes.md`**) and keep a one-line pointer from the tutorial — do not expand the tutorial with upgrade procedures.
+4. Write these pages per **`docs-current-state-only.mdc`**: current behaviour only, no changelog, "previously"/"no longer" text or old defaults (one-time cutovers belong in **`docs/reference/release-notes.md`**).
 5. Prefer **copy-paste-ready** shell snippets and keep numbering/sections consistent with the current tutorial structure.
 6. If behavior is documented in a reference page in detail, the tutorial may stay short with a **link**—but it must still list the prerequisite or step operators cannot skip on a **blank** host.
 

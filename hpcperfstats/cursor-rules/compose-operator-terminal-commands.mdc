@@ -1,7 +1,7 @@
 ---
 description: Operator diagnostics must use copy/paste Compose blocks per service
 alwaysApply: false
-globs: docs/plans/**,.cursor/plans/**,docs/how-to/develop/run-tests.md,docs/reference/test-layout.md,docs/how-to/develop/run-sync-timedb-benchmarks.md,docs/how-to/develop/diagnose-update-metrics.md,docs/upgrade.md,HPCPerfStats/README.md,docs/tutorials/install-hpcperfstats.md,docs/reference/compose-services.md
+globs: docs/plans/**,.cursor/plans/**,docs/how-to/develop/run-tests.md,docs/reference/test-layout.md,docs/how-to/develop/run-sync-timedb-benchmarks.md,docs/how-to/develop/diagnose-update-metrics.md,docs/how-to/operate/**,docs/reference/release-notes.md,HPCPerfStats/README.md,docs/tutorials/install-hpcperfstats.md,docs/reference/compose-services.md
 ---
 
 # Compose Operator Terminal Commands

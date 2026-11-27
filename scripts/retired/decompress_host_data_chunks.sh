@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # RETIRED (2026-11): the host_data dev-uniqueness migration (0032) is complete
 # fleet-wide. Kept only for a new site or a 0032 repair; see
-# docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md.
-# Parallel host_data decompress for Stage 1 (OPERATOR_HOST_DATA_DEV_UNIQUENESS.md).
+# docs/history/host-data-dev-uniqueness-rollout.md.
+# Parallel host_data decompress for Stage 1 (docs/history/host-data-dev-uniqueness-rollout.md).
 #
 # Keeps up to N decompressions in flight. When any one finishes, rechecks
 # compressed_chunks and immediately starts another (sliding pool), until none

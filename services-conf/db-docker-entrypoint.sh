@@ -40,7 +40,7 @@ docker_create_db_directories() {
 
 	# VOLUME / bind at /var/lib/postgresql replaces the image's 1777 postgres-owned
 	# directory. Reclaim ownership when we are root (no-op on NFS root_squash —
-	# operators must chown 70:70 on the host bind; see OPERATOR_PG18_MIGRATION.md).
+	# operators must chown 70:70 on the host bind; see docs/how-to/operate/migrate-to-postgresql-18.md).
 	if [ "$user" = '0' ]; then
 		chown postgres:postgres /var/lib/postgresql 2>/dev/null || :
 		chmod 1777 /var/lib/postgresql 2>/dev/null || :

@@ -20,7 +20,7 @@ Usage: capture_storage_ha.sh [--out DIR] [--exec]
 Writes the operator questionnaire and optional live SHOW commands for
 archive_mode / wal_level. Production backup cadence and a quantified RPO
 must be filled by operators from site practice — pg_dump in
-docs/OPERATOR_PG18_MIGRATION.md is a cutover procedure, not an HA contract.
+docs/how-to/operate/migrate-to-postgresql-18.md is a cutover procedure, not an HA contract.
 EOF
       exit 0
       ;;
@@ -44,7 +44,7 @@ Architecture this paper can already state (do not contradict):
 - Compose `db` is a single TimescaleDB/PostgreSQL volume.
 - Host archives (raw then sealed `.tar.zst`) remain the source of truth until
   ingest + janitor succeed.
-- `docs/OPERATOR_PG18_MIGRATION.md` `pg_dump` is a cutover procedure, not a
+- `docs/how-to/operate/migrate-to-postgresql-18.md` `pg_dump` is a cutover procedure, not a
   measured HA contract.
 
 ## db — WAL / archive settings (not a backup policy)

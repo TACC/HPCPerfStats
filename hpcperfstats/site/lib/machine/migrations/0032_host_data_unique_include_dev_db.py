@@ -3,7 +3,7 @@
 Django state already records 5-column ``unique_together`` from Phase 1 ``0030``.
 This migration applies the matching DB UNIQUE after operators decompress all
 ``host_data`` chunks (and, on hpcperfstats02-class sites, drop the aberrant
-4-column PK outside migrate — see ``docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md``).
+4-column PK outside migrate — see ``docs/history/host-data-dev-uniqueness-rollout.md``).
 
 Raises (migrate fails, 0032 stays unapplied) when compressed chunks remain, a
 multi-column PRIMARY KEY is still present, or the NULL ``dev`` backfill marker
@@ -57,7 +57,7 @@ class Migration(migrations.Migration):
 
             IF COALESCE(compressed_n, 0) > 0 THEN
               RAISE EXCEPTION
-                '0032_host_data_unique_include_dev_db: % compressed host_data chunk(s); decompress first, 0032 stays unapplied (docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)',
+                '0032_host_data_unique_include_dev_db: % compressed host_data chunk(s); decompress first, 0032 stays unapplied (docs/history/host-data-dev-uniqueness-rollout.md)',
                 compressed_n;
             END IF;
 
@@ -71,7 +71,7 @@ class Migration(migrations.Migration):
 
             IF multi_col_pk THEN
               RAISE EXCEPTION
-                '0032_host_data_unique_include_dev_db: multi-column PRIMARY KEY still on host_data; normalize first, 0032 stays unapplied (hpcperfstats02 path in docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)';
+                '0032_host_data_unique_include_dev_db: multi-column PRIMARY KEY still on host_data; normalize first, 0032 stays unapplied (hpcperfstats02 path in docs/history/host-data-dev-uniqueness-rollout.md)';
             END IF;
 
             -- NULL dev -> '' is the operator backfill
@@ -90,7 +90,7 @@ class Migration(migrations.Migration):
                    ) IS DISTINCT FROM 'hpcperfstats:null-dev-backfill-complete'
             THEN
               RAISE EXCEPTION
-                '0032_host_data_unique_include_dev_db: host_data.dev NULL backfill not marked complete; run scripts/retired/backfill_host_data_null_dev.sh until it prints done (docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)';
+                '0032_host_data_unique_include_dev_db: host_data.dev NULL backfill not marked complete; run scripts/retired/backfill_host_data_null_dev.sh until it prints done (docs/history/host-data-dev-uniqueness-rollout.md)';
             END IF;
 
             FOR con IN

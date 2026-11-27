@@ -798,7 +798,7 @@ _EXCEPTION_SWALLOWED_BY_NOTICE = re.compile(
 _OLD_0032_SOFT_SKIP = """
             IF COALESCE(compressed_n, 0) > 0 THEN
               RAISE NOTICE
-                '0032_host_data_unique_include_dev_db: skipping — % compressed host_data chunk(s); decompress first (see docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)',
+                '0032_host_data_unique_include_dev_db: skipping — % compressed host_data chunk(s); decompress first (see docs/history/host-data-dev-uniqueness-rollout.md)',
                 compressed_n;
               RETURN;
             END IF;

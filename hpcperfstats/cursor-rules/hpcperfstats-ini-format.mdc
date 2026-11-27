@@ -73,7 +73,7 @@ When ambiguous, ask the operator/product owner; do not guess.
 In the **same task**:
 
 1. Classify using the taxonomy above.
-2. Add or update the getter in **`hpcperfstats/dbload/lib/conf_parser.py`**, reading the key from its one section only (no old-section fallback; sites move keys with **`scripts/rewrite_hpcperfstats_ini.sh`**, see **`docs/upgrade.md`** § INI layout).
+2. Add or update the getter in **`hpcperfstats/dbload/lib/conf_parser.py`**, reading the key from its one section only (no old-section fallback; sites move keys with **`scripts/rewrite_hpcperfstats_ini.sh`**, see **`docs/reference/release-notes.md`**, INI keys read only from their own section).
 3. Append **`(section, option, default)`** to **`INI_OPTION_REGISTRY`** (`default` is a str code fallback, or `None` when required).
 4. Ensure **`ini_section_placement.py`** covers the option (explicit map or prefix rule).
 5. Document the key in **`hpcperfstats.ini.example`** in the correct section and **`[DEFAULT]`** order. If the example value equals the registry default, use a **commented** `# key = <default>` line (see **Example cleanliness** above); keep the key **active** only when it is required (`default is None`) or an intentional non-default override.

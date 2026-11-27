@@ -672,8 +672,29 @@ def test_monitor_quadrant_docs_trigger_current_state_rule():
 
 
 def test_readme_install_triggered_for_upgrade_doc():
-  rules = triggered_rules_for_paths(["/repo/HPCPerfStats/docs/upgrade.md"])
+  rules = triggered_rules_for_paths(
+    ["/repo/HPCPerfStats/docs/how-to/operate/upgrade-the-stack.md"]
+  )
   assert "readme-installation-sync.mdc" in rules
+
+
+def test_operate_how_tos_trigger_their_domain_rules():
+  base = "/repo/HPCPerfStats/docs"
+  cases = {
+    "how-to/operate/migrate-to-postgresql-18.md": (
+      "postgres-custom-image-and-migrate-contract.mdc",
+      "compose-operator-terminal-commands.mdc",
+    ),
+    "how-to/operate/recover-rabbitmq.md": (
+      "rabbitmq-memory-cgroup-contract.mdc",
+      "compose-operator-terminal-commands.mdc",
+    ),
+    "reference/release-notes.md": ("readme-installation-sync.mdc",),
+  }
+  for rel, expected in cases.items():
+    rules = triggered_rules_for_paths([f"{base}/{rel}"])
+    for rule in expected:
+      assert rule in rules, (rel, rule)
 
 
 def test_rule_file_needs_router_entry_for_new_mdc():
