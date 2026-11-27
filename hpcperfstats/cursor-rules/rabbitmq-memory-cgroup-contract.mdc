@@ -39,13 +39,13 @@ globs:
 - `test_docker_compose_rabbitmq_sets_erl_flags_allocator_tuning` asserts **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`** + docs sync.
 - `test_docker_compose_rabbitmq_logging_warning_not_info` asserts warning console + connection/channel error.
 - `test_docker_compose_rabbitmq_disables_crash_dumps` asserts **`ERL_CRASH_DUMP_SECONDS=0`** + **`core: 0`**.
-- `test_docker_compose_rabbitmq_stop_grace_period_is_30m` asserts **`stop_grace_period: 30m`** on `rabbitmq` (and `db`) + README mention.
+- `test_docker_compose_rabbitmq_stop_grace_period_is_30m` asserts **`stop_grace_period: 30m`** on `rabbitmq` (and `db`) + `docs/reference/compose-services.md` mention.
 - `test_operator_rabbitmq_recovery_runbook_exists` asserts preserve/extract runbook.
 - `test_rabbitmq_watcher.py` + supervisord tests assert 5 min / 40 GiB / +10 GiB scream + GIL program wire.
 
 ## Overlap
 
-- **`readme-installation-sync.mdc`** / **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** — operator wording for limits.
+- **`readme-installation-sync.mdc`** / **`docs/reference/compose-services.md`** (rabbitmq section) — operator wording for limits.
 - **`compose-required-for-data-services-changes.mdc`** — RabbitMQ wiring changes.
 - **`compose-operator-terminal-commands.mdc`** — rabbitmqctl paste shapes.
 - **`runtime-resource-and-metrics-safety.mdc`** — broader resource safety.

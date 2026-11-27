@@ -33,7 +33,7 @@ REAP_RSS = "rss_reap"
 # parse + Codon (hpcperfstats02 2026-10-22) showed ~0.2x anon vs raw while
 # skip_budget_bytes underfilled the pool — lowered to 1.0 (budget ≈ roof).
 # Headroom / file-cache gates remain the shared-cgroup safety net.
-# See docs/DEPLOY_CONCURRENCY_AND_NUMA.md § OOM.
+# See docs/explanation/pipeline-concurrency.md (In-flight raw-byte admit).
 PEAK_CGROUP_PER_RAW_FILE_BYTE = 1.0
 _MIB_BYTES = 1024 * 1024
 

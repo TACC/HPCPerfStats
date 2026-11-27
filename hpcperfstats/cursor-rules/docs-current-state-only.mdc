@@ -1,7 +1,7 @@
 ---
 description: Evergreen docs (READMEs, docs/index.md, tutorials, how-to, reference, explanation, monitor/docs quadrants) describe current code only; no changelog, history, or old-version text; ASCII plus the degree sign, micro sign and accented proper names; every claim is checked against code when edited
 alwaysApply: false
-globs: README.md,docs/index.md,docs/tutorials/**,docs/how-to/**,docs/reference/**,docs/explanation/**,monitor/docs/how-to/**,monitor/docs/explanation/**,monitor/docs/reference/**,docs/using-the-website-as-a-researcher.md,docs/DEPLOY_CONCURRENCY_AND_NUMA.md,docs/design-document.md,docs/TESTING.md
+globs: README.md,docs/index.md,docs/tutorials/**,docs/how-to/**,docs/reference/**,docs/explanation/**,monitor/docs/how-to/**,monitor/docs/explanation/**,monitor/docs/reference/**,docs/using-the-website-as-a-researcher.md,docs/TESTING.md
 ---
 
 # Evergreen docs describe the current code only
@@ -18,7 +18,7 @@ Evergreen pages are reference documentation for the code as it is at `HEAD`:
 | `docs/index.md` | Docs map |
 | `docs/tutorials/**`, `docs/how-to/**`, `docs/reference/**`, `docs/explanation/**` | Every quadrant page |
 | `monitor/docs/how-to/**`, `monitor/docs/explanation/**`, `monitor/docs/reference/**` | Monitor quadrant pages (placement: `monitor-docs-structure-and-style.mdc` in the monitor tree) |
-| `docs/using-the-website-as-a-researcher.md`, `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`, `docs/design-document.md`, `docs/TESTING.md` | Core docs at their current paths until they move into the quadrant tree; content triggers `researcher-job-detail-doc-sync.mdc`, `deploy-concurrency-doc-sync.mdc`, `design-document-sync.mdc`, `testing-doc-sync.mdc` |
+| `docs/using-the-website-as-a-researcher.md`, `docs/TESTING.md` | Core docs at their current paths until they move into the quadrant tree; content triggers `researcher-job-detail-doc-sync.mdc`, `testing-doc-sync.mdc` (`deploy-concurrency-doc-sync.mdc` and `design-document-sync.mdc` cover the quadrant pages that hold the deploy and design facts) |
 
 Exempt:
 

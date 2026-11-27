@@ -1,7 +1,7 @@
 ---
 description: Operator diagnostics must use copy/paste Compose blocks per service
 alwaysApply: false
-globs: docs/plans/**,.cursor/plans/**,docs/TESTING.md,docs/upgrade.md,HPCPerfStats/README.md
+globs: docs/plans/**,.cursor/plans/**,docs/TESTING.md,docs/upgrade.md,HPCPerfStats/README.md,docs/tutorials/install-hpcperfstats.md,docs/reference/compose-services.md
 ---
 
 # Compose Operator Terminal Commands
@@ -301,7 +301,7 @@ docker compose logs pipeline
 | Ingest / sync_timedb / pipeline data | `pipeline` | `docker compose exec pipeline su hpcperfstats -c '…'` |
 | nginx / proxy logs | `proxy` | `docker compose logs proxy 2>&1 \| grep -E 'error\|warn' \| tail -40` |
 
-Match **`README.md`** *Useful commands* and **`readme-installation-sync.mdc`** (`docker compose exec <service>` over hardcoded container names).
+Match **`docs/reference/compose-services.md`** *Common commands* and **`readme-installation-sync.mdc`** (`docker compose exec <service>` over hardcoded container names).
 
 ### Anti-pattern — `psql -U postgres` (hpcperfstats04)
 

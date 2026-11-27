@@ -7,37 +7,37 @@ alwaysApply: false
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-Operator-facing setup lives primarily in **`HPCPerfStats/README.md`** under **Installation** and adjacent deployment sections (Compose stack, nginx, data volumes, cluster syslog, `hpcperfstats.ini`, supervisor/rsync). When a change would leave those instructions wrong, incomplete, or unsafe to follow on a fresh deploy, update **`README.md` in the same task**—**before** considering the change complete (same PR / same agent task). Do not land code or compose edits that alter the setup story without updating the README.
+Operator-facing setup lives in **`docs/tutorials/install-hpcperfstats.md`** (the fresh-install path) and **`docs/reference/compose-services.md`** (Compose stack, nginx, data volumes, cluster syslog, supervisor/rsync, per-service facts); `hpcperfstats.ini` keys are in **`docs/reference/pipeline-configuration.md`**. The root **`README.md`** is the landing page and links the tutorial from its Install section. When a change would leave those pages wrong, incomplete, or unsafe to follow on a fresh deploy, update them **in the same task**, **before** considering the change complete. Do not land code or compose edits that alter the setup story without updating them.
 
 ## Canonical documents
 
-- **[`HPCPerfStats/README.md`](HPCPerfStats/README.md)** — **fresh install** only: prerequisites, copy/paste first-boot commands, and compose/INI/nginx/syslog wiring a blank host needs.
-- **[`docs/upgrade.md`](docs/upgrade.md)** — **existing stacks** only: image rebuilds, Valkey/INI/volume layout, RabbitMQ recreate, PG18 dual-run, SPA fingerprint heal. Do **not** put those playbooks back under README **Installation**.
+- **`docs/tutorials/install-hpcperfstats.md`** — **fresh install** only: prerequisites and copy/paste first-boot commands a blank host needs; it links `docs/reference/compose-services.md` and `docs/reference/pipeline-configuration.md` for the wiring details.
+- **[`docs/upgrade.md`](docs/upgrade.md)** — **existing stacks** only: image rebuilds, Valkey/INI/volume layout, RabbitMQ recreate, PG18 dual-run, SPA fingerprint heal. Do **not** put those playbooks into the install tutorial.
 
-## Change categories that require README updates
+## Change categories that require install-doc updates
 
-Use this checklist when touching the listed areas. If any row applies, extend or correct **Installation** (and any README subsection that duplicates the same operator contract).
+Use this checklist when touching the listed areas. If any row applies, extend or correct the install tutorial or the compose-services reference (one home per fact).
 
-| Category | Examples in repo | README impact |
+| Category | Examples in repo | Install-doc impact |
 |----------|------------------|---------------|
-| **Compose services and wiring** | `docker-compose.yaml`, `docker-compose.yaml` (+ `.example`), service names, `depends_on`, networks, images, commands, env defaults | Document how to start/stop, what runs where, new/changed services, ports published to the host. Write commands as **`podman-compose -p hpcperfstats exec <service>`** (same form as `compose-operator-terminal-commands.mdc` item 7), not hardcoded `container_name` strings or `docker compose`; when `name:` / project naming changes, audit **Useful commands** tables. The site **`docker-compose.yaml`** **`include:`**s **`docker-compose.defaults.yaml`** and is found by default file discovery, so pass no **`-f`** (never `-f docker-compose.app.yaml`). |
+| **Compose services and wiring** | `docker-compose.yaml`, `docker-compose.yaml` (+ `.example`), service names, `depends_on`, networks, images, commands, env defaults | Document how to start/stop, what runs where, new/changed services, ports published to the host. Write commands as **`podman-compose -p hpcperfstats exec <service>`** (same form as `compose-operator-terminal-commands.mdc` item 7), not hardcoded `container_name` strings or `docker compose`; when `name:` / project naming changes, audit the **Common commands** table in `docs/reference/compose-services.md`. The site **`docker-compose.yaml`** **`include:`**s **`docker-compose.defaults.yaml`** and is found by default file discovery, so pass no **`-f`** (never `-f docker-compose.app.yaml`). |
 | **Host-visible ports and firewall** | Published ports (`514`, `80`/`443`, DB/Valkey/RMQ only-on-internal-network vs exposed) | Call out inbound firewall / syslog forwarder targets; avoid implying ports that no longer exist |
 | **Volumes and data paths** | Bind mounts under `/data/hpcperfstats_*`, named volumes, `/hpcperfstats/` layout, log/accounting/archive dirs, `ssh_keys` and **`proxy_ssl_source`** devices | Fresh-host directory creation; **existing-volume** moves go in **`docs/upgrade.md`** |
-| **Container resource limits** | `shm_size` for Postgres, `mem_limit`, Valkey `maxmemory`, sysctl overrides in compose | Operator prerequisites or tuning guidance when defaults change (e.g. shared memory, Valkey memory cap; pool sizing cross-reference **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** if README points there) |
+| **Container resource limits** | `shm_size` for Postgres, `mem_limit`, Valkey `maxmemory`, sysctl overrides in compose | Operator prerequisites or tuning guidance when defaults change (e.g. shared memory, Valkey memory cap; pool sizing cross-reference **`docs/reference/pipeline-configuration.md`**) |
 | **Linux host prerequisites** | Rootless subordinate IDs, `/data` Podman storage, kernel sysctl (`vm.overcommit_memory`), ulimits | Persistent bootstrap/reboot guidance when Valkey, DB, or rootless Podman requires host-level settings |
-| **Immutable config and examples** | `hpcperfstats.ini.example`, new required `[SECTION]` keys, deprecated keys | Mirror copy/edit steps and field tables under Installation; keep example and README in lockstep |
-| **Service configs operators must copy** | Tracked `supervisord.conf` (no `cp`); rsync via wrapper + optional/site `rsync_data.sh` with tracked `.example` fallback (guarded until enabled); committed `nginx.conf` (no TLS path edit — certs via **`proxy_ssl_source`** settings volume + entrypoint materialization); syslog-ng fragments | README must not instruct supervisord `cp …example`; document wrapper + enable path for rsync; **`proxy_ssl_source.device`** + optional **`HPCPERFSTATS_SSL_CERTS_REL`** (no `.env`) + **`compose restart proxy`** after renew; restart implications |
-| **Bootstrap / one-shot first boot** | New `manage.py` or documented migrate/collectstatic order, new mandatory seeds | Add or adjust README commands so a blank deploy succeeds. PG18 / Timescale catalog hops: **`docs/upgrade.md`** |
+| **Immutable config and examples** | `hpcperfstats.ini.example`, new required `[SECTION]` keys, deprecated keys | Mirror copy/edit steps and field tables under Installation; keep example and `docs/reference/pipeline-configuration.md` in lockstep |
+| **Service configs operators must copy** | Tracked `supervisord.conf` (no `cp`); rsync via wrapper + optional/site `rsync_data.sh` with tracked `.example` fallback (guarded until enabled); committed `nginx.conf` (no TLS path edit — certs via **`proxy_ssl_source`** settings volume + entrypoint materialization); syslog-ng fragments | Install docs must not instruct supervisord `cp …example`; document wrapper + enable path for rsync; **`proxy_ssl_source.device`** + optional **`HPCPERFSTATS_SSL_CERTS_REL`** (no `.env`) + **`compose restart proxy`** after renew; restart implications |
+| **Bootstrap / one-shot first boot** | New `manage.py` or documented migrate/collectstatic order, new mandatory seeds | Add or adjust tutorial commands so a blank deploy succeeds. PG18 / Timescale catalog hops: **`docs/upgrade.md`** |
 | **External integrations documented at deploy** | Cluster syslog (`[SYSLOG]`), RabbitMQ from monitors, accounting/rsync | Ports, INI knobs, forwarder examples—stay aligned with code defaults |
 
 ## Required behavior
 
 1. Identify whether the change touches **operator setup**, **first-boot**, **upgrade**, or **host prerequisites**.
-2. If it is **fresh install / first-boot**, update **`HPCPerfStats/README.md` Installation** so a reader gets correct paths, ports, INI keys, and commands—including **“why”** when a sysctl or volume requirement is non-obvious.
-3. If it is an **existing-stack upgrade** (rebuild, migrate, recreate, legacy layout), update **`docs/upgrade.md`** and keep a one-line pointer from README Installation / Useful commands — do not expand Installation with upgrade procedures.
-4. Write README content per **`docs-current-state-only.mdc`**: current behaviour only, no changelog, "previously"/"no longer" text or old defaults (upgrade history belongs in **`docs/upgrade.md`**).
-5. Prefer **copy-paste-ready** shell snippets and keep numbering/sections consistent with the current README structure.
-6. If behavior is documented in **`docs/*.md`** in detail, README may stay short with a **link**—but README must still list the prerequisite or step operators cannot skip on a **blank** host.
+2. If it is **fresh install / first-boot**, update **`docs/tutorials/install-hpcperfstats.md`** (and the compose-services reference) so a reader gets correct paths, ports, INI keys, and commands—including **“why”** when a sysctl or volume requirement is non-obvious.
+3. If it is an **existing-stack upgrade** (rebuild, migrate, recreate, legacy layout), update **`docs/upgrade.md`** and keep a one-line pointer from the tutorial — do not expand the tutorial with upgrade procedures.
+4. Write these pages per **`docs-current-state-only.mdc`**: current behaviour only, no changelog, "previously"/"no longer" text or old defaults (upgrade history belongs in **`docs/upgrade.md`**).
+5. Prefer **copy-paste-ready** shell snippets and keep numbering/sections consistent with the current tutorial structure.
+6. If behavior is documented in a reference page in detail, the tutorial may stay short with a **link**—but it must still list the prerequisite or step operators cannot skip on a **blank** host.
 
 ## When README-only edits suffice
 
@@ -46,7 +46,7 @@ Use this checklist when touching the listed areas. If any row applies, extend or
 
 ## Overlap
 
-- **`syslog-cluster-ingest.mdc`** — cluster syslog README subsection stays aligned with `[SYSLOG]` and pipeline **514**.
-- **`immutable-image-ini-policy.mdc`** — README must not instruct runtime bind-mount overrides that contradict immutable **`hpcperfstats.ini`** in images.
-- **`nginx-django-route-allowlist-sync.mdc`** — when nginx snippets or compose mounts change deployment steps, README nginx/production bullets stay accurate (`README.md` / **`docs/TESTING.md`** per that rule).
-- **`postgres-docker-shared-memory.mdc`** — if **`shm_size`** or Postgres container tuning changes materially, README or linked ops doc should mention operator-visible tuning when failures are likely.
+- **`syslog-cluster-ingest.mdc`** — the cluster syslog section of `docs/reference/compose-services.md` stays aligned with `[SYSLOG]` and pipeline **514**.
+- **`immutable-image-ini-policy.mdc`** — the install pages must not instruct runtime bind-mount overrides that contradict immutable **`hpcperfstats.ini`** in images.
+- **`nginx-django-route-allowlist-sync.mdc`** — when nginx snippets or compose mounts change deployment steps, the proxy section of `docs/reference/compose-services.md` stays accurate (and **`docs/TESTING.md`** per that rule).
+- **`postgres-docker-shared-memory.mdc`** — if **`shm_size`** or Postgres container tuning changes materially, `docs/reference/compose-services.md` should mention operator-visible tuning when failures are likely.

@@ -6,6 +6,19 @@ from pathlib import Path
 
 import yaml
 
+# Pages that hold the compose operator facts these tests pin.
+_INSTALL_TUTORIAL = "docs/tutorials/install-hpcperfstats.md"
+_COMPOSE_SERVICES_DOC = "docs/reference/compose-services.md"
+_ARCHITECTURE_DOC = "docs/explanation/architecture.md"
+_G1_DOCS = (
+  "README.md",
+  _INSTALL_TUTORIAL,
+  _COMPOSE_SERVICES_DOC,
+  "docs/reference/pipeline-configuration.md",
+  _ARCHITECTURE_DOC,
+  "docs/explanation/pipeline-concurrency.md",
+)
+
 
 def _compose_has_named_tmpfs_volume(
   content: str, name: str, size_opt: str
@@ -245,17 +258,17 @@ def test_docker_compose_valkey_maxmemory_policy_is_volatile_lru():
   assert "allkeys-random" not in content
 
 
-def test_readme_and_design_doc_valkey_policy_is_volatile_lru():
-  """Operator install docs must match the compose Valkey eviction policy."""
+def test_compose_services_and_architecture_valkey_policy_is_volatile_lru():
+  """Operator docs must match the compose Valkey eviction policy."""
   repo_root = Path(__file__).resolve().parents[2]
-  readme = (repo_root / "README.md").read_text()
-  design = (repo_root / "docs" / "design-document.md").read_text()
+  services = (repo_root / _COMPOSE_SERVICES_DOC).read_text()
+  architecture = (repo_root / _ARCHITECTURE_DOC).read_text()
+  install = (repo_root / _INSTALL_TUTORIAL).read_text()
   upgrade = (repo_root / "docs" / "upgrade.md").read_text()
-  assert "volatile-lru" in readme
-  assert "allkeys-lru" not in readme
-  assert "volatile-lru" in design
-  assert "allkeys-lru" not in design
-  for text in (readme, design, upgrade):
+  assert "volatile-lru" in services
+  for text in (services, architecture, install):
+    assert "allkeys-lru" not in text
+  for text in (services, upgrade):
     assert "unix:///run/valkey/valkey.sock" in text
     assert (
       "--io-threads 4" in text
@@ -316,16 +329,20 @@ def test_docker_compose_valkey_unix_socket_volume_is_shared():
   assert "valkey_runtime:/run/valkey" in overlay
 
 
-def test_readme_install_is_fresh_only_and_upgrade_doc_holds_existing_stack():
+def test_install_tutorial_is_fresh_only_and_upgrade_doc_holds_existing_stack():
   """Installation stays greenfield; existing-stack playbooks live in docs/upgrade.md."""
   repo_root = Path(__file__).resolve().parents[2]
   readme = (repo_root / "README.md").read_text()
+  tutorial = (repo_root / _INSTALL_TUTORIAL).read_text()
   upgrade = (repo_root / "docs" / "upgrade.md").read_text()
-  install = readme.split("## Installation", 1)[1].split(
-    "## Useful commands", 1
-  )[0]
+  assert readme.index("## Install") < readme.index("## Quick start")
   assert "docs/upgrade.md" in readme
-  assert "fresh install" in install.lower()
+  assert _INSTALL_TUTORIAL in readme
+  assert "../upgrade.md" in tutorial
+  install = tutorial.split("## Before you begin", 1)[1].split(
+    "## What you built", 1
+  )[0]
+  assert "fresh install" in tutorial.lower()
   forbidden_in_install = (
     "## Compose Valkey service",
     "Upgrading from an older ini layout",
@@ -374,13 +391,10 @@ def test_docker_compose_rabbitmq_sets_erl_flags_allocator_tuning():
   expected = "ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512"
 
   assert expected in rabbitmq_block
-  readme = (repo_root / "README.md").read_text()
+  services = (repo_root / _COMPOSE_SERVICES_DOC).read_text()
   upgrade = (repo_root / "docs" / "upgrade.md").read_text()
-  deploy = (repo_root / "docs" / "DEPLOY_CONCURRENCY_AND_NUMA.md").read_text()
-  assert "ERL_FLAGS" in readme
-  assert "+MBas aobf" in readme
+  assert expected in services
   assert "ERL_FLAGS" in upgrade
-  assert "ERL_FLAGS" in deploy
 
 
 def test_docker_compose_rabbitmq_allows_128mib_monitor_messages():
@@ -450,17 +464,12 @@ def test_docker_compose_rabbitmq_vm_memory_cap_is_96gib():
   assert "vm_memory_high_watermark.absolute = 80GiB" not in conf_text
   assert "vm_memory_high_watermark.absolute = 96GiB" not in conf_text
   assert "vm_memory_high_watermark.relative" not in conf_text
-  readme = (repo_root / "README.md").read_text()
-  design = (repo_root / "docs" / "design-document.md").read_text()
-  deploy = (repo_root / "docs" / "DEPLOY_CONCURRENCY_AND_NUMA.md").read_text()
-  assert "64GiB" in readme
-  assert (
-    "mem_limit: 96g" in readme or "mem_limit` / `memswap_limit` 96g" in readme
-  )
-  assert "64GiB" in design
-  assert "64GiB" in deploy
-  for doc in (readme, design, deploy):
-    assert "80GiB" not in doc
+  services = (repo_root / _COMPOSE_SERVICES_DOC).read_text()
+  assert "vm_memory_high_watermark.absolute = 64GiB" in services
+  assert "mem_limit: 96g" in services
+  assert "memswap_limit: 96g" in services
+  for rel in _G1_DOCS:
+    assert "80GiB" not in (repo_root / rel).read_text(), rel
 
 
 def test_docker_compose_rabbitmq_logging_warning_not_info():
@@ -494,9 +503,9 @@ def test_docker_compose_rabbitmq_disables_crash_dumps():
   assert "ERL_CRASH_DUMP_SECONDS=0" in rabbitmq_block
   assert "ulimits:" in rabbitmq_block
   assert "core: 0" in rabbitmq_block
-  readme = (repo_root / "README.md").read_text()
+  services = (repo_root / _COMPOSE_SERVICES_DOC).read_text()
   upgrade = (repo_root / "docs" / "upgrade.md").read_text()
-  assert "ERL_CRASH_DUMP_SECONDS" in readme
+  assert "ERL_CRASH_DUMP_SECONDS=0" in services
   assert "ERL_CRASH_DUMP_SECONDS" in upgrade
 
 
@@ -518,9 +527,9 @@ def test_docker_compose_rabbitmq_stop_grace_period_is_30m():
   for service in ("rabbitmq", "db", "db_pg18"):
     block = _compose_service_block(content, service)
     assert "stop_grace_period: 30m" in block, service
-  readme = (repo_root / "README.md").read_text()
-  assert "**`stop_grace_period: 30m`** gives the broker" in readme
-  assert "**`db`** gets **30m**" in readme
+  services = (repo_root / _COMPOSE_SERVICES_DOC).read_text()
+  assert "`stop_grace_period: 30m` gives the broker" in services
+  assert "`db` gets 30m" in services
 
 
 def test_operator_rabbitmq_recovery_runbook_exists():
@@ -536,9 +545,9 @@ def test_operator_rabbitmq_recovery_runbook_exists():
   assert "ERL_CRASH_DUMP" in text
   assert "classic" in text.lower()
   assert "rabbitmq-watcher" in text
-  readme = (repo_root / "README.md").read_text()
-  assert "OPERATOR_RABBITMQ_RECOVERY.md" in readme
-  assert "rabbitmq-watcher" in readme
+  services = (repo_root / _COMPOSE_SERVICES_DOC).read_text()
+  assert "OPERATOR_RABBITMQ_RECOVERY.md" in services
+  assert "rabbitmq-watcher" in services
 
 
 def test_docker_compose_proxy_runtime_tls_mount_and_entrypoint_materialize():

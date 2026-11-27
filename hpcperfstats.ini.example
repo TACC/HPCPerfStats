@@ -417,7 +417,7 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Recycle ingest pool workers after N files; 0 unlimited (default 0; archive pools always maxtasksperchild=1).
 # sync_ingest_pool_maxtasksperchild = 0
 
-# Per-task gc.collect() + malloc_trim after each ingest task (default no); set yes on sites with a small RSS roof (Horizon), see docs/DEPLOY_CONCURRENCY_AND_NUMA.md for Horizon RSS tuning.
+# Per-task gc.collect() + malloc_trim after each ingest task (default no); set yes on sites with a small RSS roof (Horizon), see docs/explanation/pipeline-concurrency.md for Horizon RSS tuning.
 # sync_ingest_malloc_trim_after_file = no
 
 # Worker memory telemetry: one batch_summary line per ingest chunk (default no; enable for soak).

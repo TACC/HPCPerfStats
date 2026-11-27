@@ -1,6 +1,6 @@
 # Upgrade an existing HPCPerfStats stack
 
-Use this document when a site **already runs** the Compose stack (or an older layout of it). For a **new** host, follow **[README.md](../README.md)** Installation only.
+Use this document when a site **already runs** the Compose stack (or an older layout of it). For a **new** host, follow [Install HPCPerfStats](tutorials/install-hpcperfstats.md) only.
 
 Do **not** mix these procedures into a greenfield install. Fresh clones should `cp` examples, create empty bind directories, and run `./scripts/rebuild_full_site.sh` as documented in the README.
 
@@ -157,7 +157,7 @@ Remove **`sync_process_tree_rss_limit_mb`** and **`sync_process_tree_rss_exit_mb
 | `sync_process_tree_rss_limit_mb=50000` | **`sync_process_tree_rss_limit_cgroup_pct=40`** | **40** → effective roof **52428** MiB, raw budget **≈52428** MiB (`/ PEAK 1.0`) |
 | `sync_process_tree_rss_exit_mb=0` | **`sync_process_tree_rss_exit_cgroup_pct=0`** | **0** = hard exit off |
 
-Effective MiB = ``(memory.max × pct // 100) // (1024×1024)`` at runtime. **`limit_cgroup_pct=0`** disables defer and the raw-byte admit gate (same as old **`limit_mb=0`**). Recompute pct on non-128g hosts: ``round(100 × desired_roof_mib / memory_max_mib)``. Telem prints **`rss_limit_cgroup_pct=`** plus effective **`rss_limit_mib=`**. See **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § OOM.
+Effective MiB = ``(memory.max × pct // 100) // (1024×1024)`` at runtime. **`limit_cgroup_pct=0`** disables defer and the raw-byte admit gate (same as old **`limit_mb=0`**). Recompute pct on non-128g hosts: ``round(100 × desired_roof_mib / memory_max_mib)``. Telem prints **`rss_limit_cgroup_pct=`** plus effective **`rss_limit_mib=`**. See [Pipeline concurrency](explanation/pipeline-concurrency.md#tree-rss-roof).
 
 ### File-cache admit: absolute MiB → cgroup percentage (breaking)
 
@@ -169,7 +169,7 @@ Remove **`sync_cgroup_admit_max_file_cache_mib`** from baked site INI; it is **n
 
 Effective MiB = ``process_memory.effective_cgroup_admit_max_file_cache_mib()`` (same formula as roof pct). Telem prints **`file_cache_cgroup_pct=`** plus effective **`file_cache_cfg_mib=`**. Tune **`file_cache_cgroup_pct`** only on file-cache-heavy hosts (not a separate MiB INI).
 
-**192g pipeline cgroup (`mem_limit` 192G):** at default **60%**, effective file-cache admit cap **≈117965 MiB** — parallel ingest at full pool width can still pin **`skip_cgroup_headroom`** when page cache exceeds that tripwire. Primary relief is **`sync_pipeline_drop_page_cache=yes`** (Linux **`posix_fadvise`** on ingest/archive paths) plus P0 restart after deploy — **not** lowering **`sync_ingest_pool_processes`**. See **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § pipeline memory.
+**192g pipeline cgroup (`mem_limit` 192G):** at default **60%**, effective file-cache admit cap **≈117965 MiB** — parallel ingest at full pool width can still pin **`skip_cgroup_headroom`** when page cache exceeds that tripwire. Primary relief is **`sync_pipeline_drop_page_cache=yes`** (Linux **`posix_fadvise`** on ingest/archive paths) plus P0 restart after deploy — **not** lowering **`sync_ingest_pool_processes`**. See [Pipeline concurrency](explanation/pipeline-concurrency.md#page-cache).
 
 ### Removed INI keys (2026-11)
 
@@ -239,7 +239,7 @@ On **`db_pg18`** the Timescale catalog updates itself: after a rebuild with a ne
 
 ## Related docs
 
-- Fresh install: **[README.md](../README.md)** Installation
+- Fresh install: [Install HPCPerfStats](tutorials/install-hpcperfstats.md)
 - PG18 logical copy: **`docs/OPERATOR_PG18_MIGRATION.md`**
-- Pool sizing / zstd / OOM: **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`**
+- Pool sizing / zstd / OOM: [Pipeline configuration](reference/pipeline-configuration.md) and [Pipeline concurrency](explanation/pipeline-concurrency.md)
 - `host_data` uniqueness migrate: **`docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md`**

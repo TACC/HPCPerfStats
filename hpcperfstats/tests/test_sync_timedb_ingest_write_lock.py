@@ -149,11 +149,13 @@ def test_operator_docs_have_no_writer_shard_tokens():
   assert "DB lock wait" in operator
   assert "must not appear" in operator
   assert "db_shard_lock_s" not in operator
-  deploy = (_CHECKOUT / "docs/DEPLOY_CONCURRENCY_AND_NUMA.md").read_text(
-    encoding="utf-8",
-  )
-  assert "sync_write_lock_shards" not in deploy
-  assert "db_shard_lock_s" not in deploy
+  for rel in (
+    "docs/reference/pipeline-configuration.md",
+    "docs/explanation/pipeline-concurrency.md",
+  ):
+    deploy = (_CHECKOUT / rel).read_text(encoding="utf-8")
+    assert "sync_write_lock_shards" not in deploy, rel
+    assert "db_shard_lock_s" not in deploy, rel
   ini = (_CHECKOUT / "hpcperfstats.ini.example").read_text(encoding="utf-8")
   assert "sync_write_lock_shards" not in ini
   no_timers = (

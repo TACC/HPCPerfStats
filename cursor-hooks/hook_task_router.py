@@ -431,6 +431,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
       "hpcperfstats/render_syslog_ng_generated.py",
       "hpcperfstats/seal_syslog_daily.py",
       "hpcperfstats.ini.example",
+      "docs/reference/compose-services.md",
     ],
     "exact_paths": [
       "README.md",
@@ -640,6 +641,8 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     "patterns": [
       "HPCPerfStats/README.md",
       "docs/upgrade.md",
+      "docs/tutorials/install-hpcperfstats.md",
+      "docs/reference/compose-services.md",
     ],
     "exact_paths": [
       "README.md",
@@ -689,7 +692,8 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     "id": "deploy_ini_redeploy",
     "patterns": [
       "hpcperfstats.ini.example",
-      "docs/DEPLOY_CONCURRENCY_AND_NUMA.md",
+      "docs/reference/pipeline-configuration.md",
+      "docs/explanation/pipeline-concurrency.md",
     ],
     "rules": [
       "deploy-ini-with-code-no-phase-zero.mdc",
@@ -710,8 +714,6 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
       "monitor/docs/explanation/*",
       "monitor/docs/reference/*",
       "docs/using-the-website-as-a-researcher.md",
-      "docs/DEPLOY_CONCURRENCY_AND_NUMA.md",
-      "docs/design-document.md",
       "docs/TESTING.md",
       "hpcperfstats/tests/test_core_docs_drift_guard.py",
     ],
@@ -747,7 +749,8 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
   {
     "id": "deploy_concurrency_doc",
     "patterns": [
-      "docs/DEPLOY_CONCURRENCY_AND_NUMA.md",
+      "docs/reference/pipeline-configuration.md",
+      "docs/explanation/pipeline-concurrency.md",
       "hpcperfstats/dbload/lib/conf_parser.py",
       "hpcperfstats.ini.example",
       "services-conf/django_startup.sh",
@@ -763,7 +766,8 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
   {
     "id": "design_document",
     "patterns": [
-      "docs/design-document.md",
+      "docs/explanation/architecture.md",
+      "docs/reference/compose-services.md",
       "docker-compose.defaults.yaml",
       "docker-compose.yaml.example",
       "docker-compose.pg18-primary.yaml",

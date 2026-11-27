@@ -256,9 +256,9 @@ Per `plan-creation-contract.mdc` step 5:
 | Trigger                        | Update                                                         |
 | ------------------------------ | -------------------------------------------------------------- |
 | Test workflow / commands       | `docs/TESTING.md` (`testing-doc-sync.mdc`)                     |
-| Operator setup / compose       | `README.md` (`readme-installation-sync.mdc`)                   |
+| Operator setup / compose       | `docs/tutorials/install-hpcperfstats.md`, `docs/reference/compose-services.md` (`readme-installation-sync.mdc`) |
 | User-visible metrics/search/UI | `docs/using-the-website-as-a-researcher.md`, frontend metadata |
-| Deploy / concurrency tuning    | `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`                          |
+| Deploy / concurrency tuning    | `docs/reference/pipeline-configuration.md`, `docs/explanation/pipeline-concurrency.md` |
 
 
 

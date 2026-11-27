@@ -1,613 +1,81 @@
 # HPCPerfStats
 
-**The package formerly known as TACC Stats**
+HPCPerfStats monitors resource usage on HPC systems at multiple levels of resolution and ties it to the jobs that used it.
 
-A toolkit for monitoring resource usage on HPC systems at multiple levels of resolution.
+## Background
 
----
+HPCPerfStats is the package formerly known as TACC Stats.
+It has two parts:
 
-## Overview
+| Component      | Build system      | Role                                                     |
+| -------------- | ----------------- | -------------------------------------------------------- |
+| `monitor`      | Autotools         | Online data collection and transmission on cluster nodes |
+| `hpcperfstats` | Python setuptools | Data curation, analysis and the web site (off-cluster)   |
 
-The **hpcperfstats** package is split into two parts:
+The node daemon `hpcperfstatsd`, installed from the `hpcperfstatsd-3.1-1.el9.x86_64.rpm` package as the systemd service `hpcperfstats`, samples hardware and sends the data to a RabbitMQ server over the administrative network.
+On a Stampede3 Sapphire Rapids node (2026-08-14), a ten-minute `pidstat` observation of `hpcperfstatsd` showed sample-window peaks of at most 3.0% of one core and a 0.19% average over the full window ([measurement record](docs/measurements/monitor_overhead_stampede3_spr_2026-08-14.md)).
 
-| Component | Build system | Role |
-|-----------|--------------|------|
-| **monitor** | Autotools | Online data collection and transmission in production |
-| **hpcperfstats** | Python setuptools | Data curation and analysis (off-cluster) |
+The `hpcperfstats` container stack runs RabbitMQ to receive that data, a Django/PostgreSQL ingest and archival pipeline, and the web UI.
+[Architecture](docs/explanation/architecture.md) explains how the pieces fit together.
 
-### Documentation (`docs/`)
+## Install
 
-| Document | What it is for |
-|----------|----------------|
-| [**MONITOR_VARIABLES.md**](docs/MONITOR_VARIABLES.md) | **Canonical reference** for monitor-reported variables: names, types, units, and semantics. |
-| [**DEPLOY_CONCURRENCY_AND_NUMA.md**](docs/DEPLOY_CONCURRENCY_AND_NUMA.md) | Thread/process limits vs PostgreSQL, **`total_cores`** / **`effective_cores`**, and pool sizing for web and pipeline. |
-| [**design-document.md**](docs/design-document.md) | As-built system design: architecture, data flow, components, contracts, and operations context. |
-| [**measurements/**](docs/measurements/) | Recorded ops measurements (for example node-daemon CPU overhead on Stampede3 SPR). |
-| [**using-the-website-as-a-researcher.md**](docs/using-the-website-as-a-researcher.md) | How to read the Django/React job UI - plots, metrics, and diagnostic themes - for HPC users and researchers. |
-| [**TESTING.md**](docs/TESTING.md) | Test commands, CI, compose-backed workflows, Playwright/Vitest, and host vs container pytest notes. |
-| [**upgrade.md**](docs/upgrade.md) | Existing stacks only: image rebuilds, Valkey/INI/volume layout, RabbitMQ recreate, PG18 dual-run. |
+Follow [Install HPCPerfStats](docs/tutorials/install-hpcperfstats.md) for a fresh install of the central stack and the node monitor.
+For an existing stack (rebuilds, Valkey, INI, volume and RabbitMQ changes, PostgreSQL 18 dual-run), use [docs/upgrade.md](docs/upgrade.md) instead.
 
-**Maintaining `MONITOR_VARIABLES.md`:** the catalog is generated and augmented by maintainer scripts in the same folder: [`regenerate_monitor_variables_catalog.py`](docs/regenerate_monitor_variables_catalog.py), [`augment_monitor_variables_diagnostics.py`](docs/augment_monitor_variables_diagnostics.py).
+## Quick start
 
-**REST API notes:**
-
-- `GET /api/jobs/{jid}/{type_name}/` (type detail) returns a Bokeh **`tplot_item`** (`json_item` payload) plus `stats_data` / `schema`; clients embed `tplot_item` via Bokeh `embed_item`.
-- `GET /api/jobs/` with filters that match **zero** jobs returns **HTTP 200** with `nj: 0`, an empty `job_list`, and a `filter_summary` object. HTTP 404 on this endpoint means the database query failed, not "no matches".
-- There is no search endpoint; job-ID and host routing are handled in the React SPA. API clients use `GET /api/jobs/?jid=...` (or open `/machine/job/{jid}/` in a browser).
-
-Building and installing the `hpcperfstatsd-3.1-1.el9.x86_64.rpm` package (via `monitor/hpcperfstats.spec`) installs a **systemd** service `hpcperfstats`. The shipped config samples fast-tier keys every **`sample_freq`** (30 s) and takes a full sample every **`sample_freq_slow`** (600 s), plus a sample at job start and end. On a Stampede3 Sapphire Rapids node (2026-08-14), a ten-minute `pidstat` observation of `hpcperfstatsd` showed sample-window peaks of at most **3.0% of one core** and a **0.19%** average over the full window; see [`docs/measurements/monitor_overhead_stampede3_spr_2026-08-14.md`](docs/measurements/monitor_overhead_stampede3_spr_2026-08-14.md). The daemon **`hpcperfstatsd`** sends data to a **RabbitMQ** server over the administrative network. RabbitMQ must be installed and running on the server to receive data.
-
-The **hpcperfstats** container orchestration sets up a Django/PostgreSQL ingest and archival stack plus a RabbitMQ server to receive data from the monitor on the nodes.
-
----
-
-## Installation
-
-These steps are a **fresh install** on a new host. For an existing Compose stack (rebuilds, Valkey/INI/volume/RabbitMQ changes, PostgreSQL 18 dual-run), use **[docs/upgrade.md](docs/upgrade.md)** instead.
-
-### Monitor subpackage
-
-The monitor uses a **static-bundle** build flow for packaging. The canonical path builds pinned static archives for `libev` and `rabbitmq-c` (plus `libbpf` when the eBPF profiler is enabled) on every arch, then compiles `hpcperfstatsd` with `--enable-all-static`. x86 core counters come from `perf_event` directly, so no counter library is bundled.
-
-1. **Install RPM build prerequisites** (Rocky/EL-like systems):
-
-   ```bash
-   sudo dnf install \
-     gcc gcc-c++ make autoconf automake libtool cmake pkgconfig \
-     systemd-rpm-macros gzip tar curl perl gawk pciutils \
-     rdma-core-devel rpm-build
-   ```
-
-   No DCGM or NVML development package is needed on any arch: the
-   daemon loads `libdcgm` and `libnvidia-ml` at runtime against
-   vendored headers.
-
-2. **Prepare rpmbuild directories and source tarball** (from `HPCPerfStats/monitor`):
-
-   ```bash
-   ./scripts/prepare_rpmbuild_dirs.sh
-   ```
-
-   This script:
-   - removes any prior `monitor/rpmbuild/` and `monitor/embedded-static-prefix/`
-   - creates `monitor/rpmbuild/{SPECS,SOURCES,BUILD,RPMS,SRPMS,BUILDROOT}` and copies `hpcperfstats.spec` into `SPECS`
-   - runs `scripts/build_static_bundle.sh --deps-only` into `monitor/embedded-static-prefix`
-   - runs `autoreconf -fi`, `./configure`, and `make dist` (the tarball embeds that prefix)
-   - copies `hpcperfstats-<version>.tar.gz` to `rpmbuild/SOURCES`
-
-3. **Build the RPM**:
-
-   Use the `rpmbuild` command printed by `scripts/prepare_rpmbuild_dirs.sh`. A typical script output is:
-
-   ```bash
-   rpmbuild -ba --define "_topdir $(pwd)/rpmbuild" \
-     rpmbuild/SPECS/hpcperfstats.spec
-   ```
-
-4. **Optional build options**:
-
-   - Build dependencies + monitor binary directly (without rpmbuild staging):
-     ```bash
-     ./scripts/build_static_bundle.sh
-     ```
-   - Build only pinned dependency archives:
-     ```bash
-     ./scripts/build_static_bundle.sh --deps-only
-     ```
-   - Release-optimized monitor build:
-     ```bash
-     ./scripts/build_static_bundle.sh --release
-     # same as: HPC_BUNDLE_RELEASE_BUILD=1 with no --release
-     ```
-   - Pass extra configure args through bundle build (example):
-     ```bash
-     ./scripts/build_static_bundle.sh --disable-lustre
-     ```
-
-5. **Configuration** - after install, edit `/etc/hpcperfstats/hpcperfstats.conf`:
-
-   | Field | Description |
-   |-------|-------------|
-   | `server` | Hostname or IP of the RabbitMQ server |
-   | `queue` | System/cluster name being monitored |
-   | `port` | RabbitMQ port (default `5672`) |
-   | `sample_freq` | Fast-tier sampling interval in seconds |
-   | `sample_freq_slow` | Full-sample interval in seconds (`>= sample_freq`; used when `enable_slow_tier` is 1) |
-   | `send_freq` | RabbitMQ send interval in seconds |
-
-   The installed file lists every supported key with a comment. Example (the shipped values):
-
-   ```ini
-   server localhost
-   queue default
-   port 5672
-   sample_freq 30
-   sample_freq_slow 600
-   send_freq 300
-   ```
-
-   Reload a running daemon with `sudo systemctl reload hpcperfstats` (the unit's `ExecReload` sends `SIGHUP`) or restart the service.
-
-6. **Service control:**
-
-   ```bash
-   sudo systemctl start hpcperfstats
-   sudo systemctl stop hpcperfstats
-   sudo systemctl restart hpcperfstats
-   ```
-
----
-
-### Job scheduler configuration
-
-**Job start/end:** Notify hpcperfstats by writing to `/var/run/stats_jobid` on each node:
-
-- **Job start:** echo the job ID into the file  
-- **Job end:** echo `-` into the file  
-
-Do this from your scheduler's **prolog** and **epilog**.
-
-**Shared-node fleets:** apply migration `0036` and the `listend` / `sync_timedb` consumer before installing a monitor built with `--enable-shared-node-multi-jid`. That build discovers job ids from process environments and does not use `/var/run/stats_jobid`. Default file-mode monitors keep the prolog/epilog file above. Shared-node samples add `%jobs` and `%affinity` lines. The consumer stores CPU/GPU affinity in `job_affinity` and stamps non-GPU `host_data.dev` as `j:<jid>` so two jobs can share a host second. That `dev` key is the shared-node membership on `host_data`. Payloads without those marks stay on empty `dev`. An allocated node whose steps have finished is still tagged with the job (the monitor reads the root `slurmstepd` title). For older data, metrics count untagged samples toward a job on hosts it held alone (no other job in accounting or in `job_affinity` overlapping its window); a later accounting row for a co-tenant marks the job for recompute.
-
-**Accounting ingest (SLURM `sacct`):** Use `hpcperfstats-sacct-gen` from the **hpcperfstats-tools** package. By default this command runs `sacct` for a date range and POSTs the results to the HPCPerfStats API ingest endpoint. Each successful POST also creates or overwrites a daily accounting file at `{acct_path}/YYYY-MM-DD.txt` (same pipe-delimited body Slurm returned) only when the body has at least one job row. Alternatively, use **`-f DIR`** to write those `YYYY-MM-DD.txt` files locally (same format/naming) without calling the API; `-f` is mutually exclusive with `--api-key`, and `DIR` must already exist. The API rejects payloads with fewer lines than the existing file for that date (HTTP 409) so a partial `sacct` export cannot replace a fuller one. Header-only or empty POSTs skip the write without a 409.
-
-1. **Install the tools (Python):**
-
-   ```bash
-   # Client CLIs live in-tree under hpcperfstats-tools/
-   # (separate distribution). From the git checkout:
-   python3 -m pip install ./hpcperfstats-tools
-   # Editable during development:
-   # python3 -m pip install -e ./hpcperfstats-tools
-   ```
-
-2. **Configure the API base URL:**
-
-   Set `HPCPERFSTATS_TOOLS_INI` to an INI file that contains `[API] base_url` (see `hpcperfstats-tools/hpcperfstats-tools.ini.example` in the repo for a template).
-
-3. **Run the ingest (requires a staff-capable API key):**
-
-   `--api-key` is optional once a key is cached: each run that passes
-   `--api-key` saves it in `~/.hpcperfstats-api` for that `[API] base_url`,
-   and later API-mode runs without the flag use the cached key.
-
-   ```bash
-   # Ingest today only (default range: today .. today)
-   hpcperfstats-sacct-gen --api-key YOUR_KEY
-
-   # Ingest an explicit date range (both ends inclusive)
-   hpcperfstats-sacct-gen 2024-01-01 2024-01-08 --api-key YOUR_KEY
-
-   # Write daily YYYY-MM-DD.txt files locally instead of
-   # POSTing (DIR must exist; mutually exclusive with --api-key)
-   hpcperfstats-sacct-gen -f /path/to/accounting \
-     2024-01-01 2024-01-08
-   ```
-
-**Run-location and permissions requirements:**
-
-- Run `hpcperfstats-sacct-gen` on a host where Slurm's `sacct` binary exists and works (typically a Slurm login node).
-- Run it as a user that has the correct Slurm permissions to query the relevant jobs/accounts via `sacct`.
-- **API mode:** the API key (passed with `--api-key` or read from `~/.hpcperfstats-api`) must be staff-capable for the ingest endpoint; the `web` container must have the shared data volume mounted at `/hpcperfstats/` (same as `pipeline`) so the API can write under `acct_path` (default `/hpcperfstats/accounting`).
-- **File mode (`-f DIR`):** `DIR` must already exist; no API URL or key is required. Place or sync the resulting `.txt` files where `sync_acct.py` expects them (`acct_path`).
-
-**Reimporting archived days (`sync_acct.py`, manual only):** every ingested day stays on disk as `{acct_path}/YYYY-MM-DD.txt`, and no supervisord program runs `hpcperfstats/dbload/sync_acct.py`. Run it by hand inside `pipeline` to load those files into `job_data` again (for example after restoring an older day). Arguments are an optional start and end date (`YYYY-MM-DD`, both inclusive); a missing start defaults to today and a missing end to tomorrow. Jobs already in `job_data` are skipped.
+On a host prepared as in the tutorial, from the checkout:
 
 ```bash
-podman-compose -p hpcperfstats exec -u hpcperfstats pipeline \
-  python3 /home/hpcperfstats/hpcperfstats/dbload/sync_acct.py \
-  2024-01-01 2024-01-08
+cp docker-compose.yaml.example docker-compose.yaml
+cp hpcperfstats.ini.example hpcperfstats.ini
+./scripts/rebuild_full_site.sh
+podman-compose -p hpcperfstats logs
 ```
 
-Add `--dead-letter-unimportable` to move a daily file that cannot be read or imported into `{acct_path}/.unimportable-joblist`; without the flag those files stay in place. A run with that flag ends by printing each moved file and the reason it was moved.
+Edit both copied files before the build; the tutorial lists the keys to set.
+[Common commands](docs/reference/compose-services.md#common-commands) has the everyday operator commands.
 
----
+## Documentation
 
-### hpcperfstats subpackage (container stack)
+The full map is [docs/index.md](docs/index.md).
+The most used pages:
 
-This is a container orchestration with Django/PostgreSQL, ingest/archival tools, and RabbitMQ. The steps below assume a **Rocky Linux** host.
+- [Install HPCPerfStats](docs/tutorials/install-hpcperfstats.md): fresh install, step by step.
+- [Compose services](docs/reference/compose-services.md): each container's image, limits, mounts and commands.
+- [Pipeline configuration](docs/reference/pipeline-configuration.md): every tuning key in `hpcperfstats.ini` with its default.
+- [Pipeline concurrency](docs/explanation/pipeline-concurrency.md): how threads, memory and connections are sized.
+- [Using the website as a researcher](docs/using-the-website-as-a-researcher.md): reading the job UI, plots and metrics.
+- [docs/TESTING.md](docs/TESTING.md): test commands and workflows.
+- [Monitor metrics reference](monitor/docs/METRICS_REFERENCE.md): every monitor-reported variable.
 
-1. **Install rootless Podman and Compose:**
+## Contributing
 
-   ```bash
-   sudo dnf install -y git podman podman-compose \
-     shadow-utils fuse-overlayfs slirp4netns
-   ```
+Follow [docs/TESTING.md](docs/TESTING.md) for the test workflows and [Documentation style](docs/reference/documentation-style.md) for docs.
 
-   **Valkey / Linux kernel:** Valkey warns when **`vm.overcommit_memory`** is
-   disabled; background saves use `fork()`, and the kernel can reject that fork
-   even with free RAM. Enable it on the Linux Podman host:
+Developers and maintainers:
 
-   ```bash
-   sudo sysctl -w vm.overcommit_memory=1
-   ```
+- Amit Ruhela - aruhela@tacc.utexas.edu
+- Stephen Lien Harrell - sharrell@tacc.utexas.edu
+- Sangamithra Goutham - sgoutham@tacc.utexas.edu
+- Chris Ramos - cramos@tacc.utexas.edu
 
-   Persist across reboots:
+Developer emeritus: John Hammond, R. Todd Evans, Bill Barth, Albert Lu, Junjie Li, John McCalpin.
 
-   ```bash
-   echo 'vm.overcommit_memory = 1' | \
-     sudo tee /etc/sysctl.d/99-valkey-overcommit.conf
-   sudo sysctl --system
-   ```
+Publications:
 
-   Alternatively, add **`vm.overcommit_memory = 1`** to `/etc/sysctl.conf` and
-   reboot (or run the `sysctl -w` command once).
-
-   Compose pins **Valkey 9.2** (`docker.io/valkey/valkey:9.2.0-alpine3.24`, run as `valkey-server` so the image entrypoint drops root) with **`maxmemory 16gb`**, **`volatile-lru`** (Django cache keys keep TTL and remain evictable), **`--io-threads 4`**, and a Unix domain socket at **`/run/valkey/valkey.sock`** shared by **`valkey`**, **`web`**, and **`pipeline`** via the **`valkey_runtime`** named volume (not a host bind). Do **not** put Valkey on **`web`** / **`pipeline`** `depends_on` (any **`condition:`**, including **`service_started`** / **`service_healthy`**) - podman-compose can create `hpcperfstats_valkey_1` and never start it, so `logs valkey` stays empty. Valkey still has a TCP+socket `PING` healthcheck for `ps`. Startup wait uses **`[CACHE] valkey_location`**, remaps Compose hostname **`valkey`** (including baked **`valkey://valkey:6379/1`**) to **`unix:///run/valkey/valkey.sock?db=1`**, and falls back to that socket URL when the INI key is missing. TCP **`6379`** stays up for `valkey-cli` and external Valkey URLs. Do **not** use **`allkeys-*`** for Django/`listend` cache keys. Valkey has no persistence volume (`appendonly no`). Size the host (or Colima) so Valkey can use that cap alongside Postgres `shm_size` / `shared_buffers`. Valkey image bumps on an existing host: **[docs/upgrade.md](docs/upgrade.md)**.
-
-2. **Keep Podman storage under `/data`:**
-
-   Keep every non-DNF download, cache, tool, temporary file, image layer,
-   writable layer, and volume under `/data`. Create the roots once:
-
-   ```bash
-   sudo mkdir -p /data/user/sharrell/{cache,tmp,tools}
-   sudo mkdir -p \
-     /data/podman/sharrell/{storage,images,volumes,cache,tmp}
-   sudo chown -R sharrell:sharrell \
-     /data/user/sharrell /data/podman/sharrell
-   ```
-
-   Set login exports for
-   `XDG_CACHE_HOME=/data/user/sharrell/cache`,
-   `TMPDIR=/data/user/sharrell/tmp`,
-   `PIP_CACHE_DIR=/data/user/sharrell/cache/pip`,
-   `npm_config_cache=/data/user/sharrell/cache/npm`,
-   `npm_config_prefix=/data/user/sharrell/tools/npm`, and
-   `PLAYWRIGHT_BROWSERS_PATH=/data/user/sharrell/cache/ms-playwright`.
-   Configure rootless `storage.conf` with
-   `graphroot=/data/podman/sharrell/storage` and
-   `imagestore=/data/podman/sharrell/images`; configure `containers.conf` with
-   `volume_path=/data/podman/sharrell/volumes` and
-   `image_copy_tmp_dir=/data/podman/sharrell/tmp`. Small config files may stay
-   under `~/.config`; `/run/user/$UID` remains required ephemeral state.
-
-3. **Allocate rootless subordinate IDs:**
-
-   Run containers as the unprivileged deployment account - never with `sudo
-   podman`. Rootless subordinate IDs must cover image uid **901860**; allocate a
-   non-overlapping range of at least **1,048,576** IDs in both `/etc/subuid` and
-   `/etc/subgid`, then run `podman system migrate` as that account. Example for
-   user `sharrell` (choose a site-safe unused start):
-
-   ```bash
-   sudo usermod --add-subuids 1000000-2048575 \
-     --add-subgids 1000000-2048575 sharrell
-   podman system migrate
-   ```
-
-   Verify the `/data` storage paths with `podman info` before the first build.
-
-4. **Enable container restart after reboot:**
-
-   ```bash
-   sudo loginctl enable-linger sharrell
-   systemctl --user enable --now podman-restart.service
-   ```
-
-5. **Clone the repo:**
-
-   ```bash
-   git clone https://github.com/TACC/hpcperfstats.git
-   cd hpcperfstats
-   ```
-
-6. **Compose settings (site bind volumes):**
-
-   ```bash
-   cp docker-compose.yaml.example docker-compose.yaml
-   ```
-
-   **`docker-compose.yaml` is gitignored** - treat **`docker-compose.yaml.example`** as the committed operator template. It **`include:`** **`docker-compose.defaults.yaml`** (tracked stack wiring) and merges site binds on top (host ports, mem limits, TLS/SSH devices, etc.). **`podman-compose -p hpcperfstats`** and **`docker compose`** discover **`docker-compose.yaml`** automatically - no extra **`-f`**. Named volume **`device:`** paths live in your local **`docker-compose.yaml`** only; **`docker-compose.defaults.yaml`** mounts them by name and must not declare empty volume stubs (podman-compose cannot merge null stubs with operator dicts). After `cp`, edit site-specific **`device:`** paths; any new bind volumes or optional knobs must be added to **`.example`** in the repo (see **`hpcperfstats/cursor-rules/docker-compose-settings-example-sync.mdc`**) so the next clone gets them.
-
-   Edit `docker-compose.yaml` and set at least:
-
-   - **`volumes -> ssh_keys -> device`:** host directory with pipeline SSH keys (permissions suitable for mount as `/hpcperfstats/.ssh/`)
-   - **`volumes -> proxy_ssl_source -> device`:** host directory containing **`fullchain.pem`** and **`privkey.pem`** (flat PEM dir; default example uses **`/opt/certs`**). For Let's Encrypt, set **`device: /etc/letsencrypt`** and uncomment the optional **`services.proxy.environment`** block in the settings example with **`HPCPERFSTATS_SSL_CERTS_REL=live/your.hostname`** - do **not** bind only the **`live/hostname`** leaf (archive symlinks break).
-
-   TLS PEMs are **not** baked into the image. The **`proxy`** service mounts **`proxy_ssl_source`** read-only at **`/mnt/ssl-source`**; **`proxy_entrypoint.sh`** materializes real PEM files into **`/etc/ssl/hpcperfstats`** before nginx starts (no **`.env`**, no manual resolve step). After cert renew, **`podman-compose -p hpcperfstats restart proxy`** (no image rebuild).
-
-   Create host directories for **every** bind `device:` before `up` (defaults from the example):
-
-   ```bash
-   sudo mkdir -p /data/hpcperfstats_data/site_data
-   sudo mkdir -p /data/hpcperfstats_data/site_data/accounting
-   sudo mkdir -p /data/hpcperfstats_data/site_data/archive
-   sudo mkdir -p /data/hpcperfstats_data/site_data/daily_archive
-   sudo mkdir -p /data/hpcperfstats_data/site_data/logs/current
-   sudo mkdir -p /data/hpcperfstats_data/site_data/logs/log_archive
-   sudo mkdir -p /data/hpcperfstats_data/rabbitmq
-   sudo mkdir -p /data/hpcperfstats_site/staticfiles
-   sudo mkdir -p /data/hpcperfstats_site/media
-   sudo mkdir -p /data/hpcperfstats_db/pg15
-   sudo mkdir -p /data/hpcperfstats_db/pg18
-   sudo chown -R 70:70 /data/hpcperfstats_db/pg18
-   # Also create the ssh_keys and proxy_ssl_source device paths.
-   ```
-
-   The `hpcperfstatsdata` bind maps to **`/hpcperfstats/`** in the `pipeline` and `web` containers (for example `/hpcperfstats/accounting`, `/hpcperfstats/archive`, `/hpcperfstats/daily_archive`, and **`/hpcperfstats/logs/`** for cluster syslog). `/data/hpcperfstats_db/pg18` backs `postgres_data_pg18` (profile `pg18-migrate`) and must be owned by uid/gid 70 (Alpine `postgres`): a root-owned bind fails with Permission denied when the server creates its data directory.
-
-   **Daily monitor archive compression:** `sync_timedb` seals each day's `YYYY-MM-DD.tar` to **`YYYY-MM-DD.tar.zst`** with **zstd**. Defaults: **`archive_zstd_threads=4`** (**`-T4`**, seal/restore; also the `--threads` default of the seal/migrate scripts), **`ingest_zstd_threads=4`** (**`-T4`**, ingest/populate streams), **`archive_seal_parallel_workers=2`** (seals running at once; set `1` on a saturated shared volume); zstd runs at normal CPU/I/O priority (no `nice`/`ionice`) - see **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** (Archive zstd). Other **`[PIPELINE]`** key: `archive_zstd_level` in `hpcperfstats.ini.example`. When inspecting archives by hand, use for example `zstd -d -o YYYY-MM-DD.tar YYYY-MM-DD.tar.zst`. `sync_timedb` also reads and restores daily `YYYY-MM-DD.tar.gz` archives through `zstd --format=gzip`; inspect one by hand with `zstd -d --format=gzip`. `archive_zstd_level` defaults to **9** (the operator seal/migrate scripts use the same default): at `-T4` it compresses well above what one seal reads from a busy archive volume, while 13 and up run slower than the disk (numbers in `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`). Before changing it, benchmark a representative daily tar on the pipeline host at the seal's thread count: `zstd -b3 -e19 -T4 -S -- ./YYYY-MM-DD.tar`.
-
-   **Daily archive member cache:** `sync_timedb` keeps complete member maps in process memory and persists them under **`{archive_dir}/.sync_timedb_archive_members/`**. Dedicated **`[thread:populate-pool]`** workers stream sealed/tar archives into that store. Django **`[CACHE] valkey_location`** serves the web/`listend` cache only. Member maps are invalidated after tar append, dedupe, seal, and archive finalize - wipe day sidecars with `scripts/invalidate_archive_members.py` (never `.sync_timedb_job_store.json`). See **`sync_archive_members_populate_*`** / **`sync_archive_members_wait_poll_seconds`** in `hpcperfstats.ini.example` and **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`**.
-
-   **`sync_timedb.py` arguments:** with no arguments (how supervisord runs it), the queue orchestrator covers the whole archive with hot and catch-up ingest bands. A single **`YYYY-MM-DD`** (that day) or two dates (start/end) set the discover range at entry. Prefix **`once`** to exit after one idle pass (for example **`once 2024-01-15`**). **`--jid <JID>`** ingests one job only, with no archive or day-close work. The words `all`, `backlog` and `current` are rejected.
-
-   **Cluster syslog (optional; not auto-started):** the **`pipeline`** service publishes **TCP and UDP port 514** on the Docker host for sites that enable ingest manually. Compute or login nodes should forward syslog to **`<docker-host>:514`** (rsyslog examples: TCP `@@host:514`, UDP `@host:514`). **`syslog-ng`** and **`seal_syslog_daily`** are **not** supervisord programs - the pipeline supervisor runs as **`hpcperfstats`** (uid 901860) and cannot bind privileged port 514. Live files, when syslog is enabled, go under **`/hpcperfstats/logs/current/`** as **`$HOST.$R_YEAR$R_MONTH$R_DAY.log`**. **`seal_syslog_daily`** packs the previous day's files into **`/hpcperfstats/logs/log_archive/YYYY-MM-DD-syslog.tar.gz`**. Do **not** add compose **`user: "901860:901860"`** on **`pipeline`** - the root **`supervisor_startup.sh`** must still `chown` the data bind and copy ssh keys before supervisord drops privileges.
-
-   **Manual cluster syslog enable (as root inside `pipeline`):** uncomment or run the two commented lines in **`supervisor_startup.sh`**, or by hand:
-
-   ```bash
-   podman-compose -p hpcperfstats exec pipeline sh -lc '
-     mkdir -p /var/lib/hpcperfstats-syslog &&
-     /usr/local/bin/python3 -m \
-       hpcperfstats.render_syslog_ng_generated &&
-     /usr/sbin/syslog-ng -F --no-caps \
-       -f /home/hpcperfstats/services-conf/syslog-ng.conf
-   '
-   ```
-
-   Render **must** run before starting syslog-ng - pipeline startup does not refresh **`/var/lib/hpcperfstats-syslog/generated.conf`** (the image ships only a build-time fallback fragment). Run **`python3 -m hpcperfstats.seal_syslog_daily`** as **`hpcperfstats`** on a schedule if you need daily seals (not supervised).
-
-   **`[SYSLOG]` in `hpcperfstats.ini`:** set **`allow_from`** to a comma- or line-separated list of **IPv4 CIDRs** that may send remote syslog (for example `10.0.0.0/8, 192.168.50.0/24`). If **`allow_from`** is blank or **`[SYSLOG]`** is omitted, **all IPv4 sources** are accepted. Changing **`allow_from`** requires re-running **`render_syslog_ng_generated`** (then restart syslog-ng) so **`/var/lib/hpcperfstats-syslog/generated.conf`** matches INI - a pipeline recreate alone does **not** refresh that fragment. **`listen_tcp`** / **`listen_udp`** (default `yes`) toggle listeners.
-
-   **Operational notes:** when syslog-ng is running, it emits periodic internal **stats** (`stats(freq(3600))` in `services-conf/syslog-ng.conf`); operators can run **`syslog-ng-ctl stats`** (as root) inside `pipeline` for counters. Monitor **disk use** on the data volume (`logs/log_archive` grows with cluster size and retention). Pipeline process control uses **`podman-compose -p hpcperfstats`** (`logs` / `ps` / `stop` / `exec`). **`supervisorctl`** talks to **`unix:///tmp/supervisor.sock`** (`supervisorctl -c /home/hpcperfstats/services-conf/supervisord.conf shutdown`). Do not use **`unix:///var/run/supervisor.sock`**. A force-kill past **`stopwaitsecs`** is the supervisord line **`killing '...' with SIGKILL`** on pipeline stdout. **Troubleshooting:** if packets reach the host but nothing is logged, confirm syslog-ng is actually running, check **firewall rules**, that traffic targets the **published 514** on the host running `pipeline`, **`allow_from`** includes the sender's IPv4 address, and (for filenames) that forwarders preserve a sensible hostname/FQDN.
-
-7. **Application config:**
-
-   ```bash
-   cp hpcperfstats.ini.example hpcperfstats.ini
-   ```
-
-   In `hpcperfstats.ini` under **`[DEFAULT]`** (install-required and site-wide):
-
-   - `machine` - cluster name  
-   - `host_name_ext` - FQDN of the cluster  
-   - `server` - FQDN of the host running the containers
-   - `restricted_queue_keywords` - queue-name substrings whose jobs are skipped at accounting ingest (never displayed), e.g. `['secure', 'secret']` or `secure, secret`
-   - `staff_email_domain` - the email domain of the institution/organization so authorized staff can see all jobs
-   - `timezone` - your machine's local timezone
-   - `total_cores` - CPU budget for app parallelism (omit to use code default **40**; see `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`)
-   - `secret_key` - a random string
-   - `data_dir` (default **`/hpcperfstats/`**) and `debug` (default **no**) are commented defaults in the example; uncomment only to change them.
-   - PostgreSQL connection: `engine_name`, `dbname`, `username`, `password`, `host`, `port` all default to the Compose stack (`django.db.backends.postgresql`, `hpcperfstats`/`hpcperfstats`/`hpcperfstats`, **`/run/postgresql`**, `5432`), so the example lists them commented. The default **`host = /run/postgresql`** means **`web`** and **`pipeline`** reach the PG15 **`db`** service over its Unix socket on the shared **`postgres_runtime`** tmpfs volume (not a host bind). Socket logins require the `password` (scram-sha-256, same as network logins) via the committed **`services-conf/postgres_pg_hba.conf`** (`-c hba_file=`). TCP **`5432`** stays up on `hpcperfstats_net`; use `host = db` only for a Postgres that does not share the socket volume.
-
-   Optional tuning lives in other sections (see `hpcperfstats.ini.example`):
-
-   - **`[PORTAL]`** - Gunicorn/Django web stack only: `gunicorn_workers`, `parallel_db_prefetch_max`, `api_small_executor_max_workers`, `db_conn_max_age`, `db_statement_timeout_ms`, `db_idle_in_transaction_session_timeout_ms`, `cors_origin_scheme`, and development-only `separate_test_login` (default **no**)
-   - **`[PIPELINE]`** - ingest, archive, and metrics: paths `acct_path`, `archive_dir`, `daily_archive_dir` default to `accounting`, `archive`, `daily_archive` under `data_dir`; optional `sync_*`, `metrics_*`, `archive_*`, `metrics_pool_processes`, and related keys
-   - **`[RMQ]`** (`rmq_server` default `rabbitmq`, `rmq_queue` default `%(machine)s`), **`[OAUTH2]`**, optional **`[CACHE]`** (`valkey_location` default `unix:///run/valkey/valkey.sock?db=1`), **`[SYSLOG]`**, **`[XALT]`** - integration sections
-
-   For a fresh Docker install you typically edit **`[DEFAULT]`** as above; the **`[RMQ]`**, PostgreSQL, Valkey and path defaults are already wired for Compose. Do not change **`[RMQ]`** hostnames unless your RabbitMQ layout differs. For **cluster syslog**, add or edit the optional **`[SYSLOG]`** section (see `hpcperfstats.ini.example` and the compose step above).
-
-   **`hpcperfstats.ini.example` layout:** each setting has a one-line `#` comment directly above it; keys whose value is the `conf_parser` code default appear commented (`# key = default`); active lines are required keys or overrides. To bring an older site `hpcperfstats.ini` onto the current example layout, run **`scripts/rewrite_hpcperfstats_ini.sh`** (see **[docs/upgrade.md](docs/upgrade.md)**). Pipeline/archive behavior (zstd seal, DB-before-append gate **`sync_archive_require_db_ingest`** under **`[PIPELINE]`**, syslog allowlist) is described in the bullets above and in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`**.
-
-   **PostgreSQL container (`docker-compose.yaml` `db` service):** `max_connections` is **500** so overlapping Gunicorn workers, threaded API routes (`job_plots`, `home_options`, `job_detail` aux tasks), and pipeline pools rarely hit `too many clients`. Parallel helpers: **`max_worker_processes=32`**, **`max_parallel_workers=24`**, **`max_parallel_workers_per_gather=4`**, **`max_parallel_maintenance_workers=2`**. **Memory spikes** are still controlled by a **lower `work_mem`**, **smaller maintenance/autovacuum work mem**, **`temp_buffers`**, and **`shared_buffers=64GB`** on the `db` service (`db_pg18` matches, since it becomes `db` at the PG18 cutover) - see inline comments there. If legitimate bulk jobs slow down, prefer raising `work_mem` only during batch windows or increasing the `db` container `mem_limit` rather than unconstrained per-query memory.
-
-   For memory-constrained deployments, start with the conservative baseline values documented in `hpcperfstats.ini.example`, then scale up gradually after observing stable DB checkpoints and container RSS headroom.
-
-   **`pipeline` memory cap (`docker-compose.yaml`):** on hosts with **~192 GiB RAM and no swap**, set **`mem_limit: 128g`** and **`memswap_limit: 128g`** on the **`pipeline`** service in **`docker-compose.yaml`** (commented in **`docker-compose.yaml.example`**; not set in the base compose) so ingest spikes cgroup-OOM inside the container before starving **`db`**/**`web`**. Without it the pipeline cgroup is unlimited and `sync_timedb` has no memory budget. As a second guard, **`supervisor_startup.sh`** sets the pipeline's **`oom_score_adj` to +500** (inherited by every daemon), so a host-level OOM kills an ingest daemon before a Postgres backend; podman-compose ignores a compose `oom_score_adj` key, so it is not in compose. **`stop_grace_period`** defaults to **30s** for **`web`** (`HPCPERFSTATS_WEB_STOP_GRACE`) and **480s** for **`pipeline`** (`HPCPERFSTATS_PIPELINE_STOP_GRACE`) so sequential program drains can finish. **`db`** gets **30m** (SIGINT fast shutdown plus checkpoint on a large database) before SIGKILL. A shorter pipeline override SIGKILLs mid-drain. Pair with **`[PIPELINE]`** RSS knobs documented in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** section OOM. Recreating after limit changes: **[docs/upgrade.md](docs/upgrade.md)**.
-
-   **Python interpreters (image):** web/gunicorn and helpers use GIL **`/opt/python3.14`** via **`/usr/local/bin/python3`** / **`gunicorn`** (built on **`debian:trixie`**, not Hub `python:*`). Pipeline daemons **`listend`**, **`sync_timedb`**, and **`update_metrics`** are baked onto free-threaded **`/opt/python3.14t/bin/python`** (no INI toggle). Image jemalloc is force-linked and preloaded (`LD_PRELOAD` + `/etc/ld.so.preload`) so CPython and manylinux wheels share it; gunicorn keeps `MALLOC_CONF=background_thread:false`. Stdlib **`zlib`** and other image-built natives link **zlib-ng** under **`/opt/zlib-ng`** (`ZLIB_COMPAT`; direct rpath link, not apt `zlib1g`). Image **`zstd`** CLI and CPython **`_zstd`** / **`compression.zstd`** use **zstd 1.6.0** under **`/opt/zstd`** (CLI gzip/zlib support linked to **zlib-ng**; symlinked into `/usr/local/bin` and `/usr/bin`; not apt `zstd`). `podman-compose -p hpcperfstats exec pipeline python3` stays GIL for operator one-liners; greppable startup lines `python_abi executable=... Py_GIL_DISABLED=...` prove the live daemon ABI. `sync_timedb` ingest/append/populate run as in-process threads; durable queues are the job-store sidecar. Production images install Intel MKL from PyPI and **source-compile** numpy/numexpr/pandas against it for both ABIs (not a host `pip` step); full image rebuilds take longer than wheel-only installs.
-
-   **RabbitMQ memory cap (`docker-compose.yaml` `rabbitmq` service):** default `vm_memory_high_watermark` is **40% of detected host RAM**, which can OOM the box under thousands of monitor publishers. Compose sets **`mem_limit: 96g`** / **`memswap_limit: 96g`** and mounts `services-conf/rabbitmq_vm_memory.conf` (`vm_memory_high_watermark.absolute = 64GiB`) so publishers block ~32 GiB below the cgroup hard wall (avoids Erlang `binary_alloc` at the limit). Compose also sets **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`** (address-order best-fit binary allocator and 512 KiB largest multiblock carriers) to reduce Erlang fragmentation under many publishers. Console logging is **`warning`** (not **`info`**) with connection/channel at **`error`**; crash dumps are off (`ERL_CRASH_DUMP_SECONDS=0`, **`ulimits.core: 0`**). **`stop_grace_period: 30m`** gives the broker time for orderly shutdown (quorum/mnesia) before SIGKILL. On hosts with less than 96 GiB RAM, lower **both** `mem_limit`/`memswap_limit` and the absolute watermark together (then recreate as in **[docs/upgrade.md](docs/upgrade.md)**). Recovery / preserve-extract: **[docs/OPERATOR_RABBITMQ_RECOVERY.md](docs/OPERATOR_RABBITMQ_RECOVERY.md)**.
-
-8. **Supervisord and rsync:**
-
-   Tracked **`services-conf/supervisord.conf`** is baked into the image - **do not** copy a supervisord `.example`. Control socket is **`/tmp/supervisor.sock`** (mode **0700**). The **`rsync_data`** program always runs **`rsync_data_wrapper.sh`**, which prefers **`rsync_data.sh`** if present, otherwise **`rsync_data.sh.example`**.
-
-   Both scripts ship with a top-of-file guard (`sleep 43200`, `echo "rsync not yet configured"`, `exit`) so default deploys idle for 12 hours and never SSH/rsync to remote hosts. To enable site rsync: edit **`rsync_data.sh`** (the wrapper-preferred file), remove those three guard lines, put your rsync commands in the `while true` loop, and **put `sleep 43200` at the end of the loop** so a configured site does not tight-loop. Ensure SSH keys are configured in compose as documented for the pipeline service.
-
-9. **Web server (nginx):**
-
-   Committed **`services-conf/nginx.conf`** uses fixed in-container TLS paths
-   (**`/etc/ssl/hpcperfstats/fullchain.pem`** and **`privkey.pem`**). Cert PEMs are
-   **materialized at container start** from the **`proxy_ssl_source`** settings
-   volume (mounted at **`/mnt/ssl-source`**) via
-   **`resolve_proxy_ssl_certs_dir.py`** in **`proxy_entrypoint.sh`**. There is
-   **no** Compose **`ssl_certs`** volume, **no** build-time host **`/`** bind,
-   **no** `additional_contexts` / manual resolve step, and **no** production
-   **`.env`**. **Do not** edit TLS paths in nginx - set
-   **`proxy_ssl_source.device`** in **`docker-compose.yaml`** (and for
-   Let's Encrypt, optional **`HPCPERFSTATS_SSL_CERTS_REL`** in settings).
-
-   After Let's Encrypt renew (or changing the TLS source path): restart
-   **`proxy`** only - **`podman-compose -p hpcperfstats restart proxy`**. Never point production
-   **`proxy_ssl_source.device`** at **`tests/fixtures/proxy-ssl`**.
-   Image rebuilds that leave **`proxy`** running: **[docs/upgrade.md](docs/upgrade.md)**.
-
-   Compose bind-mounts **`./services-conf/nginx-main.conf`** to **`/etc/nginx/nginx.conf`**
-   (process/http tunables: **`worker_processes auto`**, affinity, `sendfile`/`tcp_*`,
-   `open_file_cache`) and **`./services-conf/nginx.conf`** to **`/etc/nginx/http.d/default.conf`**
-   on **`proxy`**, and bind-mounts the shared snippets (**`nginx-static-files.conf`**,
-   **`nginx-api-route-allowlist.inc`**, **`nginx-django-proxy-common.inc`**,
-   **`nginx-compress-proxy.inc`**, **`nginx-compress-static.inc`**,
-   **`nginx-edge-security-headers.inc`**, **`nginx-csp-no-active.inc`**,
-   **`nginx-csp-django-html.inc`**) as the **only**
-   runtime source for those snippets (they are **not** baked into **`proxy.Dockerfile`**).
-
-   Full-stack image rebuilds (including **proxy** and homemade **`db_pg18`**) use **`./scripts/rebuild_full_site.sh`**, which **`podman build`**s **web**, **proxy**, and **`db_pg18`** (Clang ThinLTO via **`services-conf/bake_clang_flags.sh`** on Alpine **db/proxy** and Debian **`python-build`**), then **`podman-compose down`** and **`up -d --no-build`** (the **`db_pg18`** image is built but its container is not started). CPython always bakes with upstream **`--enable-optimizations`** (no custom Clang profile-guided rebuild flags). See **`docs/upgrade.md`**.
-
-   The **`proxy`** image is **source-built** from **`services-conf/proxy.Dockerfile`**:
-   pinned **nginx 1.31.10**, **PCRE2 10.49** under **`/opt/pcre2`** (shared + JIT; no apk
-   **`pcre2`**), **jemalloc**, **zlib-ng (`ZLIB_COMPAT`)**, **OpenSSL 3.5.x**,
-   **`ngx_brotli`**, and **zstd 1.6.0** (static **`libzstd.a`** + GetPageSpeed
-   **zstd-nginx-module**), with **`-march=native -mtune=native`** ThinLTO bake via
-   **`bake_clang_flags.sh`** on every source-built lib (including OpenSSL
-   **`--with-openssl-opt`**). Runtime keeps **`libstdc++`** for brotli. **Build the
-   proxy image on the production host** (native flags are not portable across CPU
-   generations). Do **not** rely on Alpine edge apk nginx packages. The image **`COPY`**s **`nginx-main.conf`** and
-   **`cp`**s **`nginx.conf`** into **`default.conf`** at **build** time for a
-   non-Compose baseline, generates **`hps-proxy-allowed-hosts.inc`** from
-   **`[DEFAULT] server=`**, and ships **`proxy_entrypoint.sh`** plus the TLS/resolver
-   helpers. Compose still replaces **`nginx.conf`** / **`default.conf`** with the host mounts.
-   Runtime **`proxy_entrypoint.sh`** materializes TLS PEMs from
-   **`/mnt/ssl-source`**, regenerates the OCSP **`resolver`** include
-   from container **`/etc/resolv.conf`**, waits for SPA HTML under
-   **`/srv/static/frontend/{machine,pub}/index.html`**, and may write private
-   diagnostic CSP includes under **`/etc/nginx/`** (never under **`/srv/static`**).
-   SPA shells carry their own hash CSP via HTML **`<meta http-equiv="Content-Security-Policy">`**
-   (written at frontend export / SPA heal); nginx **`/machine/`** and **`/pub/`**
-   locations must **not** send a competing hash CSP header (**`open_file_cache off`**
-   on those locations so SPA heal is not stale).
-   HTTP GETs for **`*.inc`** (and direct **`*.br` / `*.gz` / `*.zst` sidecar URLs**) under **`/static/`** return **404**.
-   Nginx compresses Gunicorn and SPA HTML on the fly (**zstd**, then Brotli, then gzip) and
-   serves precompressed **`.br`/`.gz`** siblings for hashed **`/static/frontend/_next/`**
-   files (**1y** cache); unhashed **`/static/`** stays **30d**.
-   Nginx is the public authority for HSTS, framing, COOP, Permissions-Policy, Referrer-Policy,
-   and CSP (hash-based for SPA shells; no-active for JSON/redirects). Certificates without an
-   AIA OCSP URL will not staple; that must not take the site offline.
-   Hostnames come from **`[DEFAULT] server=`** in
-   **`hpcperfstats.ini`** (preferred in the build context, else
-   **`hpcperfstats.ini.example`**): **`parse_hpcperfstats_proxy_hosts.py`** emits
-   **`/etc/nginx/hps-proxy-allowed-hosts.inc`**, which the main config **`include`**s
-   for **`server_name`**. Requests whose **`Host`** header does not match receive **404**
-   on port 80; on port 443, unknown names get TLS handshake rejection
-   (**`ssl_reject_handshake`**). Restart **`proxy`** after changing **`server=`**,
-   TLS cert PEMs, or **`nginx.conf`**. No **`docker-compose.yaml`**
-   edits are required for TLS paths or hostnames (TLS paths are fixed; certs via
-   **`proxy_ssl_source`** settings volume + entrypoint materialization).
-
-   Static/media routing is split into a reusable include mounted at
-   **`services-conf/nginx-static-files.conf`**; nginx serves **`/static/`** and
-   **`/media/`** directly, shells the SPA under **`/machine/`** and **`/pub/`**,
-   and proxies only an explicit list of Django routes, one exact
-   (**`location = /login/`**) or anchored-regex location per route, never a
-   **`^~`** prefix, so probes such as **`/login/index.php`** 404 at the edge.
-   A server-level guard also 404s raw URIs that are not normalized (**`//`**,
-   dot segments, **`\`**, **`;`**, encoded **`. / \`** or control bytes),
-   because nginx matches the normalized path but forwards the raw one (shared **`proxy_*`**
-   directives in **`services-conf/nginx-django-proxy-common.inc`**; nested
-   **`/api/`** locations come from generated
-   **`services-conf/nginx-api-route-allowlist.inc`**, regenerated from
-   **`EXPECTED_ROUTE_TEMPLATES`** via
-   **`write_nginx_api_route_allowlist_include.py`** - unknown **`/api/...`**
-   paths return **404** at the edge); every other path gets **404** from nginx.
-   When you add a new top-level Django route, extend the allowlist in
-   **`nginx-static-files.conf`**. When you add nested **`api/`** routes, update
-   the route catalog and regenerate **`nginx-api-route-allowlist.inc`** in the
-   same task.
-
-   **Production:** browsers must load **`/static/*` through the `proxy` service**
-   (ports 80/443); nginx reads the **`staticfiles_ram`** tmpfs volume at
-   **`/srv/static`**, published from disk **`STATIC_ROOT`** (`staticfiles_data`)
-   on **`web`** startup after `collectstatic`, SPA heal, and sidecar compress.
-   **`/media/`** is the same pattern: disk **`media_data`** stays **`MEDIA_ROOT`**
-   staging; nginx reads **`media_ram`** at **`/srv/media`** (empty media is
-   valid). Hitting **`web:8000` directly** is not a
-   supported way to load hashed SPA assets (Gunicorn does not implement
-   **`/static/`** URL serving). For **local parity** with that layout, use full
-   compose including **`proxy`**, or run **`manage.py runserver --nostatic`** and
-   still obtain **`/static/`** via nginx rather than Django's dev static handler.
-   The proxy container is built from **`services-conf/proxy.Dockerfile`** and
-   enables hybrid compression (on-the-fly zstd/Brotli/gzip for proxied and SPA HTML;
-   Brotli/Gzip sidecars for hashed static files).
-
-10. **Build and start:**
-
-   ```bash
-   ./scripts/rebuild_full_site.sh
-   ```
-
-   The script builds the images, then starts the default stack with
-   `up -d --no-build`; use it for every later image refresh too
-   ([docs/upgrade.md](docs/upgrade.md)).
-
-   View logs (`docker-compose.yaml` uses the **`json-file`** logging driver with
-   **`max-size: 100m`** and **`max-file: 3`** so stdout stays available to
-   Compose on Docker and Podman and does not flood host syslog/journald):
-
-   ```bash
-   podman-compose -p hpcperfstats logs
-   ```
-
-   Rootless development uses unprivileged host ports without changing
-   production defaults:
-
-   ```bash
-   HPCPERFSTATS_HTTP_PORT=8080 HPCPERFSTATS_HTTPS_PORT=8443 \
-     HPCPERFSTATS_SYSLOG_PORT=1514 \
-     HPCPERFSTATS_COMPOSE_PROJECT=hpcperfstats-dev \
-     ./scripts/rebuild_full_site.sh
-   ```
-
-   These variables are a development launch override only. Production site
-   configuration remains in `hpcperfstats.ini` and
-   `docker-compose.yaml`, never a required `.env`.
-
-   On first startup, the `web` container runs Django migrations
-   (`manage.py migrate` only - schema changes ship as reviewed, committed
-   migration files; production startup never runs `makemigrations`) and
-   `collectstatic --noinput --clear` so **disk `STATIC_ROOT`** (staging for the
-   tmpfs nginx serves as `/static/`)
-   is emptied of unused leftovers then populated before Gunicorn starts. Collectstatic omits ``*.map`` source
-   maps. After `collectstatic`, startup verifies
-   SPA shells under **`STATIC_ROOT/frontend/{machine,pub}/index.html`**. If the
-   package image lacks the shells, web fail-closes. Volume fingerprint heal
-   after a later image rebuild is documented in **[docs/upgrade.md](docs/upgrade.md)**.
-   After heal, startup writes Brotli-11 / Gzip-9 sidecars beside compressible
-   static files (hashed Next chunks, Django/DRF admin assets), then **always**
-   publishes **`STATIC_ROOT`** and **`MEDIA_ROOT`** onto shared tmpfs
-   (**`staticfiles_ram`** / **`media_ram`**) that **`proxy`** mounts at
-   **`/srv/static`** and **`/srv/media`**. The disk binds
-   **`/data/hpcperfstats_site/staticfiles`** and **`/data/hpcperfstats_site/media`**
-   (created in step 6) stay the staging copies.
-   Direct `*.br` / `*.gz` URLs stay 404 at nginx.
-
-   The compose **`db`** (Hub PG15) and profile **`db_pg18`** services share checkpoint/WAL tuning: `checkpoint_timeout=30min`, `min_wal_size=4GB`, `max_wal_size=64GB`, `wal_buffers=128MB`, `bgwriter_lru_maxpages=800`, `bgwriter_lru_multiplier=5`, `maintenance_io_concurrency=64`, plus `max_connections`, `shared_buffers`, `work_mem`, `maintenance_work_mem`, `autovacuum_work_mem`, `checkpoint_completion_target`, and parallel-worker caps. **`wal_compression=lz4`** on both PG15 (Hub image has lz4) and homemade PG18 (image `/opt/lz4`). Apply GUC changes with **`podman-compose -p hpcperfstats up -d --force-recreate db`** (and **`db_pg18`** when the migrate profile is up). PGDATA often lives on a different host mount than pipeline archive data - check **`df`** on both before blaming checkpointer IO on a full archive volume. Keep settings aligned with host RAM; tune upward only after checkpoint stability and no OOM. The **pipeline** daemons do not reserve a separate `shm_size`. Do **not** change **`db`** / **`db_pg18`** `shm_size: "16gb"`.
-
-   The `host_data` compression policy (`compress_after = 8 days`) is pinned by migration **`0040`** to a daily fixed schedule at **01:00 in the INI `timezone`** with no `max_runtime` (a run that overruns finishes its chunk), so the multi-hour chunk rewrite does not compete with daytime ingest for WAL. The migration is a bounded `alter_job` (no compress/decompress) and soft-skips when Timescale or the policy is absent. The `0032` Phase 2 policy restore (`add_compression_policy`) re-pins the same schedule through the shared `compression_schedule` helper, so a re-added policy does not fall back to the floating default.
-
----
-
-## Useful commands
-
-| Task | Command |
-|------|---------|
-| Build and start container stack | `./scripts/rebuild_full_site.sh` |
-| Stop and remove containers | `podman-compose -p hpcperfstats --profile pg18-migrate down` (the profile keeps `db_pg18` in the graceful stop; without it `db_pg18` is SIGKILLed mid shutdown checkpoint) |
-| Existing-stack rebuilds / Valkey / PG18 / INI | **[docs/upgrade.md](docs/upgrade.md)** |
-| Restart proxy after cert renew or `server=` change | `podman-compose -p hpcperfstats restart proxy` |
-| View logs  | `podman-compose -p hpcperfstats logs` |
-| PostgreSQL shell | `podman-compose -p hpcperfstats exec db psql -h localhost -U hpcperfstats` (keep `-h localhost`: without it `psql` uses the Unix socket, which asks for the password) |
-| Pipeline shell (data/processing) | `podman-compose -p hpcperfstats exec -u hpcperfstats pipeline bash` |
-| Get queues and message counts from rabbitmq | `podman-compose -p hpcperfstats exec rabbitmq rabbitmqctl list_queues name messages consumers` |
-| RabbitMQ default queue type | Compose mounts `services-conf/rabbitmq_default_queue_type.conf` (`default_queue_type = quorum`). New durable monitor ingest queues are declared quorum. Existing brokers: **[docs/upgrade.md](docs/upgrade.md)**. |
-| RabbitMQ memory cap | Compose **`mem_limit` / `memswap_limit` 96g** plus `services-conf/rabbitmq_vm_memory.conf` (`vm_memory_high_watermark.absolute = 64GiB` headroom). Erlang allocator: **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`**. Logging: console **`warning`** (not **`info`**); **`ERL_CRASH_DUMP_SECONDS=0`**. Inspect: `podman-compose -p hpcperfstats exec rabbitmq rabbitmqctl status` (Alarms + watermark; do **not** use `rabbitmqctl list_alarms` - absent on RabbitMQ 4.4.1, the pinned image). Recovery: **[docs/OPERATOR_RABBITMQ_RECOVERY.md](docs/OPERATOR_RABBITMQ_RECOVERY.md)**. |
-| RabbitMQ memory scream | Pipeline supervisord **`rabbitmq-watcher`** polls management every **5 min**; lines start with **`[rabbitmq-watcher]`**; literal **`ERROR`** at **40 GiB** and every **+10 GiB**. Grep: `podman-compose -p hpcperfstats logs pipeline 2>&1 \| grep '\[rabbitmq-watcher\]'`. |
-| RabbitMQ `frame_max` | Compose mounts `services-conf/rabbitmq_frame_max.conf` (`frame_max = 131072`, RabbitMQ default) so `listend` AMQP frames match pika `LISTEND_AMQP_FRAME_MAX`. Recreate **rabbitmq** and **pipeline** after changing that file ([docs/upgrade.md](docs/upgrade.md)). |
-| Admin Monitor RabbitMQ stats | Staff Admin Monitor -> RabbitMQ statistics uses the **management HTTP API** on compose-internal **`http://rabbitmq:15672`** (image `rabbitmq:*-management-alpine`). Port **15672 is not published on the host**; `loopback_users.guest = false` in `services-conf/rabbitmq_management.conf` allows `web`->`rabbitmq` auth. |
-| Admin Monitor -> Ingest vs Job Detail coverage | Staff section listing the `(type, event)` pairs hosts write to `host_data` that `update_metrics` never reads for Job Detail (and the reverse), grouped by gap set, rack, schema variant or slug. The pipeline supervisord program **`ingest_coverage_sweeper`** scans one host at a time (60-min window ending at each host's newest sample, never older than 7 days) and writes results to Valkey only; the page reads Valkey only. `[PIPELINE]` keys: `ingest_coverage_sweep_enabled` (default `yes`; `no` makes the program exit at start - set it on the same redeploy on slow-storage sites), `ingest_coverage_sweep_interval_s` (3600), `ingest_coverage_window_minutes` (60), `ingest_coverage_query_timeout_ms` (60000). Host status: **current** (closed segments are in `host_data`; data in the open segment waits for the next monitor `$` rotation, which is normal), **ingest behind** (the same closed file was not ingested on two sweeps), **unknown** (no `listend` rotation record yet), **incomplete** (scan failed), **no recent data** (no sample in 7 days). The hand-kept catalog the runtime view checks against is [docs/MONITOR_VARIABLES.md](docs/MONITOR_VARIABLES.md). Logs: `podman-compose -p hpcperfstats logs pipeline 2>&1 \| grep 'ingest_coverage sweep'`. |
-
----
-
-## Publications
-
-- [Comprehensive Resource Use Monitoring for HPC Systems with TACC Stats](http://doi.org/10.1109/HUST.2014.7)
+- [Resource use monitoring for HPC systems with TACC Stats (HUST 2014)](http://doi.org/10.1109/HUST.2014.7)
 - [Understanding application and system performance through system-wide monitoring](http://doi.org/10.1109/IPDPSW.2016.145)
 - [![DOI](https://zenodo.org/badge/21212519.svg)](https://zenodo.org/badge/latestdoi/21212519)
 
----
+## License
 
-## Developers and maintainers
+Copyright (c) 2011 University of Texas at Austin.
 
-- Amit Ruhela - aruhela@tacc.utexas.edu  
-- Stephen Lien Harrell - sharrell@tacc.utexas.edu  
-- Sangamithra Goutham - sgoutham@tacc.utexas.edu  
-- Chris Ramos - cramos@tacc.utexas.edu  
+This library is free software; you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License as published by the Free Software Foundation; either version 2.1 of the License, or (at your option) any later version.
 
-### Developer emeritus
-
-John Hammond, R. Todd Evans, Bill Barth, Albert Lu, Junjie Li, John McCalpin  
-
----
-
-## Copyright and license
-
-**Copyright (c) 2011 University of Texas at Austin**
-
-This library is free software; you can redistribute it and/or modify it under the terms of the **GNU Lesser General Public License** as published by the Free Software Foundation; either version 2.1 of the License, or (at your option) any later version.
-
-This library is distributed in the hope that it will be useful, but **without any warranty**; without even the implied warranty of merchantability or fitness for a particular purpose. See the [GNU Lesser General Public License](https://www.gnu.org/licenses/lgpl-2.1.html) for more details.
+This library is distributed in the hope that it will be useful, but without any warranty; without even the implied warranty of merchantability or fitness for a particular purpose.
+See the [GNU Lesser General Public License](https://www.gnu.org/licenses/lgpl-2.1.html) for more details.
 
 You should have received a copy of the GNU Lesser General Public License along with this library; if not, write to the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.

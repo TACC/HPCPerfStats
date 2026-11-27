@@ -10,7 +10,7 @@ Pages listed without a link are planned and not written yet.
 
 Learn one reliable path from start to finish.
 
-- Install HPCPerfStats
+- [Install HPCPerfStats](tutorials/install-hpcperfstats.md)
 - Explore jobs in the web UI
 
 ## How-to guides
@@ -39,8 +39,8 @@ Look up code, configuration and contract facts.
 - [Documentation style](reference/documentation-style.md)
 - [Monitor metrics reference](../monitor/docs/METRICS_REFERENCE.md)
 - [Monitor raw data format](../monitor/docs/RAW_DATA_FORMAT.md)
-- Pipeline configuration
-- Compose services
+- [Pipeline configuration](reference/pipeline-configuration.md)
+- [Compose services](reference/compose-services.md)
 - `sync_timedb` state machine
 - `sync_timedb` threads and processes
 - `sync_timedb` stall signatures
@@ -56,8 +56,8 @@ Look up code, configuration and contract facts.
 
 Understand the design and its trade-offs.
 
-- Architecture
-- Pipeline concurrency
+- [Architecture](explanation/architecture.md)
+- [Pipeline concurrency](explanation/pipeline-concurrency.md)
 - Codon runtime model
 - Monitor naming scheme
 

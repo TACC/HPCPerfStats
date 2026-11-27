@@ -1,12 +1,12 @@
 ---
 description: No pre-code INI redeploy; proactively ask for read-only operator data (exec/logs) to improve plans
 alwaysApply: false
-globs: docs/plans/**,hpcperfstats.ini.example,docs/DEPLOY*.md
+globs: docs/plans/**,hpcperfstats.ini.example,docs/reference/pipeline-configuration.md,docs/explanation/pipeline-concurrency.md
 ---
 
 # Deploy INI With Code — No Pre-Code INI Redeploy
 
-**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Applies to **plan authoring**, **`hpcperfstats.ini.example`**, and **operator deploy docs** (`docs/DEPLOY*.md`).
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Applies to **plan authoring**, **`hpcperfstats.ini.example`**, and **operator deploy docs** (`docs/reference/pipeline-configuration.md`, `docs/explanation/pipeline-concurrency.md`).
 
 ## Two different operator actions
 
@@ -27,7 +27,7 @@ On this project, **redeploying with a new INI vs new code is the same amount of 
 
 1. **Single deploy wave** — code changes + **new `conf_parser` fallbacks** + **documented `hpcperfstats.ini.example` lines** ship together (not prose-only recommendations outside the example).
 2. **`hpcperfstats.ini.example`** — document every new/changed knob in the correct section in the **same task** as getters and behavior (`hpcperfstats-ini-format.mdc`, `immutable-image-ini-policy.mdc`). When the example value equals the registry / getter `fallback=` default, use a **commented** `# key = <default>` line (**Example cleanliness** in `hpcperfstats-ini-format.mdc`). Keep the key **uncommented** only for required keys (`default is None`) or intentional non-default overrides.
-3. **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** / **`README.md`** (when install steps change) — keys to set on **next** pipeline redeploy after pulling the release.
+3. **`docs/reference/pipeline-configuration.md`** / **`docs/tutorials/install-hpcperfstats.md`** (when install steps change) — keys to set on **next** pipeline redeploy after pulling the release.
 4. **Operator commands (copy/paste)** — use **`compose-operator-terminal-commands.mdc`**:
    - **During planning / investigation** — request read-only pastes (logs, RSS, cgroup, file `stat`, DB counts) **without** asking for redeploy; **do not guess** when paste would improve the plan.
    - **After release redeploy** — verify cgroup headroom, RSS, logs.

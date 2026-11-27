@@ -29,10 +29,9 @@ _REPO = Path(__file__).resolve().parents[2]
 CORE_DOCS = (
   "README.md",
   "docs/using-the-website-as-a-researcher.md",
-  "docs/DEPLOY_CONCURRENCY_AND_NUMA.md",
-  "docs/design-document.md",
   "docs/TESTING.md",
 )
+TESTING_DOC = "docs/TESTING.md"
 
 _EVERGREEN_FILES = ("README.md", "docs/index.md")
 _EVERGREEN_DIRS = (
@@ -254,7 +253,7 @@ def test_testing_doc_paths_exist():
   missing = []
   cited = {
     p.removeprefix("./")
-    for p in _TESTING_PATH_RE.findall(_doc_text(CORE_DOCS[4]))
+    for p in _TESTING_PATH_RE.findall(_doc_text(TESTING_DOC))
   }
   for path in sorted(cited):
     if path.startswith("test_runs/"):

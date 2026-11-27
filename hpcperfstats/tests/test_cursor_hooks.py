@@ -553,6 +553,52 @@ def test_evergreen_doc_dirs_trigger_docs_rules(path):
 
 
 @pytest.mark.parametrize(
+  ("path", "expected"),
+  [
+    (
+      "docs/tutorials/install-hpcperfstats.md",
+      {
+        "readme-installation-sync.mdc",
+        "compose-operator-terminal-commands.mdc",
+        "minimal-compose-install-footprint.mdc",
+        "no-production-env-for-ini-config.mdc",
+      },
+    ),
+    (
+      "docs/reference/compose-services.md",
+      {
+        "readme-installation-sync.mdc",
+        "syslog-cluster-ingest.mdc",
+        "design-document-sync.mdc",
+        "compose-operator-terminal-commands.mdc",
+      },
+    ),
+    (
+      "docs/reference/pipeline-configuration.md",
+      {
+        "deploy-concurrency-doc-sync.mdc",
+        "deploy-ini-with-code-no-phase-zero.mdc",
+        "hpcperfstats-ini-format.mdc",
+        "immutable-image-ini-policy.mdc",
+      },
+    ),
+    (
+      "docs/explanation/pipeline-concurrency.md",
+      {
+        "deploy-concurrency-doc-sync.mdc",
+        "deploy-ini-with-code-no-phase-zero.mdc",
+      },
+    ),
+    ("docs/explanation/architecture.md", {"design-document-sync.mdc"}),
+  ],
+)
+def test_install_deploy_and_design_pages_keep_their_sync_rules(path, expected):
+  """The pages that replaced README install, DEPLOY and the design doc keep their rules."""
+  rules = set(triggered_rules_for_paths([f"/repo/HPCPerfStats/{path}"]))
+  assert expected <= rules, sorted(expected - rules)
+
+
+@pytest.mark.parametrize(
   "path",
   [
     "docs/history/sync-timedb-incidents.md",

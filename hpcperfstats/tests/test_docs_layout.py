@@ -59,7 +59,6 @@ ALLOWED_READMES = frozenset({"docs/measurements/README.md"})
 # a new file outside the quadrant and record directories fails placement.
 LEGACY_ALLOWED = frozenset(
   {
-    "docs/DEPLOY_CONCURRENCY_AND_NUMA.md",
     "docs/HPCPerfStats Data Flow.pdf",
     "docs/HPCPerfstatsBasicArch.pdf",
     "docs/MONITOR_NAMING_SCHEME.md",
@@ -99,7 +98,6 @@ LEGACY_ALLOWED = frozenset(
     "docs/artifacts/update_metrics_speedup_followup.md",
     "docs/artifacts/update_metrics_stall_audit_2026-05-12.md",
     "docs/augment_monitor_variables_diagnostics.py",
-    "docs/design-document.md",
     "docs/generate_monitor_rename_table.py",
     "docs/monitor_variable_rename_map.yaml",
     "docs/python_def_inventory.json",
