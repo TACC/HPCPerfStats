@@ -102,14 +102,24 @@ Do **not** `ln -sf` `.cursor/hooks.json` — Cursor will not load a symlinked pr
 
 ## Claude Code hooks
 
-`hpc_claude_hooks.py` ports the rule-dispatch core to Claude Code, wired in the checked-in `.claude/settings.json` (`$CLAUDE_PROJECT_DIR/cursor-hooks/...`, system `python3`, stdlib only). Same router (`hook_task_router.py`) as Cursor.
+The canonical Claude Code hook is the workspace file `<WORKSPACE_ROOT>/.claude/hooks/hpc_claude_hooks.py`, wired by `<WORKSPACE_ROOT>/.claude/settings.json` (system `python3`, stdlib only).
+`cursor-hooks/hpc_claude_hooks.py` is a byte-identical copy of it, wired by the checked-in `.claude/settings.json` (`$CLAUDE_PROJECT_DIR/cursor-hooks/...`) for sessions opened in the checkout.
+The test `<WORKSPACE_ROOT>/.claude/tests/test_checkout_hook_copy.py` fails when the two differ; resync from the workspace root with `cp .claude/hooks/hpc_claude_hooks.py HPCPerfStats/cursor-hooks/hpc_claude_hooks.py`.
+The `ruff-check` and `ruff-format` pre-commit hooks exclude the copy: their py314 fixes would change its bytes and produce syntax the system `python3` cannot parse.
+It imports the same router (`hook_task_router.py`) as Cursor, so both tools agree on which rules a path triggers.
 
 | Event | Subcommand | Behavior |
 |-------|-----------|----------|
-| `UserPromptSubmit` | `prompt` | New turn: clear the Read ledger |
-| `PostToolUse` `Read` | `record` | Record Read `.mdc` rules and router `docs` |
-| `PreToolUse` `Edit\|Write\|MultiEdit\|NotebookEdit` | `pre-edit` | **deny** until triggered rules/docs were Read this turn |
-| `PostToolUse` edits | `post-edit` | Record edit; warn if a `cursor-rules/*.mdc` lacks dual registration |
-| `Stop` | `stop` | Block close if an edited rule lacks dual registration |
+| `UserPromptSubmit` | `prompt` | Discipline reminder, plus bug-task and plan-task rule hints from prompt keywords |
+| `PreToolUse` `Edit\|Write\|MultiEdit\|NotebookEdit` | `pre-edit` | Deny until every triggered rule and router `docs` file was Read this turn (since the last user prompt, read from the transcript) |
+| `PostToolUse` edits | `post-edit` | Remind about rule dual registration (`agent-discipline-core.mdc` and `hook_task_router.py`) and the `.cursor/hooks.json` copy step |
+| `Stop` | `stop` | Close-heading gate and paste-safety check (below), capped at `MAX_STOP_BLOCKS` consecutive blocks per session |
 
-Not ported (Cursor-only): CreatePlan / live `.cursor/plans` gates and the close-heading gate.
+The close-heading gate applies when the turn edited a gated path: the final message needs `## Agent rule dispatch` (listing every triggered non-always-on rule), `## Final code review (senior engineer pass)` and `## Post-implementation review`.
+The paste-safety check runs every turn: a `bash` or `sh` fence in the final message must not contain a heredoc or a line longer than `PASTE_LINE_MAX` characters.
+When `.cursor/workspace-profile` names `dual`, edits under `monitor/` resolve rules from `monitor/cursor-rules/` first and also require that tree's always-on rules.
+
+The hook resolves the workspace root from its own location (two directories up).
+In a bare clone without a workspace `.cursor/rules` tree it finds no rules and fails open: edits are allowed and internal errors only print to stderr.
+
+Not ported (Cursor-only): CreatePlan / live `.cursor/plans` gates.

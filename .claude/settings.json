@@ -7,7 +7,6 @@
       {"matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [{"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/cursor-hooks/hpc_claude_hooks.py\" pre-edit", "timeout": 10}]}
     ],
     "PostToolUse": [
-      {"matcher": "Read", "hooks": [{"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/cursor-hooks/hpc_claude_hooks.py\" record", "timeout": 10}]},
       {"matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [{"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/cursor-hooks/hpc_claude_hooks.py\" post-edit", "timeout": 10}]}
     ],
     "Stop": [

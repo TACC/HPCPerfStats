@@ -12,6 +12,8 @@ repos:
         files: ^(hpcperfstats/|scripts/|services-conf/).*\.py$
         pass_filenames: false
 
+  # cursor-hooks/hpc_claude_hooks.py is a byte copy of the workspace Claude
+  # hook, run by the system python3; py314 ruff fixes would break it there.
   - repo: local
     hooks:
       - id: ruff-check
@@ -19,7 +21,7 @@ repos:
         entry: bash -c '../.venv/bin/ruff check --fix "$@"' --
         language: system
         files: ^(hpcperfstats/|cursor-hooks/|scripts/|services-conf/|hpcperfstats-tools/).*\.py$
-        exclude: (^|/)migrations/
+        exclude: (^|/)migrations/|^cursor-hooks/hpc_claude_hooks\.py$
         pass_filenames: true
 
   - repo: local
@@ -29,7 +31,7 @@ repos:
         entry: bash -c '../.venv/bin/ruff format "$@"' --
         language: system
         files: ^(hpcperfstats/|cursor-hooks/|scripts/|services-conf/|hpcperfstats-tools/).*\.py$
-        exclude: (^|/)migrations/
+        exclude: (^|/)migrations/|^cursor-hooks/hpc_claude_hooks\.py$
         pass_filenames: true
 
   # Shell scripts (by extension or shebang); policy in .shellcheckrc. The
