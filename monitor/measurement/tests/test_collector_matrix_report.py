@@ -224,6 +224,26 @@ def test_aggregate_profiles_latex(tmp_path):
     assert tex.count("\\\\\n") >= 3
 
 
+def test_aggregate_profiles_check_reports_stale_and_writes_nothing(tmp_path):
+    run = _write_run(tmp_path / "r0", _legs(), RUN_META)
+    profile_report.write_outputs(run)
+    cmd = [sys.executable, str(ROOT / "bin" / "aggregate_profiles.py"), str(run / "profile.json")]
+    out = tmp_path / "agg"
+    res = subprocess.run([*cmd, "--out", str(out), "--check"], capture_output=True, text=True)
+    assert res.returncode == 1 and not out.exists()
+    assert "profiles.md" in res.stderr
+    subprocess.run([*cmd, "--out", str(out)], capture_output=True, check=True)
+    res = subprocess.run([*cmd, "--out", str(out), "--check"], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    (out / "profiles.md").write_text("stale\n")
+    before = {p.name: p.read_bytes() for p in out.iterdir()}
+    res = subprocess.run([*cmd, "--out", str(out), "--check"], capture_output=True, text=True)
+    assert res.returncode == 1
+    assert "profiles.md" in res.stderr and "-stale" in res.stderr
+    assert "profiles.csv" not in res.stderr
+    assert {p.name: p.read_bytes() for p in out.iterdir()} == before
+
+
 def test_contaminated_legs_excluded_unless_smoke_run(tmp_path):
     legs = _legs()
     for leg in legs:
