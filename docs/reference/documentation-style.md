@@ -8,7 +8,7 @@ The lint hooks enforce most of them; the editorial pass covers the rest.
 
 ## Docs tree and placement
 
-The tree follows [Diataxis][diataxis]: each page belongs to one quadrant.
+The tree follows [Diataxis]: each page belongs to one quadrant.
 
 ```text
 README.md                    landing page (standard-readme order)
@@ -50,57 +50,57 @@ Every page in `tutorials/`, `how-to/`, `reference/`, `explanation/` and the READ
 Records describe what was true at a date and are not maintained.
 `docs/history/` and `docs/measurements/` hold records, as do the paper kits under `monitor/measurement/`, `tests/site_measurement/` and `protocols/`.
 
-| Property | Evergreen | Record |
-| --- | --- | --- |
-| Current-state wording (P13) | Required | Exempt |
-| Prose lint, naming and anatomy checks | Applied | Exempt |
-| First line after the H1 | Purpose + audience | `Historical record, <DATE>. Not maintained.` |
-| Links | Must resolve, including into records | Not checked |
+| Property                              | Evergreen                            | Record                                       |
+| ------------------------------------- | ------------------------------------ | -------------------------------------------- |
+| Current-state wording (P13)           | Required                             | Exempt                                       |
+| Prose lint, naming and anatomy checks | Applied                              | Exempt                                       |
+| First line after the H1               | Purpose + audience                   | `Historical record, <DATE>. Not maintained.` |
+| Links                                 | Must resolve, including into records | Not checked                                  |
 
 Evergreen pages link to records only as evidence.
 `docs/reference/release-notes.md` is evergreen and append-only; it is the one page exempt from current-state wording.
 
 ## Prose standards
 
-| ID | Standard | Basis |
-| --- | --- | --- |
-| P1 | 25 words or fewer per sentence (Vale warning, not error). | [GOV.UK sentence length][govuk-25], [GOV.UK clear language][govuk-clear] |
-| P2 | Second person, active voice, present tense; "we" only in tutorials. | [Google tense][g-tense], [Microsoft voice][ms-voice], [Diataxis tutorials][dx-tut] |
-| P3 | Key fact first in page, section and paragraph; the first two words carry the gist. | [NN/g inverted pyramid][nng-pyramid], [NN/g F-pattern][nng-f] |
-| P4 | Paragraphs of 3-4 sentences at most (soft). | [Microsoft all abilities][ms-abilities], [digital.gov writing][dg-writing] |
-| P5 | Task headings start with an imperative verb; concept headings are noun phrases; sentence case; no `Overview`. | [Google headings][g-headings], [GitLab task topic][gl-task] |
-| P6 | Link text names the destination; never `here` or `this doc`. | [Google link text][g-link], [markdownlint MD059][md059] |
-| P7 | Steps: lead-in "To X:", numbered list, one action per step, condition before action, result in the same step, `Optional:` prefix. | [Google procedures][g-proc], [Microsoft steps][ms-steps] |
-| P8 | No filler: `easy`, `simply`, `just`, `obviously`, `in order to`, `leverage`, `currently`, `e.g.`, `i.e.`, `etc.`, `there is`, `there are`. | [Google word list][g-words], [GitLab style guide][gl-style] |
-| P9 | No AI-isms: `delve`, `tapestry`, `testament`, `pivotal`, `crucial`, `robust`, `seamless`, `comprehensive`, `showcase`, `foster`, `serves as`, `not only... but also`, `It is important to note`, `In this section, we will`, trailing "-ing" significance clauses. | [Wikipedia signs of AI writing][wp-ai], [Vale package explorer][vale-explorer] |
-| P10 | No hedging unless the uncertainty is real; then state the condition. | [Google tense][g-tense] |
-| P11 | One term per concept: Valkey (never `Redis`), podman-compose, TimescaleDB, hypertable, `sync_timedb`. | [Google word list][g-words], [Write the Docs principles][wtd] |
-| P12 | Numerals for quantities; space before units (`64 GiB`); GiB or GB as the tool reports it; ISO dates (`2026-11-27`). | [Google numbers][g-numbers], [Google units][g-units] |
-| P13 | Current state only: no `previously`, `no longer`, changelog tables or planning IDs (`D5`, `finding 18`). | `docs-current-state-only.mdc` |
-| P14 | The purpose line states the audience. | [Diataxis][diataxis], [GitLab topic types][gl-topics] |
+| ID  | Standard                                                                                                                                                                                                                                                           | Basis                                                                              |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| P1  | 25 words or fewer per sentence (Vale warning, not error).                                                                                                                                                                                                          | [GOV.UK sentence length][govuk-25], [GOV.UK clear language][govuk-clear]           |
+| P2  | Second person, active voice, present tense; "we" only in tutorials.                                                                                                                                                                                                | [Google tense][g-tense], [Microsoft voice][ms-voice], [Diataxis tutorials][dx-tut] |
+| P3  | Key fact first in page, section and paragraph; the first two words carry the gist.                                                                                                                                                                                 | [NN/g inverted pyramid][nng-pyramid], [NN/g F-pattern][nng-f]                      |
+| P4  | Paragraphs of 3-4 sentences at most (soft).                                                                                                                                                                                                                        | [Microsoft all abilities][ms-abilities], [digital.gov writing][dg-writing]         |
+| P5  | Task headings start with an imperative verb; concept headings are noun phrases; sentence case; no `Overview`.                                                                                                                                                      | [Google headings][g-headings], [GitLab task topic][gl-task]                        |
+| P6  | Link text names the destination; never `here` or `this doc`.                                                                                                                                                                                                       | [Google link text][g-link], [markdownlint MD059][md059]                            |
+| P7  | Steps: lead-in "To X:", numbered list, one action per step, condition before action, result in the same step, `Optional:` prefix.                                                                                                                                  | [Google procedures][g-proc], [Microsoft steps][ms-steps]                           |
+| P8  | No filler: `easy`, `simply`, `just`, `obviously`, `in order to`, `leverage`, `currently`, `e.g.`, `i.e.`, `etc.`, `there is`, `there are`.                                                                                                                         | [Google word list][g-words], [GitLab style guide][gl-style]                        |
+| P9  | No AI-isms: `delve`, `tapestry`, `testament`, `pivotal`, `crucial`, `robust`, `seamless`, `comprehensive`, `showcase`, `foster`, `serves as`, `not only... but also`, `It is important to note`, `In this section, we will`, trailing "-ing" significance clauses. | [Wikipedia signs of AI writing][wp-ai], [Vale package explorer][vale-explorer]     |
+| P10 | No hedging unless the uncertainty is real; then state the condition.                                                                                                                                                                                               | [Google tense][g-tense]                                                            |
+| P11 | One term per concept: Valkey (never `Redis`), podman-compose, TimescaleDB, hypertable, `sync_timedb`.                                                                                                                                                              | [Google word list][g-words], [Write the Docs principles][wtd]                      |
+| P12 | Numerals for quantities; space before units (`64 GiB`); GiB or GB as the tool reports it; ISO dates (`2026-11-27`).                                                                                                                                                | [Google numbers][g-numbers], [Google units][g-units]                               |
+| P13 | Current state only: no `previously`, `no longer`, changelog tables or planning IDs (`D5`, `finding 18`).                                                                                                                                                           | `docs-current-state-only.mdc`                                                      |
+| P14 | The purpose line states the audience.                                                                                                                                                                                                                              | [Diataxis], [GitLab topic types][gl-topics]                                        |
 
 ## Visual standards
 
-| ID | Standard | Basis |
-| --- | --- | --- |
-| V1 | One H1 on line 1; no skipped levels; H2 and H3, H4 only in long reference pages. | [Google headings][g-headings], [markdownlint rules][mdlint] (MD001, MD025, MD041) |
-| V2 | No bold as a heading; bold only for UI labels and term-list terms; no bold or italics for emphasis. | [GitLab text and formatting][gl-text], [Google highlights][g-highlights] |
-| V3 | Numbered list for a sequence, bullets for a set, term list for definitions; 2-7 parallel items. | [Microsoft lists][ms-lists], [GitLab Markdown][gl-md] |
-| V4 | Tables only for items with 2 or more attributes; 4 columns or fewer; one line per cell; an intro sentence; `None`, never blank. | [Microsoft tables][ms-tables] |
-| V5 | Every fence has a language tag: `bash`, `console`, `python`, `sql`, `ini`, `yaml`, `text`. | [markdownlint rules][mdlint] (MD040) |
-| V6 | No `$` prompts in copyable `bash` blocks; `console` only for transcripts; input and output in separate blocks. | [Google code samples][g-samples], [markdownlint rules][mdlint] (MD014) |
-| V7 | `bash` and `sh` lines 68 characters or fewer, no heredocs; other code 120 characters. | Repo paste-safety hook; PyMarkdown MD013 code setting |
-| V8 | GitHub alerts at top level only, at most 2 per page, never back-to-back; inside a step use plain `Warning:` text. | [GitHub alerts][gh-alerts] |
-| V9 | Alert severity: `WARNING` for data loss, outage or irreversible steps; `CAUTION` for risky but recoverable; `IMPORTANT` for what success needs; `NOTE` and `TIP` rarely. | [GitHub alerts][gh-alerts], [Google notices][g-notices] |
-| V10 | Mermaid for state machines and data flow, with `accTitle` and `accDescr`, and a takeaway sentence after. | [GitHub diagrams][gh-diagrams], [Mermaid accessibility][mermaid-a11y] |
-| V11 | `<details>` only for long output, config dumps and logs; never steps or warnings; blank line after `</summary>`. | [GitHub collapsed sections][gh-details], [NN/g layer-cake][nng-layer] |
-| V12 | Images need alt text that carries the information; never screenshot terminal text. | [Google code syntax][g-syntax], [markdownlint rules][mdlint] (MD045) |
-| V13 | No emoji or `:shortcodes:`; status cells say Yes, No or Partial; badges only in the root README, at most 4 live signals. | [GitHub accessibility tips][gh-a11y], [AbilityNet emoji][abilitynet] |
-| V14 | One sentence per source line; split a line over about 120 characters at a clause. | [Semantic line breaks][sembr], [GitLab Markdown][gl-md] |
-| V15 | `-` bullets; consecutive numbering (mdformat writes `01.` for lists of 10 or more, accepted); one blank line between blocks. | [markdownlint rules][mdlint] (MD004, MD029, MD012) |
-| V16 | Characters: see the character allowlist below. | [Microsoft all abilities][ms-abilities]; repo drift guard |
-| V17 | Identifiers, paths, flags and INI keys in backticks; INI keys as `` `[SECTION] key` ``. | [Google code syntax][g-syntax]; drift guard INI check |
-| V18 | Placeholders are `<UPPER_SNAKE>`, always inside a code span or fence, with a one-line legend under the block. | [GFM spec][gfm] (bare `<name>` parses as HTML) |
+| ID  | Standard                                                                                                                                                                 | Basis                                                                             |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| V1  | One H1 on line 1; no skipped levels; H2 and H3, H4 only in long reference pages.                                                                                         | [Google headings][g-headings], [markdownlint rules][mdlint] (MD001, MD025, MD041) |
+| V2  | No bold as a heading; bold only for UI labels and term-list terms; no bold or italics for emphasis.                                                                      | [GitLab text and formatting][gl-text], [Google highlights][g-highlights]          |
+| V3  | Numbered list for a sequence, bullets for a set, term list for definitions; 2-7 parallel items.                                                                          | [Microsoft lists][ms-lists], [GitLab Markdown][gl-md]                             |
+| V4  | Tables only for items with 2 or more attributes; 4 columns or fewer; one line per cell; an intro sentence; `None`, never blank.                                          | [Microsoft tables][ms-tables]                                                     |
+| V5  | Every fence has a language tag: `bash`, `console`, `python`, `sql`, `ini`, `yaml`, `text`.                                                                               | [markdownlint rules][mdlint] (MD040)                                              |
+| V6  | No `$` prompts in copyable `bash` blocks; `console` only for transcripts; input and output in separate blocks.                                                           | [Google code samples][g-samples], [markdownlint rules][mdlint] (MD014)            |
+| V7  | `bash` and `sh` lines 68 characters or fewer, no heredocs; other code 120 characters.                                                                                    | Repo paste-safety hook; PyMarkdown MD013 code setting                             |
+| V8  | GitHub alerts at top level only, at most 2 per page, never back-to-back; inside a step use plain `Warning:` text.                                                        | [GitHub alerts][gh-alerts]                                                        |
+| V9  | Alert severity: `WARNING` for data loss, outage or irreversible steps; `CAUTION` for risky but recoverable; `IMPORTANT` for what success needs; `NOTE` and `TIP` rarely. | [GitHub alerts][gh-alerts], [Google notices][g-notices]                           |
+| V10 | Mermaid for state machines and data flow, with `accTitle` and `accDescr`, and a takeaway sentence after.                                                                 | [GitHub diagrams][gh-diagrams], [Mermaid accessibility][mermaid-a11y]             |
+| V11 | `<details>` only for long output, config dumps and logs; never steps or warnings; blank line after `</summary>`.                                                         | [GitHub collapsed sections][gh-details], [NN/g layer-cake][nng-layer]             |
+| V12 | Images need alt text that carries the information; never screenshot terminal text.                                                                                       | [Google code syntax][g-syntax], [markdownlint rules][mdlint] (MD045)              |
+| V13 | No emoji or `:shortcodes:`; status cells say Yes, No or Partial; badges only in the root README, at most 4 live signals.                                                 | [GitHub accessibility tips][gh-a11y], [AbilityNet emoji][abilitynet]              |
+| V14 | One sentence per source line; split a line over about 120 characters at a clause.                                                                                        | [Semantic line breaks][sembr], [GitLab Markdown][gl-md]                           |
+| V15 | `-` bullets; consecutive numbering (mdformat writes `01.` for lists of 10 or more, accepted); one blank line between blocks.                                             | [markdownlint rules][mdlint] (MD004, MD029, MD012)                                |
+| V16 | Characters: see the character allowlist below.                                                                                                                           | [Microsoft all abilities][ms-abilities]; repo drift guard                         |
+| V17 | Identifiers, paths, flags and INI keys in backticks; INI keys as `` `[SECTION] key` ``.                                                                                  | [Google code syntax][g-syntax]; drift guard INI check                             |
+| V18 | Placeholders are `<UPPER_SNAKE>`, always inside a code span or fence, with a one-line legend under the block.                                                            | [GFM spec][gfm] (bare `<name>` parses as HTML)                                    |
 
 ### Character allowlist
 
@@ -116,18 +116,18 @@ Visual interest comes from alerts, tables, Mermaid and `<details>`, which are al
 
 ## Positioning standards
 
-| ID | Standard | Basis |
-| --- | --- | --- |
-| S1 | Page anatomy: H1, 1-2 sentence purpose + audience, page-wide hazard alert if any, Prerequisites, quick answer in the first screen, body, Verify, Troubleshooting (symptom first), Related (5 links at most). | [NN/g scrolling][nng-scroll], [GitLab task topic][gl-task], [Good Docs templates][gooddocs] |
-| S2 | Warnings go before the step they guard. | [Google highlights][g-highlights] |
-| S3 | No table of contents in pages (GitHub builds an outline); the root README keeps a short hand-written docs map. | [GitHub basic formatting][gh-basic] |
-| S4 | Split a page that mixes quadrants, covers 2 or more independent tasks, or passes about 10 steps; merge topics of 1-2 sentences. | [Diataxis][diataxis], [Microsoft steps][ms-steps], [GitLab topic types][gl-topics] |
-| S5 | Each fact lives on one page; other pages link to its heading anchor. | [Write the Docs principles][wtd] |
-| S6 | Headings are stable anchors; renaming one means fixing inbound `#fragment` links (the layout test checks them). | [GitHub basic formatting][gh-basic], [markdownlint rules][mdlint] (MD051) |
-| S7 | No YAML front matter; the directory encodes the quadrant. | [GitHub YAML metadata][gh-yaml], [GitLab front matter MR][gl-frontmatter] |
-| S8 | Root README order: title, one-line description, short background, install link, quick start, docs map, contributing, license. | [standard-readme spec][std-readme], [Make a README][makeareadme] |
-| S9 | Package READMEs say what the directory is, how to run its one command, and link into `docs/`. | Repo decision |
-| S10 | Generated docs carry ``Generated by `<SCRIPT>`; do not edit`` as the first line after the H1; edit the generator instead. | Repo generators |
+| ID  | Standard                                                                                                                                                                                                     | Basis                                                                                       |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| S1  | Page anatomy: H1, 1-2 sentence purpose + audience, page-wide hazard alert if any, Prerequisites, quick answer in the first screen, body, Verify, Troubleshooting (symptom first), Related (5 links at most). | [NN/g scrolling][nng-scroll], [GitLab task topic][gl-task], [Good Docs templates][gooddocs] |
+| S2  | Warnings go before the step they guard.                                                                                                                                                                      | [Google highlights][g-highlights]                                                           |
+| S3  | No table of contents in pages (GitHub builds an outline); the root README keeps a short hand-written docs map.                                                                                               | [GitHub basic formatting][gh-basic]                                                         |
+| S4  | Split a page that mixes quadrants, covers 2 or more independent tasks, or passes about 10 steps; merge topics of 1-2 sentences.                                                                              | [Diataxis], [Microsoft steps][ms-steps], [GitLab topic types][gl-topics]                    |
+| S5  | Each fact lives on one page; other pages link to its heading anchor.                                                                                                                                         | [Write the Docs principles][wtd]                                                            |
+| S6  | Headings are stable anchors; renaming one means fixing inbound `#fragment` links (the layout test checks them).                                                                                              | [GitHub basic formatting][gh-basic], [markdownlint rules][mdlint] (MD051)                   |
+| S7  | No YAML front matter; the directory encodes the quadrant.                                                                                                                                                    | [GitHub YAML metadata][gh-yaml], [GitLab front matter MR][gl-frontmatter]                   |
+| S8  | Root README order: title, one-line description, short background, install link, quick start, docs map, contributing, license.                                                                                | [standard-readme spec][std-readme], [Make a README][makeareadme]                            |
+| S9  | Package READMEs say what the directory is, how to run its one command, and link into `docs/`.                                                                                                                | Repo decision                                                                               |
+| S10 | Generated docs carry `` Generated by `<SCRIPT>`; do not edit `` as the first line after the H1; edit the generator instead.                                                                                  | Repo generators                                                                             |
 
 ## Page templates
 
@@ -207,13 +207,13 @@ Merging or moving existing pages keeps every unique technical detail and drops o
 
 All tools are pip packages in the host `.venv`, run as `repo: local` pre-commit hooks.
 
-| Tool (version) | Stage | Role |
-| --- | --- | --- |
-| [mdformat][mdformat] 0.7.22 with `mdformat-gfm` 1.0.0, `mdformat-gfm-alerts` 2.1.0, `mdformat-tables` 1.0.0 | commit | Formatter, `--wrap keep --number`; keeps one-sentence lines, tables, alerts and fences. |
-| [PyMarkdown][pymarkdown] (`pymarkdownlnt` 0.9.42) | commit, changed files | Structure lint with `.pymarkdown.json`; MD013 on for code only; MD051 and MD059 on. |
-| [Vale][vale] 3.28.1 (pip wrapper) with the local `HPC` style | commit | Prose lint; skips code spans and fences. |
-| codespell 2.4.3 | commit | Spelling; ignore words `cna` and `unparseable`. |
-| `hpcperfstats/tests/test_docs_layout.py` | pre-push | Offline link, anchor and reference-link check, plus naming and page anatomy. |
+| Tool (version)                                                                                    | Stage                 | Role                                                                                                          |
+| ------------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------- |
+| [mdformat] 0.7.22 with `mdformat-gfm` 1.0.0, `mdformat-gfm-alerts` 2.1.0, `mdformat-tables` 1.0.0 | commit                | Formatter, `--wrap keep --number` from `.mdformat.toml`; keeps one-sentence lines, tables, alerts and fences. |
+| [PyMarkdown] (`pymarkdownlnt` 0.9.42)                                                             | commit, changed files | Structure lint with `.pymarkdown.json`; MD013 on for code only; MD051 and MD059 on.                           |
+| [Vale] 3.28.1 (pip wrapper) with the local `HPC` style                                            | commit                | Prose lint with `.vale.ini`; skips code spans and fences.                                                     |
+| codespell 2.4.3                                                                                   | commit                | Spelling with `.codespellrc`; ignore words `cna` and `unparseable`.                                           |
+| `hpcperfstats/tests/test_docs_layout.py`                                                          | pre-push              | Offline link, anchor and reference-link check, plus naming and page anatomy.                                  |
 
 The Vale rules split into two levels:
 
@@ -231,23 +231,24 @@ Vale reads styles from the local `.vale/styles/` directory and never runs `vale 
 
 ### Vendored style versions
 
-Vendored Vale styles are recorded in this table, with their upstream version, so an upgrade is a reviewed diff.
+This table lists each vendored Vale style and its version, so an upgrade is a reviewed diff.
 
-| Style | Source | Version |
-| --- | --- | --- |
-| `HPC` | `.vale/styles/HPC/` in this repository | Maintained here |
+| Style | Source                                 | Version              |
+| ----- | -------------------------------------- | -------------------- |
+| `HPC` | `.vale/styles/HPC/` in this repository | Local v1, 2026-11-27 |
 
 Add a row when you vendor a third-party package such as Google or ai-tells from the [Vale package explorer][vale-explorer].
 
 ### Scope of the hooks
 
 Each hook's `files:` pattern covers the evergreen pages that follow this guide and widens as pages migrate.
+The four hooks share one pattern, the `md_lint_files` YAML anchor in `.pre-commit-config.yaml`, and one exclude, `md_lint_exclude`.
 The hooks exclude `docs/history/`, `docs/measurements/`, generated docs (lint the generator templates instead), `node_modules` and `test_runs`.
 After mdformat touches a doc that a test pins, run that test, because mdformat changes code-span escapes.
 
 ## Related
 
-- [Diataxis][diataxis]
+- [Diataxis]
 - [Google developer documentation style guide][g-highlights]
 - [GitLab documentation style guide][gl-style]
 - [Microsoft writing style guide][ms-voice]
@@ -300,6 +301,7 @@ After mdformat touches a doc that a test pins, run that test, because mdformat c
 [nng-scroll]: https://www.nngroup.com/articles/scrolling-and-attention/
 [pymarkdown]: https://pypi.org/project/pymarkdownlnt/
 [sembr]: https://sembr.org/
+[std-readme]: https://github.com/RichardLitt/standard-readme
 [vale]: https://docs.vale.sh/
 [vale-explorer]: https://vale.sh/explorer
 [wp-ai]: https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing

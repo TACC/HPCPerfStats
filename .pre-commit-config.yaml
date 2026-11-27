@@ -106,6 +106,49 @@ repos:
         files: ^monitor/(src/.*\.c|scripts/check_sentinel_error_paths\.(py|allowlist))$
         pass_filenames: false
 
+  # Markdown lint (docs/reference/documentation-style.md, "Lint toolchain").
+  # files: is a ratchet: it lists the evergreen pages that follow the style
+  # guide and widens as pages migrate. The anchors keep the four hooks on one
+  # scope. Records (docs/history/, docs/measurements/), generated docs (lint
+  # their generator instead), node_modules and test_runs are excluded.
+  - repo: local
+    hooks:
+      - id: mdformat
+        name: mdformat (staged Markdown, .mdformat.toml)
+        entry: bash -c '../.venv/bin/mdformat "$@"' --
+        language: system
+        files: &md_lint_files ^(docs/reference/documentation-style\.md|docs/index\.md)$
+        exclude: &md_lint_exclude ^(docs/history/|docs/measurements/|test_runs/|docs/MONITOR_VARIABLES\.md$|monitor/docs/METRICS_REFERENCE\.md$)|(^|/)node_modules/
+        pass_filenames: true
+      - id: pymarkdown
+        name: pymarkdown scan (staged Markdown, .pymarkdown.json)
+        entry: bash -c '../.venv/bin/pymarkdown --config .pymarkdown.json scan "$@"' --
+        language: system
+        files: *md_lint_files
+        exclude: *md_lint_exclude
+        pass_filenames: true
+      # The vale pip wrapper downloads the binary from GitHub on its first run;
+      # offline, that run fails, so say how to recover instead of a traceback.
+      - id: vale
+        name: vale prose lint (staged Markdown, .vale.ini, local HPC style)
+        entry: >-
+          bash -c '../.venv/bin/vale --version >/dev/null 2>&1 || {
+          echo "vale: binary missing and the one-time download failed;" >&2;
+          echo "run ../.venv/bin/vale --version once while online" >&2;
+          echo "(docs/reference/documentation-style.md, Vale first run)" >&2;
+          exit 1; }; exec ../.venv/bin/vale --config .vale.ini "$@"' --
+        language: system
+        files: *md_lint_files
+        exclude: *md_lint_exclude
+        pass_filenames: true
+      - id: codespell
+        name: codespell (staged Markdown, .codespellrc)
+        entry: bash -c '../.venv/bin/codespell "$@"' --
+        language: system
+        files: *md_lint_files
+        exclude: *md_lint_exclude
+        pass_filenames: true
+
   - repo: local
     hooks:
       - id: vulture-pre-push

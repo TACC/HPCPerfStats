@@ -1,0 +1,15 @@
+# P8: filler words that add no information.
+extends: existence
+message: "Remove the filler '%s' (P8)."
+level: error
+ignorecase: true
+tokens:
+  - easy
+  - easily
+  - simply
+  - just
+  - obviously
+  - in order to
+  - leverag(e|es|ed|ing)
+  - currently
+  - there (is|are)

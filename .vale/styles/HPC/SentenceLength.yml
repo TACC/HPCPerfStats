@@ -1,0 +1,7 @@
+# P1: 25 words or fewer per sentence.
+extends: occurrence
+message: "Split this sentence: more than 25 words (P1)."
+level: warning
+scope: sentence
+max: 25
+token: \b(\w+)\b

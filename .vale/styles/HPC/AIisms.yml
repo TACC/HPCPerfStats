@@ -1,0 +1,22 @@
+# P9: words and phrases that mark machine-written prose.
+extends: existence
+message: "Remove the AI-ism '%s'; state the fact plainly (P9)."
+level: error
+ignorecase: true
+tokens:
+  - delves?
+  - delving
+  - tapestry
+  - testament
+  - pivotal
+  - crucial(ly)?
+  - robust(ly|ness)?
+  - seamless(ly)?
+  - comprehensive(ly)?
+  - showcas(e|es|ed|ing)
+  - foster(s|ed|ing)?
+  - serves? as
+  - not only\b.+?\bbut also
+  - it is important to note
+  - it's important to note
+  - in this section,? we will

@@ -1,0 +1,10 @@
+# P8: Latin abbreviations; write the English words.
+extends: substitution
+message: "Use '%s' instead of '%s' (P8)."
+level: error
+ignorecase: true
+nonword: true
+swap:
+  '\be\.g\.': for example
+  '\bi\.e\.': that is
+  '\betc\.': and so on

@@ -1,0 +1,24 @@
+# P10: hedges; state the condition that makes the claim uncertain instead.
+extends: existence
+message: "Remove the hedge '%s' or state the condition (P10)."
+level: error
+ignorecase: true
+tokens:
+  - perhaps
+  - probably
+  - possibly
+  - maybe
+  - arguably
+  - hopefully
+  - somewhat
+  - might
+  - seems? to
+  - appears? to
+  - it seems
+  - kind of
+  - sort of
+  - more or less
+  - I think
+  - I believe
+  - should work
+  - in theory

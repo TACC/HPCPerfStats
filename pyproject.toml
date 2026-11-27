@@ -64,6 +64,15 @@ dev = [
   "vulture>=2.16",
   "pre-commit>=4.7.0",
   "memray>=1.20.0",  # commit-hook memory-leak smoke (scripts/run_commit_memory_leak_check.py)
+  # Markdown lint hooks (.pre-commit-config.yaml; docs/reference/documentation-style.md).
+  # vale is the pip wrapper: its first run downloads the Vale binary from GitHub.
+  "mdformat==0.7.22",
+  "mdformat-gfm==1.0.0",
+  "mdformat-gfm-alerts==2.1.0",
+  "mdformat-tables==1.0.0",
+  "pymarkdownlnt==0.9.42",
+  "vale==3.28.1.0",
+  "codespell==2.4.3",
 ]
 # Docker image only: Intel MKL plus the build backends used to source-compile
 # numpy/numexpr/pandas against it (--no-build-isolation). Never in

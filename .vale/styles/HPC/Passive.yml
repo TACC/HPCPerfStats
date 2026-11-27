@@ -1,0 +1,8 @@
+# P2: active voice. Rewrite passive sentences that hide the actor.
+extends: existence
+message: "'%s' may be passive voice; name the actor (P2)."
+level: warning
+ignorecase: true
+raw:
+  - \b(am|are|were|being|is|been|was|be)\b\s+
+  - (\w+ed|arisen|awoken|beaten|become|begun|bent|bitten|blown|born|bought|brought|built|caught|chosen|come|done|drawn|driven|eaten|fallen|felt|forbidden|forgotten|found|frozen|given|gone|grown|heard|held|hidden|hit|kept|known|laid|led|left|lost|made|meant|met|paid|put|read|run|said|seen|sent|set|shown|shut|sold|spent|split|spoken|stolen|struck|taken|taught|thought|thrown|told|understood|won|worn|written)\b

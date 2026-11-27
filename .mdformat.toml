@@ -1,0 +1,5 @@
+# mdformat options for the Markdown lint hook (.pre-commit-config.yaml).
+# keep: one sentence per source line stays as written.
+wrap = "keep"
+number = true
+end_of_line = "lf"

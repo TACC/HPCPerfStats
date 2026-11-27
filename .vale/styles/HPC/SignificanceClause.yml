@@ -1,0 +1,8 @@
+# P9: trailing "-ing" clauses that claim significance instead of stating a fact.
+extends: existence
+message: "Cut the trailing significance clause '%s' (P9)."
+level: error
+ignorecase: true
+nonword: true
+tokens:
+  - ',\s+(highlighting|underscoring|emphasizing|emphasising|reflecting|signaling|signalling|showcasing|demonstrating|illustrating|marking|cementing|solidifying)\b'

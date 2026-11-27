@@ -1,0 +1,3 @@
+[codespell]
+# cna: CVE Numbering Authority. unparseable: accepted variant spelling.
+ignore-words-list = cna,unparseable

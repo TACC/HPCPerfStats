@@ -1,0 +1,25 @@
+{
+  "extensions": {
+    "markdown-tables": {"enabled": true},
+    "markdown-strikethrough": {"enabled": true},
+    "markdown-task-list-items": {"enabled": true}
+  },
+  "plugins": {
+    "md003": {"style": "atx"},
+    "md004": {"style": "dash"},
+    "md029": {"style": "ordered"},
+    "md046": {"style": "fenced"},
+    "md048": {"style": "backtick"},
+    "md033": {"allowed_elements": "details,summary"},
+    "md013": {
+      "line_length": 100000,
+      "heading_line_length": 100000,
+      "code_blocks": true,
+      "code_block_line_length": 120,
+      "tables": false
+    },
+    "md060": {"enabled": false},
+    "md024": {"siblings_only": true},
+    "md059": {"prohibited-phrases": "click here,here,link,more,this,read more"}
+  }
+}

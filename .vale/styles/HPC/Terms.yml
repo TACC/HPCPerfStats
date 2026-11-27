@@ -1,0 +1,20 @@
+# P11: one term per concept. The cache is Valkey; Redis is the banned name.
+extends: substitution
+message: "Use '%s' instead of '%s' (P11)."
+level: error
+ignorecase: false
+swap:
+  Redis: Valkey
+  redis: Valkey
+  docker compose: podman-compose -p hpcperfstats
+  docker-compose up: podman-compose -p hpcperfstats up
+  podman compose: podman-compose
+  Podman Compose: podman-compose
+  Timescale DB: TimescaleDB
+  Timescaledb: TimescaleDB
+  timescaleDB: TimescaleDB
+  hyper-tables?: hypertable
+  hyper tables?: hypertable
+  Hypertables?: hypertable
+  sync-timedb: sync_timedb
+  synctimedb: sync_timedb
