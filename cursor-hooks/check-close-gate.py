@@ -125,8 +125,8 @@ def main() -> int:
   if plan_turn:
     plan_extra = (
       "\nPlan turns also require PLAN_TEMPLATE sections in the **live disk file** "
-      f"({rules_dir}/../docs/plans/PLAN_TEMPLATE.md or "
-      "HPCPerfStats/docs/plans/PLAN_TEMPLATE.md - Plan disk file, Operator discovery, "
+      "(HPCPerfStats/docs/plans/PLAN_TEMPLATE.md, monitor plans: its "
+      "Monitor plans appendix - Plan disk file, Operator discovery, "
       "Problem and facts, Approach, Testing, Implementation, Cursor rules, "
       "Final code review, Post-implementation review, closing todos in order "
       "code-cleanup -> git-hooks-pre-close -> post-implementation-review), "

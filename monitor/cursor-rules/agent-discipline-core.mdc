@@ -113,7 +113,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 
 | Trigger | Read |
 |---------|------|
-| User asks for a plan / Cursor Plan / `docs/plans/` / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `plan-template-enforcement.mdc`, `HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md` — live plans at **`<workspace_root>/.cursor/plans/*.plan.md`**; plan close requires **`code-cleanup`** (awesome-code-cleanup skill on the diff) before **`post-implementation-review`** |
+| User asks for a plan / Cursor Plan / `docs/plans/` / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `plan-template-enforcement.mdc`, `HPCPerfStats/docs/plans/PLAN_TEMPLATE.md` — live plans at **`<workspace_root>/.cursor/plans/*.plan.md`**; plan close requires **`code-cleanup`** (awesome-code-cleanup skill on the diff) before **`post-implementation-review`** |
 | Pre-code planning | `implementation-review-workflow.mdc` |
 
 ### Authorized non-monitor edits

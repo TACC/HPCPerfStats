@@ -1,16 +1,16 @@
 ---
 description: Mandatory structure, testing, and completion bar for every implementation plan
 alwaysApply: false
-globs: docs/plans/**,HPCPerfStats/monitor/docs/plans/**,.cursor/plans/**
+globs: docs/plans/**,.cursor/plans/**
 ---
 
 # Plan Creation Contract
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-Applies to **every plan**: pre-code chat plans, **`HPCPerfStats/monitor/docs/plans/`** design docs, monitor **Consumer follow-up plan** sections, and Cursor Plan mode output.
+Applies to **every plan**: pre-code chat plans, **`.cursor/plans/*.plan.md`** live plans, monitor **Consumer follow-up plan** sections, and Cursor Plan mode output.
 
-**Authoring entrypoint:** read and match **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`**. **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`** restate the non-skippable **close sequence** (senior final code review + structured chat self-review) for **all non-trivial code changes**; plan YAML + **`post-implementation-review`** todo when implementing a plan.
+**Authoring entrypoint:** read and match **`HPCPerfStats/docs/plans/PLAN_TEMPLATE.md`** and its *Appendix: Monitor plans* (monitor verify matrix, closing todos, operator-discovery targets). **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`** restate the non-skippable **close sequence** (senior final code review + structured chat self-review) for **all non-trivial code changes**; plan YAML + **`post-implementation-review`** todo when implementing a plan.
 
 ## Grounding (no guessing)
 
@@ -60,7 +60,7 @@ Include these **closing** todos (order fixed: `code-cleanup` -> `post-implementa
   status: pending
 ```
 
-Copy the full todo block from **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`** when authoring new plans. **`code-cleanup`** runs the **`awesome-code-cleanup`** skill per **`plan-completion-gate.mdc`** close-sequence step 1.
+Copy the full todo block from **`HPCPerfStats/docs/plans/PLAN_TEMPLATE.md`** when authoring new plans. **`code-cleanup`** runs the **`awesome-code-cleanup`** skill per **`plan-completion-gate.mdc`** close-sequence step 1.
 
 ## Post-implementation review (completion bar section)
 

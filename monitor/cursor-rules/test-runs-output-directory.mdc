@@ -13,7 +13,7 @@ Ephemeral **test execution artifacts** and **runtime verification notes** belong
 
 | Committed (repo docs) | Local only (`test_runs/`) |
 |-----------------------|---------------------------|
-| **`HPCPerfStats/monitor/docs/plans/`** — design baselines | Dated run summaries, pass/fail tables, agent verification notes |
+| **`HPCPerfStats/docs/plans/PLAN_TEMPLATE.md`** — plan template | Dated run summaries, pass/fail tables, agent verification notes |
 | **`HPCPerfStats/monitor/README.md`**, **`tests/README.md`** | Raw stdout from `make check`, `build_static_bundle.sh`, cross-compile |
 | Test source (`tests/test_*.c`, `tests/run_tests.sh`) | `ldd` captures, configure logs from verify passes |
 

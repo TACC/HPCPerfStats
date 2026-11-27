@@ -41,10 +41,7 @@ Hooks auto-detect workspace profile from the **`.cursor/rules` symlink target**:
 
 `hook_task_router.py` merges **`MONITOR_ROUTER_ENTRIES`** and **`HPCPERFSTATS_ROUTER_ENTRIES`** so authorized cross-edits can trigger rules from both trees.
 
-Plan template paths accepted for Read verification:
-
-- `HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md` (monitor workspace)
-- `HPCPerfStats/docs/plans/PLAN_TEMPLATE.md` (full-stack workspace)
+Plan template accepted for Read verification: `HPCPerfStats/docs/plans/PLAN_TEMPLATE.md` (both profiles; monitor plans use its "Appendix: Monitor plans").
 
 ## Hooks
 

@@ -21,7 +21,6 @@ from hpc_hook_lib import (
   load_json_stdin,
   parse_transcript_lines,
   plan_authoring_precreate_read_issues,
-  profile_rules_dir_label,
 )
 
 
@@ -77,14 +76,11 @@ def main() -> int:
     emit_allow()
     return 0
 
-  rules_dir = profile_rules_dir_label(
-    workspace_roots=payload.get("workspace_roots") or [],
-  )
   required = ", ".join(PLAN_AUTHORING_REQUIRED_MDC)
   message = (
     f"{gate_label} blocked (preToolUse): Read plan-authoring rules via the Read tool "
     f"BEFORE this tool. Missing: {', '.join(issues)}. "
-    f"Required: {required}, and {rules_dir}/../docs/plans/PLAN_TEMPLATE.md "
+    f"Required: {required}, and HPCPerfStats/docs/plans/PLAN_TEMPLATE.md "
     "(plan-creation-contract.mdc, plan-live-disk-sync.mdc, "
     "compose-operator-terminal-commands.mdc)."
   )

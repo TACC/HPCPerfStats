@@ -43,8 +43,6 @@ The **plan file frontmatter** (for example `.cursor/plans/*.plan.md`) is what th
 3. **“Do not edit the plan”** — when the user forbids plan edits, that means **do not change plan prose, scope, or approach**; **status-only** frontmatter updates remain **required** unless the user explicitly forbids all plan file writes.
 4. **Before task close** — verify no plan todo remains `status: pending` except items the user explicitly deferred; if any are still pending, either finish them or state the deferral in chat—do not claim the plan is complete.
 
-Committed design docs under **`HPCPerfStats/monitor/docs/plans/`** marked read-only by the user: same status-only rule applies only when that file is the active implementation checklist; otherwise sync the Cursor Plan file attached to the task.
-
 ## Close sequence (mandatory order)
 
 Same content as **Blocking close gate** above, expanded. Run all steps in the **same final turn** that reports implementation done, **before** marking todos complete.
@@ -81,7 +79,7 @@ Look for:
 
 **Fix anything found** and re-run relevant tests. Do not proceed to step 3 or mark todos complete while open review items remain.
 
-Aligns with **`plan-creation-contract.mdc`** step 6 and **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`** → *Final code review*. When a plan has **N distinct changes**, that template requires **N Approach groups** (one Target File / compression / minimally invasive block per change).
+Aligns with **`plan-creation-contract.mdc`** step 6 and **`HPCPerfStats/docs/plans/PLAN_TEMPLATE.md`** → *Final code review*. When a plan has **N distinct changes**, that template requires **N Approach groups** (one Target File / compression / minimally invasive block per change).
 
 ### 3. Structured chat self-review
 

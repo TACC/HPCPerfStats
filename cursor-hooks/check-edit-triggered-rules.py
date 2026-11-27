@@ -178,8 +178,8 @@ def main() -> int:
         f"{', '.join(issues)}. "
         f"Use the Read tool on each listed {rules_dir}/*.mdc, "
         "each listed doc (checkout-relative), "
-        "and the workspace PLAN_TEMPLATE.md "
-        "(HPCPerfStats/monitor/docs/plans/ or HPCPerfStats/docs/plans/) "
+        "and HPCPerfStats/docs/plans/PLAN_TEMPLATE.md "
+        "(monitor plans: its Monitor plans appendix) "
         "for plan turns, then list them under ## Agent rule dispatch at close."
       )
       % action,

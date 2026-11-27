@@ -352,3 +352,81 @@ Skip full plan structure only for:
 - Answer-only questions with no implementation
 - Trivial typo or comment-only edits with no behavioral contract change
 
+## Appendix: Monitor plans
+
+A plan that changes `HPCPerfStats/monitor/**` uses this template with the substitutions below.
+The monitor rule tree `HPCPerfStats/monitor/cursor-rules/` governs it (its `plan-creation-contract.mdc`, `plan-template-enforcement.mdc`, `plan-completion-gate.mdc` and `plan-live-disk-sync.mdc`).
+A plan that also changes container code adds the container sections it needs from the body above.
+
+### Closing todos and operator discovery
+
+- Closing todos are `code-cleanup`, then `post-implementation-review` (last); the monitor tree has no `git-hooks-pre-close` todo.
+- **Operator discovery** groups **Pending commands** by target (host monitor build, compute node, Compose service), one copy/paste block per target; the **Completed findings** table uses a `Target` column instead of `Service`.
+
+### Problem and facts, Approach
+
+- Affected layers: monitor C, emit/schema, RabbitMQ, consumer `listend.py` contract (read-only), packaging/spec.
+- Best practices to cite: test pyramid (unit `make check` before the full static bundle), bounded hot-path work for HPC daemons (`monitor-c-testing-standards.mdc`, `monitor-jitter-and-fidelity-priority.mdc`).
+- Bug plans follow `traceback-fix-discipline.mdc` and `grok-surgical-bug-fix-mandate.mdc` (monitor copies); the fix-compression audit keeps bounds checks, error handling and hot-path performance.
+
+Optional architecture diagram:
+
+```mermaid
+sequenceDiagram
+  participant M as hpcperfstatsd
+  participant Q as RabbitMQ
+  participant L as listend.py
+  M->>Q: stats/schema payload
+  Q->>L: consume
+```
+
+### Testing
+
+Tests live in `HPCPerfStats/monitor/tests/test_*.c` (registered in `tests/Makefile.am`).
+
+**Pre-merge verification matrix** (`global-testing-discipline.mdc`, `monitor-dual-verify-cross-and-static.mdc`, `monitor-valgrind-cpp-linter-gate.mdc`) - pick the minimum tier:
+
+| Change touches | Minimum run |
+| --- | --- |
+| Pure helper / parser in `src/` | Targeted `tests/test_*.c` via `make check` |
+| Substantive monitor C / Autotools | `scripts/build_static_bundle.sh` + `make check` in `.build-static` on the arches that compile the change (`monitor-dual-verify-cross-and-static.mdc` section 3) |
+| Portable / multi-arch slice (shared daemon, Autotools for all targets, DCGM GPU) | Also `scripts/cross_compile_test.sh --force-foreign --fail-fast` on a foreign family that uses the change |
+| x86-only direct perf core / uncore / RAPL / CPUID (`x86_core_perf`, `x86_uncore_perf`, `x86_rapl`, `cpuid.*`) | x86_64 static + check; skip aarch64 |
+| Shared `perf_util` / both-arch bundle or configure (`--with-cpu-counter-backend`) | x86_64 and aarch64 |
+| `arm` CPU backend only (Grace direct perf; not GPU) | aarch64 static or `TARGETS=aarch64-linux-gnu`; skip x86_64 |
+| Plan implementation closing (monitor C/tests/scripts) | Also `scripts/run_valgrind_check.sh` + `scripts/run_cpp_linter.sh` (logs under `test_runs/`) |
+| `hpcperfstats.spec` / version fields | `rpmspec -P hpcperfstats.spec` |
+| After successful verify | `make distclean` in the build dir (`monitor-post-verify-distclean.mdc`) |
+
+Do not put unconditional ARM-on-x86 (or x86-on-ARM) foreign smoke in plan verify todos; cite skipped families in the plan Testing section.
+
+Runner, from `HPCPerfStats/monitor/` (drop the cross line when section 3 skips foreign; it is for portable and DCGM GPU diffs only):
+
+```bash
+./scripts/build_static_bundle.sh
+make -C .build-static check
+./scripts/cross_compile_test.sh --force-foreign --fail-fast
+make -C .build-static distclean
+./scripts/run_valgrind_check.sh
+./scripts/run_cpp_linter.sh
+```
+
+Validation runbook: escalate from targeted tests to the static bundle on the required CPU families, add foreign cross only for portable or multi-arch diffs, and name the skipped arch family and its dual-verify table row as a residual risk.
+
+### Implementation, Cursor rules, docs sync
+
+- Implementation locations are `HPCPerfStats/monitor/src/...`, `tests/`, `scripts/`.
+- A recurring monitor pattern goes in a focused `HPCPerfStats/monitor/cursor-rules/*.mdc`, dual-registered in that tree's `agent-discipline-core.mdc` and in `cursor-hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`).
+
+| Trigger | Update |
+| --- | --- |
+| Build / verify workflow | `HPCPerfStats/monitor/README.md`, `monitor/tests/README.md`, the matching `monitor/docs/how-to/` page (`monitor-readme-maintenance.mdc`, `monitor-docs-structure-and-style.mdc`) |
+| Emitted output (keys, line grammar, devices) | `monitor/docs/RAW_DATA_FORMAT.md`, `docs/metric_descriptions.tsv`, regenerated `METRICS_REFERENCE.md` (`monitor-raw-data-format-docs.mdc`) |
+| Breaking emit/schema | `monitor/docs/reference/legacy-formats.md` table, `hpcperfstats/dbload/lib/monitor_naming/monitor_variable_rename_map.yaml` (`monitor-consumer-schema-migration.mdc`) |
+
+### Consumer follow-up, invariants, final review
+
+- Consumer follow-up rollout may name a monitor escape hatch (for example `enable_slow_tier 0`).
+- Invariants cover the `listend.py` host token, `$` rotation versus append, tier gating, cumulative versus gauge keys, and monitor emit to consumer archive path naming.
+- Final code review adds: jitter and hot-path work, spec/version sync, static bundle plus arch-scoped cross-compile (`monitor-dual-verify-cross-and-static.mdc`), and `MONITOR_ROUTER_ENTRIES` dual registration.
+

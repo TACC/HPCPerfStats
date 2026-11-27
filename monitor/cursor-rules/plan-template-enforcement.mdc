@@ -1,14 +1,14 @@
 ---
 description: Hard gate — PLAN_TEMPLATE for plans; close sequence (senior review + self-review) for every non-trivial code change
 alwaysApply: false
-globs: docs/plans/**,HPCPerfStats/monitor/docs/plans/**,.cursor/plans/**
+globs: docs/plans/**,.cursor/plans/**
 ---
 
 # Plan Template And Close Enforcement
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-Agents must not treat plan structure or the **close sequence** as optional under time pressure—**including bugfixes and hotfixes with no plan file**. This rule is the **short enforcement reminder**; detail lives in **`plan-creation-contract.mdc`**, **`plan-completion-gate.mdc`**, **`implementation-review-workflow.mdc`**, and **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`**.
+Agents must not treat plan structure or the **close sequence** as optional under time pressure—**including bugfixes and hotfixes with no plan file**. This rule is the **short enforcement reminder**; detail lives in **`plan-creation-contract.mdc`**, **`plan-completion-gate.mdc`**, **`implementation-review-workflow.mdc`**, and **`HPCPerfStats/docs/plans/PLAN_TEMPLATE.md`**.
 
 ## Every implementation plan must include
 
@@ -26,14 +26,14 @@ Agents must not treat plan structure or the **close sequence** as optional under
   status: pending
 ```
 
-Copy the full frontmatter/todo block from **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`** when authoring new plans.
+Copy the full frontmatter/todo block from **`HPCPerfStats/docs/plans/PLAN_TEMPLATE.md`** when authoring new plans.
 
 ## When the user asks for a plan
 
 Unless they explicitly request a **narrow exception** (answer-only, trivial typo/comment with no behavior change):
 
-1. **Read** **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`** before authoring.
-2. **Match** that structure in chat, Cursor Plan mode, or **`docs/plans/`** commits.
+1. **Read** **`HPCPerfStats/docs/plans/PLAN_TEMPLATE.md`** (including *Appendix: Monitor plans*) before authoring.
+2. **Match** that structure, with the monitor appendix substitutions, in the live plan file **`.cursor/plans/<name>.plan.md`**.
 3. **End** with **`post-implementation-review`** as the **last** todo.
 
 **Treat as full-plan requests** (use PLAN_TEMPLATE + final review sections):

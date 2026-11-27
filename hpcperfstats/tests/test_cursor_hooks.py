@@ -29,7 +29,6 @@ RULE_PATH = (
 MONITOR_RULE_PATH = (
   "/repo/HPCPerfStats/monitor/cursor-rules/monitor-c-conventions.mdc"
 )
-MONITOR_PLAN_TEMPLATE = "/repo/HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md"
 MONITOR_GLOBAL_TESTING_PATH = (
   "/repo/HPCPerfStats/monitor/cursor-rules/global-testing-discipline.mdc"
 )
@@ -825,26 +824,41 @@ def test_plan_content_issues_rejects_code_cleanup_after_git_hooks():
 
 
 def test_plan_templates_order_closing_todos():
-  """Both PLAN_TEMPLATE.md files list code-cleanup before the later todos."""
+  """PLAN_TEMPLATE.md lists code-cleanup before the later todos."""
   repo_root = Path(__file__).resolve().parents[2]
   container = repo_root / "docs" / "plans" / "PLAN_TEMPLATE.md"
-  monitor = repo_root / "monitor" / "docs" / "plans" / "PLAN_TEMPLATE.md"
-  assert lib.closing_todo_order_issues(container.read_text("utf-8")) == []
-  for template in (container, monitor):
-    text = template.read_text(encoding="utf-8")
-    assert "awesome-code-cleanup" in text, template
-    assert text.index("id: code-cleanup") < text.index(
-      "id: post-implementation-review"
-    ), template
+  text = container.read_text(encoding="utf-8")
+  assert lib.closing_todo_order_issues(text) == []
+  assert "awesome-code-cleanup" in text
+  assert text.index("id: code-cleanup") < text.index(
+    "id: post-implementation-review"
+  )
+
+
+def test_plan_template_single_copy_with_monitor_appendix():
+  """One plan template: the monitor fork is merged as an appendix."""
+  repo_root = Path(__file__).resolve().parents[2]
+  text = (repo_root / "docs" / "plans" / "PLAN_TEMPLATE.md").read_text(
+    encoding="utf-8"
+  )
+  assert not (repo_root / "monitor" / "docs" / "plans").exists()
+  appendix = text[text.index("## Appendix: Monitor plans") :]
+  for snippet in (
+    "monitor-dual-verify-cross-and-static.mdc",
+    "monitor-valgrind-cpp-linter-gate.mdc",
+    "./scripts/build_static_bundle.sh",
+    "make -C .build-static check",
+    "rpmspec -P hpcperfstats.spec",
+    "MONITOR_ROUTER_ENTRIES",
+    "`code-cleanup`, then `post-implementation-review`",
+  ):
+    assert snippet in appendix, snippet
 
 
 def test_plan_template_includes_root_cause_surgical_fix_block():
   """PLAN_TEMPLATE.md keeps RCA in facts and target/fix subsections in Approach."""
   repo_root = Path(__file__).resolve().parents[2]
-  templates = (
-    repo_root / "docs" / "plans" / "PLAN_TEMPLATE.md",
-    repo_root / "monitor" / "docs" / "plans" / "PLAN_TEMPLATE.md",
-  )
+  templates = (repo_root / "docs" / "plans" / "PLAN_TEMPLATE.md",)
   required = (
     "### Root Cause Analysis",
     "### Target File & Line Numbers",
@@ -2630,14 +2644,20 @@ def test_resolve_cursor_rule_path_finds_monitor_rules():
   assert "monitor/cursor-rules" in str(resolved).replace("\\", "/")
 
 
-def test_is_plan_template_read_path_accepts_monitor_template():
-  assert lib.is_plan_template_read_path(MONITOR_PLAN_TEMPLATE) is True
+def test_is_plan_template_read_path_accepts_only_the_docs_template():
   assert (
     lib.is_plan_template_read_path(
       "HPCPerfStats/docs/plans/PLAN_TEMPLATE.md",
     )
     is True
   )
+  assert (
+    lib.is_plan_template_read_path(
+      "/repo/HPCPerfStats/hpcperfstats/docs/plans/PLAN_TEMPLATE.md",
+    )
+    is True
+  )
+  assert lib.is_plan_template_read_path("/repo/HPCPerfStats/README.md") is False
 
 
 def test_detect_rules_profile_monitor_symlink(tmp_path):

@@ -1,7 +1,7 @@
 ---
 description: Live plan file on disk is the only source of truth — chat and CreatePlan do not count
 alwaysApply: false
-globs: docs/plans/**,HPCPerfStats/monitor/docs/plans/**,.cursor/plans/**
+globs: docs/plans/**,.cursor/plans/**
 ---
 
 # Plan Live Disk Sync
@@ -38,7 +38,7 @@ When facts are missing and the operator must run commands (host `make check`, Ra
 
 - Reporting plan progress in chat **without** a matching disk edit in that turn.
 - Leaving completed operator commands in **Pending commands**.
-- Using committed **`HPCPerfStats/monitor/docs/plans/`** as the live working plan (baselines only — live work uses **`.cursor/plans/`**).
+- Writing a live plan under **`HPCPerfStats/docs/plans/`** (template only — live work uses **`.cursor/plans/`**).
 
 ## Overlap
 

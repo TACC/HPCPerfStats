@@ -89,7 +89,6 @@ LEGACY_ALLOWED = frozenset(
     "monitor/docs/METRICS_REFERENCE.md",
     "monitor/docs/RAW_DATA_FORMAT.md",
     "monitor/docs/metric_descriptions.tsv",
-    "monitor/docs/plans/PLAN_TEMPLATE.md",
   }
 )
 

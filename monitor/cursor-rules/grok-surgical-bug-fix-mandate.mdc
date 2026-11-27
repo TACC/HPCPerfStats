@@ -45,7 +45,7 @@ After reading triggered domain rules, and **before** the first product-code edit
 - **Proposed Patch:** The **compressed** snippet that will change — not the Expansion Fix draft.
 - **Compression metrics:** Redundant blocks slated for deletion; modern-syntax mechanism; projected net line impact (`0` if the 1–5 line patch is already immune).
 
-Stay inside that range unless the RCA is revised first. For a Cursor Plan, put **Root Cause Analysis** in Problem and facts, and Approach subsections **Target File & Line Numbers**, **Fix compression sequence**, **Minimally Invasive Fix**, and **Compression metric block** (`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`).
+Stay inside that range unless the RCA is revised first. For a Cursor Plan, put **Root Cause Analysis** in Problem and facts, and Approach subsections **Target File & Line Numbers**, **Fix compression sequence**, **Minimally Invasive Fix**, and **Compression metric block** (`HPCPerfStats/docs/plans/PLAN_TEMPLATE.md`).
 
 ## Overlap
 

@@ -1569,8 +1569,8 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
   {
     "id": "monitor_plans",
     "patterns": [
-      "HPCPerfStats/monitor/docs/plans/*",
-      "monitor/docs/plans/*",
+      "HPCPerfStats/docs/plans/*",
+      "docs/plans/*",
       ".cursor/plans/*",
     ],
     "rules": [
