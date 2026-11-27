@@ -48,7 +48,7 @@ Look up code, configuration and contract facts.
 - [Test layout](reference/test-layout.md)
 - [Web UI metrics](reference/web-ui-metrics.md)
 - [Analysis architectures](reference/analysis-architectures.md)
-- Security posture
+- [Security posture](reference/security-posture.md)
 - [Release notes](reference/release-notes.md)
 - Monitor variables consumer map
 

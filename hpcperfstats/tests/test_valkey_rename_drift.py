@@ -39,10 +39,8 @@ _ALLOWED_PATHS = {
   "hpcperfstats/site/lib/machine/tests/test_api_helpers.py",
   # Live test asserts the compat field is not surfaced.
   "hpcperfstats/site/lib/machine/tests/test_valkey_cache_live.py",
-  # Dated incident / audit records.
+  # Dated incident record.
   "docs/artifacts/update_metrics_stall_audit_2026-05-12.md",
-  "docs/SECURITY_AUDIT.md",
-  "docs/SECURITY_REMEDIATION_BACKLOG.md",
   # Release notes record the one-time Redis -> Valkey cutover (Q30): the
   # retired service, container, volume, socket and INI key names.
   "docs/reference/release-notes.md",

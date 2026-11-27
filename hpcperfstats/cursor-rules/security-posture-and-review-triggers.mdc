@@ -50,4 +50,5 @@ When editing files that affect authentication, authorization, browser security h
 
 ## Documentation
 
-- Substantive security findings or process changes: update [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md) and [`docs/SECURITY_REMEDIATION_BACKLOG.md`](docs/SECURITY_REMEDIATION_BACKLOG.md) in the same task when behavior or recommended practices change.
+- Substantive security findings or process changes: update [`docs/reference/security-posture.md`](docs/reference/security-posture.md) (open items, F1-F12 status, controls, scan methods) in the same task when behavior or recommended practices change.
+- That page is current state only (`docs-current-state-only.mdc`): edit the item, status or control in place; never add dated "fixed X" rows, a History table or links into `test_runs/`. The commit message and Dependabot/CodeQL records hold the history.

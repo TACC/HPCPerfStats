@@ -569,7 +569,7 @@ To audit only the host environment or the frontend:
 ```
 
 A host `pip freeze` may include extra dev tools; the workflow audits the dependency set that ships.
-Findings and follow-ups are in [`docs/SECURITY_AUDIT.md`](../../SECURITY_AUDIT.md) and [`docs/SECURITY_REMEDIATION_BACKLOG.md`](../../SECURITY_REMEDIATION_BACKLOG.md).
+Open items, finding status and the other scans are in [Security posture](../../reference/security-posture.md).
 `hpcperfstats/site/hpcperfstats_site/tests/test_csp_report_endpoint.py` checks that the CSP report endpoint accepts a POST without a CSRF token.
 
 ## Troubleshooting

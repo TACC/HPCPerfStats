@@ -64,8 +64,6 @@ LEGACY_ALLOWED = frozenset(
     "docs/MONITOR_NAMING_SCHEME.md",
     "docs/MONITOR_VARIABLES.md",
     "docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md",
-    "docs/SECURITY_AUDIT.md",
-    "docs/SECURITY_REMEDIATION_BACKLOG.md",
     "docs/SYNC_TIMEDB_CAMPAIGN_PATCH_INDEX.md",
     "docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md",
     "docs/apply_monitor_variable_renames.py",

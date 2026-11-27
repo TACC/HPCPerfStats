@@ -20,7 +20,7 @@ The SPA bundles **stock** **`@bokeh/bokehjs`** from npm (no `patch-package` vend
 
 `bokehInit.ts` and `app/bokeh-playwright-smoke/` must use that loader.
 
-**npm graph (3.10+):** `@bokeh/bokehjs` depends on **`slickgrid@^5.19`** (not deprecated `@bokeh/slickgrid`). Do **not** add `slickgrid` as a direct app dependency unless install cannot resolve it transitively. Keep **`overrides.dompurify`** at the SECURITY_AUDIT floor (satisfies Bokeh’s `^3.3.0`). After `npm install`, confirm the lockfile has **one** grid package and `npm audit` is clean (or dated in SECURITY_AUDIT).
+**npm graph (3.10+):** `@bokeh/bokehjs` depends on **`slickgrid@^5.19`** (not deprecated `@bokeh/slickgrid`). Do **not** add `slickgrid` as a direct app dependency unless install cannot resolve it transitively. Keep **`overrides.dompurify`** at the floor listed in `docs/reference/security-posture.md` (Frontend controls; satisfies Bokeh's `^3.3.0`). After `npm install`, confirm the lockfile has **one** grid package and `npm audit` is clean (or the residual is an open item on that page).
 
 If Bokeh regressions reappear in the browser console after upgrades, prefer fixing **`json_item`** contracts / React embed timing first; reintroducing a **`patch-package`** patch is a last resort (document why and keep **`postinstall`** + `patches/` in sync).
 
