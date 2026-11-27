@@ -3697,7 +3697,7 @@ def test_validate_sealed_daily_archive_validation_cache_hits(
   calls = {"n": 0}
   # Sealed-side reads go through the members-store single-flight helper, not a
   # direct _scan_compressed_archive_members_and_readable call (see
-  # sync-timedb-ingest-pool-io-coordination.mdc item 10).
+  # sync-timedb-ingest-pool-io-coordination.mdc item 26).
   real_scan = helpers._sealed_archive_members_via_store_or_scan
 
   def wrapped_scan(path, **kwargs):

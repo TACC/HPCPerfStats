@@ -159,13 +159,13 @@ The registry entries are in [Section 8 Unused registry kinds](sync-timedb-state-
 | Entry                                            | Thread                               | Scan execution                                                                           |
 | ------------------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------- |
 | `request_archive_members_populate_and_wait`      | orchestrator prewarm, ingest workers | enqueue on the populate pool, or inline `execute_archive_members_populate_for_canonical` |
-| `get_existing_archive_members_for_daily_archive` | ingest lookup                        | L1 cache -> populate wait -> local scan fallback                                         |
+| `get_existing_archive_members_for_daily_archive` | ingest lookup                        | L1 cache -> inline populate on a populate-pool thread, else populate wait; no local scan |
 | `sync_timedb_archive.py` backfill                | sealed-only CLI                      | `iter_sealed_daily_archive_member_paths` (no `.tar` restore)                             |
 
 - Archive CLI vs orchestrator prewarm: `sync_timedb_archive.py` is an operator sealed-day tool (`all`, dates or paths) and never calls `ensure_daily_tar_restored_for_append` or the orchestrator chunk prewarm.
   The orchestrator and ingest workers own the hot-path populate through `request_archive_members_populate_and_wait`; day_close threads own seal, verify and delete; CLI scans never route through prewarm or maintenance snapshots.
 - Defer split: day_close defer checks `ingest_tar_hot` (ingest pool activity); populate-pool tar scans also defer on `archive_append_inflight` (the append worker holds the day until merge).
-  Both keys are intentional (`sync-timedb-ingest-pool-io-coordination.mdc` item 8b).
+  Both keys are intentional (`sync-timedb-ingest-pool-io-coordination.mdc` items 19 and 29).
 
 ## Stall signals
 

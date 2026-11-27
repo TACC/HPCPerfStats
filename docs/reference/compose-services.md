@@ -498,7 +498,7 @@ It needs Python 3.14+ (the project venv) if host `python3` is older.
 `<ARCHIVE_DIR>`: `[PIPELINE] archive_dir` as resolved from the INI.
 
 The first form is a dry run (no sidecar unlink, no restart); the second invalidates one day and restarts `pipeline`; the third needs `--yes` for all days, and `--no-restart` leaves pipeline L1 warm.
-`sync-timedb-ingest-pool-io-coordination.mdc` section 16a has the contract.
+`sync-timedb-ingest-pool-io-coordination.mdc` item 32 has the contract.
 
 ### populate-pool after a deploy
 
