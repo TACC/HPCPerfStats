@@ -8849,6 +8849,9 @@ def _repair_truncated_daily_tar_via_extract_recreate(
   """
   Rewrite a truncated daily tar via GNU extract + ``--posix`` recreate.
 
+  The recreate keeps the stored names (full path without the leading
+  ``/``, as the clone append writes them), never ``./`` names.
+
   Args:
     tar_path (str): Daily ``.tar`` path to repair in place.
     expected_members (dict[str, int]): File members GNU ``tvf`` listed pre-EOF.
@@ -8903,8 +8906,19 @@ def _repair_truncated_daily_tar_via_extract_recreate(
           flush=True,
         )
       return False
+    # Name the top-level entries, not ".": "." stores every member as
+    # "./hpcperfstats/...", a second spelling of the clone-append names.
     recreate = subprocess.run(
-      [tar_bin, "--posix", "-cf", new_tar, "-C", extract_dir, "."],
+      [
+        tar_bin,
+        "--posix",
+        "-cf",
+        new_tar,
+        "-C",
+        extract_dir,
+        "--",
+        *sorted(os.listdir(extract_dir)),
+      ],
       capture_output=True,
       text=True,
       check=False,
@@ -9995,7 +10009,8 @@ def _extract_member_copy(
 
   Every stored spelling of ``key`` is extracted into a new directory under
   ``work_root`` (``hps_union_extract_*``, swept as scratch); the file whose
-  key and size match is returned. The caller removes the directory.
+  key and size match is returned. The caller removes the directory; on an
+  exception it is removed here.
 
   Args:
     source_path (str): Open ``.tar`` or sealed ``.tar.zst`` / ``.tar.gz``.
@@ -10009,6 +10024,10 @@ def _extract_member_copy(
     tuple[str, str]: Extract directory, and the matching file path or
     ``""`` when no extracted copy has that key and size.
 
+  Raises:
+    Exception: Any error while extracting or scanning is re-raised after
+      the extract directory is removed.
+
   Examples:
     >>> import tempfile
     >>> work, path = _extract_member_copy(
@@ -10018,22 +10037,26 @@ def _extract_member_copy(
     ('', None)
   """
   work = tempfile.mkdtemp(prefix="hps_union_extract_", dir=work_root)
-  if _gnu_tar_extract_named_member(
-    source_path,
-    key,
-    work,
-    from_zst=from_zst,
-    archive_threads=archive_threads,
-  ):
-    for root, _dirs, files in os.walk(work):
-      for name in files:
-        path = os.path.join(root, name)
-        if (
-          not name.startswith("._")
-          and get_tar_member_name(os.path.relpath(path, work)) == key
-          and os.path.getsize(path) == int(size)
-        ):
-          return work, path
+  try:
+    if _gnu_tar_extract_named_member(
+      source_path,
+      key,
+      work,
+      from_zst=from_zst,
+      archive_threads=archive_threads,
+    ):
+      for root, _dirs, files in os.walk(work):
+        for name in files:
+          path = os.path.join(root, name)
+          if (
+            not name.startswith("._")
+            and get_tar_member_name(os.path.relpath(path, work)) == key
+            and os.path.getsize(path) == int(size)
+          ):
+            return work, path
+  except Exception:
+    shutil.rmtree(work, ignore_errors=True)
+    raise
   return work, ""
 
 
@@ -11187,9 +11210,11 @@ def _iter_sealed_daily_archive_spooled_members(
     work, extracted = _extract_member_copy(
       sealed_path, member_name, size_int, spool_root
     )
-    if extracted:
-      os.replace(extracted, dest)
-    shutil.rmtree(work, ignore_errors=True)
+    try:
+      if extracted:
+        os.replace(extracted, dest)
+    finally:
+      shutil.rmtree(work, ignore_errors=True)
     if not extracted:
       if on_member_skipped is not None:
         on_member_skipped()
@@ -11228,7 +11253,7 @@ def iter_sealed_daily_archive_member_lines(sealed_path: str) -> Iterator[Any]:
   if not os.path.isfile(sealed_path):
     raise FileNotFoundError(sealed_path)
   max_bytes = cfg.get_sync_ingest_max_file_read_bytes()
-  spool_root = _archive_ingest_spool_root(sealed_path=sealed_path)
+  spool_root = _archive_ingest_spool_root(sealed_path)
   with file_read_lock_wait(sealed_path):
     for member_name, dest in _iter_sealed_daily_archive_spooled_members(
       sealed_path,
@@ -11253,40 +11278,31 @@ def iter_sealed_daily_archive_member_lines(sealed_path: str) -> Iterator[Any]:
       yield member_name, content
 
 
-def _archive_ingest_spool_root(
-  spool_dir: Any | None = None,
-  *,
-  sealed_path: Any | None = None,
-) -> Any:
+def _archive_ingest_spool_root(sealed_path: str) -> str:
   """
-  Directory for spooling sealed tar members to disk (path-only ingest).
+  Create and return the spool for sealed members: beside the sealed archive.
+
+  The spool is always ``.sync_archive_ingest_spool`` in the sealed archive's
+  directory, where the dead-scratch sweep finds crash leftovers.
 
   Args:
-    spool_dir (Any | None): One of ``Any``, ``None``.
-    sealed_path (Any | None): One of ``Any``, ``None``.
+    sealed_path (str): Sealed daily ``.tar.zst`` / ``.tar.gz`` path.
 
   Returns:
-    Any: Open return polymorphism from ``_archive_ingest_spool_root``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
+    str: Spool directory path (created when missing).
 
   Examples:
-    >>> _archive_ingest_spool_root(None, None)  # doctest: +SKIP
+    >>> import os, tempfile
+    >>> root = _archive_ingest_spool_root(
+    ...   os.path.join(tempfile.mkdtemp(), "2026-01-01.tar.zst")
+    ... )
+    >>> os.path.basename(root)
+    '.sync_archive_ingest_spool'
   """
-  if spool_dir:
-    root = spool_dir
-  elif sealed_path:
-    root = os.path.join(
-      os.path.dirname(os.path.abspath(sealed_path)),
-      ".sync_archive_ingest_spool",
-    )
-  else:
-    base = cfg.get_archive_dir_path() or cfg.get_daily_archive_dir_path()
-    if not base:
-      import tempfile
-
-      base = tempfile.gettempdir()
-    root = os.path.join(base, ".sync_archive_ingest_spool")
+  root = os.path.join(
+    os.path.dirname(os.path.abspath(sealed_path)),
+    ".sync_archive_ingest_spool",
+  )
   os.makedirs(root, exist_ok=True)
   return root
 
@@ -11313,7 +11329,6 @@ def _member_spool_relative_path(member_name: Any) -> Any:
 
 def iter_sealed_daily_archive_member_paths(
   sealed_path: str,
-  spool_dir: Any | None = None,
   on_member_skipped: Any | None = None,
 ) -> Iterator[Any]:
   """
@@ -11321,15 +11336,13 @@ def iter_sealed_daily_archive_member_paths(
 
     parse).
 
-  Each tar member is spooled under ``spool_dir`` (or
-    ``.sync_archive_ingest_spool``).
-  Callers must remove ``path_on_disk`` after ingest.
+  Each tar member is spooled under ``.sync_archive_ingest_spool`` beside
+  the sealed archive. Callers must remove ``path_on_disk`` after ingest.
   ``on_member_skipped`` is invoked once per member not yielded (oversize,
     unreadable).
 
   Args:
     sealed_path (str): String for sealed path.
-    spool_dir (Any | None): One of ``Any``, ``None``.
     on_member_skipped (Any | None): One of ``Any``, ``None``.
 
   Yields:
@@ -11342,7 +11355,7 @@ def iter_sealed_daily_archive_member_paths(
     ``ValueError`` failure path.
 
   Examples:
-    >>> iter_sealed_daily_archive_member_paths("x", None, None)
+    >>> iter_sealed_daily_archive_member_paths("x", None)
   """
   fmt = detect_compressed_format(sealed_path)
   if fmt not in ("zst", "gz"):
@@ -11352,7 +11365,7 @@ def iter_sealed_daily_archive_member_paths(
   if not os.path.isfile(sealed_path):
     raise FileNotFoundError(sealed_path)
   max_bytes = cfg.get_sync_ingest_max_file_read_bytes()
-  spool_root = _archive_ingest_spool_root(spool_dir, sealed_path=sealed_path)
+  spool_root = _archive_ingest_spool_root(sealed_path)
   with file_read_lock_wait(sealed_path):
     yield from _iter_sealed_daily_archive_spooled_members(
       sealed_path,

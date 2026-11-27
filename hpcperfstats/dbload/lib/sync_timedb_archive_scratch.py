@@ -31,6 +31,9 @@ Attributes:
   WRITE_TEMP_RE: A sidecar atomic-write temp: ``.atomic.<8 chars><name>``
     (``tempfile.mkstemp`` in ``sync_timedb_persistence``) or ``*.json.tmp``.
   PROTECTED_SUBDIRS: ``.sync_timedb_*`` directories the sweep never enters.
+  INGEST_SPOOL_DIRNAME: Sealed-ingest spool beside the daily archives
+    (``_archive_ingest_spool_root``); swept for the ``hps_union_extract_*``
+    member extracts a killed ingest leaves there.
 """
 
 from __future__ import annotations
@@ -70,6 +73,7 @@ WRITE_TEMP_RE = re.compile(
 PROTECTED_SUBDIRS = frozenset(
   {".sync_timedb_unparsable_raw", ".sync_timedb_migration_backup"}
 )
+INGEST_SPOOL_DIRNAME = ".sync_archive_ingest_spool"
 
 
 def _scratch_scan_dirs(*bases: str) -> list[str]:
@@ -82,7 +86,8 @@ def _scratch_scan_dirs(*bases: str) -> list[str]:
 
   Returns:
     list[str]: Each existing base followed by its immediate ``.sync_timedb_*``
-    subdirectories, excluding ``PROTECTED_SUBDIRS`` and symlinks.
+    and ``INGEST_SPOOL_DIRNAME`` subdirectories, excluding
+    ``PROTECTED_SUBDIRS`` and symlinks.
 
   Examples:
     >>> _scratch_scan_dirs("", "/nonexistent")
@@ -100,7 +105,7 @@ def _scratch_scan_dirs(*bases: str) -> list[str]:
     for name in names:
       sub = os.path.join(base, name)
       if (
-        name.startswith(".sync_timedb_")
+        (name.startswith(".sync_timedb_") or name == INGEST_SPOOL_DIRNAME)
         and name not in PROTECTED_SUBDIRS
         and os.path.isdir(sub)
         and not os.path.islink(sub)
@@ -168,7 +173,8 @@ def sweep_dead_archive_scratch(
   Remove scratch files and staging directories that no writer can still use.
 
   Sweeps ``daily_dir`` and ``archive_dir`` plus their immediate
-  ``.sync_timedb_*`` sidecar directories (never ``PROTECTED_SUBDIRS``). A
+  ``.sync_timedb_*`` sidecar directories (never ``PROTECTED_SUBDIRS``) and
+  the sealed-ingest spool ``INGEST_SPOOL_DIRNAME``. A
   ``SCRATCH_NAME_RE`` file is dead when it has been unmodified for
   ``sync_archive_scratch_max_idle_hours``, no append or restore is in flight
   for its day, and both the day's tar write lock and its restore lock are

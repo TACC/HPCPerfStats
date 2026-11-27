@@ -172,11 +172,9 @@ def test_sealed_spool_extracts_dot_slash_stored_member(tmp_path):
     keep_uncompressed_tar=False,
     log_fn=None,
   )
-  spool = str(tmp_path / "spool")
   got = {}
-  for name, path in iter_sealed_daily_archive_member_paths(
-    str(zst_path), spool_dir=spool
-  ):
+  for name, path in iter_sealed_daily_archive_member_paths(str(zst_path)):
+    assert path.startswith(str(tmp_path / ".sync_archive_ingest_spool"))
     with open(path, encoding="utf-8") as fh:
       got[name] = fh.read()
   assert got == {"host.example/1": "old\n", "host.example/2": "two\n"}
@@ -280,9 +278,7 @@ def test_sealed_spool_extracts_largest_copy_across_prefixes(tmp_path):
     log_fn=None,
   )
   got = {}
-  for name, path in iter_sealed_daily_archive_member_paths(
-    str(zst_path), spool_dir=str(tmp_path / "spool")
-  ):
+  for name, path in iter_sealed_daily_archive_member_paths(str(zst_path)):
     with open(path, encoding="utf-8") as fh:
       got[name] = fh.read()
   assert got == {"h/1": "grown copy\n", "xh/1": "other\n"}

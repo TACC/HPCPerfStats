@@ -823,3 +823,40 @@ def test_pressure_defers_open_tar_repair_without_touching_it(
     "env:ENOSPC",
   )
   assert tar.read_bytes() == before
+
+
+def test_pressure_off_still_keeps_the_hard_reserve(monkeypatch, tmp_path):
+  """Pressure off (X=0) used to admit every append batch unmeasured.
+
+  Only the pressure freeze switches off: a restore-bearing batch still has
+  to keep ``sync_archive_min_free_bytes`` net of other reservations.
+  """
+  qo.reset_append_day_lists_for_tests()
+  raw = tmp_path / "raw"
+  raw.write_bytes(b"r")
+  qo._APPEND_DAY_LISTS.add("2026-09-05", _claim(str(raw)))
+  monkeypatch.setattr(sp, "restore_bytes_estimate", lambda _t: 2 * GIB)
+  tar = str(tmp_path / "2026-09-05.tar")
+  _set(monkeypatch, threshold=0, free=3 * GIB)
+  assert qo._append_batch_need("2026-09-05", tar, 1) is None
+  _set(monkeypatch, threshold=0, free=10 * GIB)
+  assert qo._append_batch_need("2026-09-05", tar, 1) == 2 * GIB + 1
+  sp.reserve("other", 7 * GIB)
+  assert qo._append_batch_need("2026-09-05", tar, 1) is None
+  qo.reset_append_day_lists_for_tests()
+
+
+def test_pressure_off_breach_parks_the_batch_without_submit(
+  monkeypatch, tmp_path
+):
+  submit = _one_parked_day(monkeypatch, tmp_path, restore=4 * GIB)
+  _set(monkeypatch, threshold=0, free=5 * GIB)
+
+  class _Pool:
+    def apply_async(self, fn, args):
+      raise AssertionError("a batch that breaks the reserve is not submitted")
+
+  assert submit(_Pool()) == 0
+  assert qo._APPEND_DAY_LISTS.peek_first("2026-09-01") is not None
+  assert sp.reserved_bytes() == 0
+  qo.reset_append_day_lists_for_tests()

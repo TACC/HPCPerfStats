@@ -522,3 +522,17 @@ def test_orchestrator_startup_runs_the_boot_sweep_after_journal_recovery():
   sweep = src.index("sweep_dead_archive_scratch(")
   assert recover < sweep < src.index("populate.start(")
   assert "boot=True" in src[sweep : sweep + 200]
+
+
+def test_ingest_spool_extract_dirs_are_swept(tmp_path):
+  """Sealed ingest extracts into the spool root, which the sweep skipped."""
+  spool = tmp_path / ".sync_archive_ingest_spool"
+  spool.mkdir()
+  dead = _extract_dir(spool)
+  fresh = _extract_dir(spool, "hps_union_extract_zz99yy88", age_s=60)
+  member_dir = spool / "c1-001"
+  member_dir.mkdir()
+  spooled = _file(member_dir, "1788000000")
+  assert _sweep(tmp_path) == 1
+  assert not dead.exists()
+  assert fresh.exists() and spooled.exists()

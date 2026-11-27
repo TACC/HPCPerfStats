@@ -5417,8 +5417,8 @@ def test_iter_sealed_daily_archive_member_paths_spools_to_disk(tmp_path):
     member_name="host.example/stats.txt",
     body="payload-line\n",
   )
-  spool = str(tmp_path / "spool")
-  members = list(iter_sealed_daily_archive_member_paths(zst_p, spool_dir=spool))
+  spool = str(tmp_path / ".sync_archive_ingest_spool")
+  members = list(iter_sealed_daily_archive_member_paths(zst_p))
   assert len(members) == 1
   assert members[0][0] == "host.example/stats.txt"
   member_path = members[0][1]
@@ -5449,7 +5449,6 @@ def test_iter_sealed_daily_archive_member_paths_skipped_invokes_callback(
   members = list(
     iter_sealed_daily_archive_member_paths(
       zst_p,
-      spool_dir=str(tmp_path / "spool"),
       on_member_skipped=lambda: skipped.append(1),
     ),
   )
@@ -12554,3 +12553,32 @@ def test_migrate_refuses_unlink_when_new_zst_missing_members(tmp_path):
   _a14_seal(str(tar_p), str(zst))
   helpers.drop_legacy_gz_if_equivalent_to_zst(str(gz), str(zst), log_fn=None)
   assert not gz.exists()
+
+
+def test_extract_recreate_repair_keeps_stored_member_names(tmp_path):
+  """Recreate from ``-C dir .`` wrote every member as ``./hpcperfstats/...``.
+
+  The repaired tar must hold the names our clone append writes (full path
+  without the leading ``/``), not ``./`` names (DE-36/DE-37 spelling).
+  """
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2026-10-17.tar"
+  stored = [f"hpcperfstats/archive/c{i}.vista/178800000{i}" for i in range(3)]
+  with tarfile.open(tar_path, "w") as tf:
+    for i, name in enumerate(stored):
+      info = tarfile.TarInfo(name)
+      payload = b"z" * (100 + i)
+      info.size = len(payload)
+      tf.addfile(info, io.BytesIO(payload))
+  expected = {
+    helpers.get_tar_member_name(n): 100 + i for i, n in enumerate(stored)
+  }
+  assert helpers._repair_truncated_daily_tar_via_extract_recreate(
+    str(tar_path), expected, log_fn=None
+  )
+  with tarfile.open(tar_path, "r") as tf:
+    names = [m.name for m in tf.getmembers()]
+    files = sorted(m.name for m in tf.getmembers() if m.isfile())
+  assert files == stored
+  assert not [n for n in names if n.startswith("./") or n == "."]

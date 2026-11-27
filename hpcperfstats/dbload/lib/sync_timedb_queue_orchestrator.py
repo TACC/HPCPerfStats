@@ -6071,10 +6071,11 @@ def _append_batch_need(day: str, tar_path: str, take: int) -> int | None:
   """
   Return the bytes the next ``take`` parked paths of ``day`` will write.
 
-  Only measured while ``sync_archive_space_pressure_free_bytes`` is set: the
-  batch's new bytes plus a restore of a sealed day must keep the hard
+  The batch's new bytes plus a restore of a sealed day must keep the hard
   reserve, room for that day's reseal and other admitted work's
-  reservations. A refused batch stays parked. When the tar's filesystem can
+  reservations, also when ``sync_archive_space_pressure_free_bytes`` is 0
+  (only the pressure freeze is off then). A refused batch stays parked.
+  When the tar's filesystem can
   reflink the batch's raw files (``clone_capable``) an append shares their
   blocks and writes only ``CLONE_HEADER_BYTES`` per member; otherwise (or
   when unknown) it copies, so the raw byte total is reserved.
@@ -6085,14 +6086,14 @@ def _append_batch_need(day: str, tar_path: str, take: int) -> int | None:
     take (int): Number of parked claims the batch would pop.
 
   Returns:
-    int | None: Bytes to reserve (0 when the gate is off), or None when the
+    int | None: Bytes to reserve (0 for an empty batch), or None when the
     batch does not fit.
 
   Examples:
     >>> _append_batch_need("2026-09-07", "/d/2026-09-07.tar", 0)
     0
   """
-  if take <= 0 or cfg.get_sync_archive_space_pressure_free_bytes() <= 0:
+  if take <= 0:
     return 0
   restore = space.restore_bytes_estimate(tar_path)
   if restore > 0 and space.under_pressure(tar_path):
@@ -6126,10 +6127,10 @@ def _try_submit_pending_append_days(
   """
   Submit one clone-append batch per free daily tar from in-memory day lists.
 
-  With ``sync_archive_space_pressure_free_bytes`` set, only the days
-  ``_select_append_day`` allows get a batch (every day without pressure;
-  under pressure only clone appends that need no restore), a day whose tar
-  this process is sealing stays parked until the seal ends, and a batch is
+  Only the days ``_select_append_day`` allows get a batch (every day without
+  pressure or with ``sync_archive_space_pressure_free_bytes`` 0; under
+  pressure only clone appends that need no restore), a day whose tar this
+  process is sealing stays parked until the seal ends, and a batch is
   submitted only when its new bytes plus any restore of a sealed day keep
   the hard reserve (a restore never runs under pressure); the rest stay
   parked.
