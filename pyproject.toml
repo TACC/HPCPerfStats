@@ -157,6 +157,9 @@ extend-exclude = [
   ".tools",
   "build",
   "dist",
+  # Byte copy of the workspace Claude hook; must stay parseable by the
+  # system python3 3.9, which py314 ruff fixes would break.
+  "cursor-hooks/hpc_claude_hooks.py",
 ]
 
 [tool.ruff.lint]
