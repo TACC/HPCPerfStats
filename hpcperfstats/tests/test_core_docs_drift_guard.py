@@ -1,10 +1,19 @@
-"""Drift guards for the core docs governed by docs-current-state-only.mdc.
+"""Drift guards for the evergreen docs governed by docs-current-state-only.mdc.
 
-README.md, docs/using-the-website-as-a-researcher.md,
-docs/DEPLOY_CONCURRENCY_AND_NUMA.md, docs/design-document.md and
-docs/TESTING.md describe the code at HEAD. These tests fail when they carry
-changelog sections or old-version phrasing, cite INI keys or defaults that
-disagree with conf_parser, or point TESTING.md at files that do not exist.
+Evergreen docs describe the code at HEAD: the root README.md, docs/index.md,
+every Markdown page under docs/{tutorials,how-to,reference,explanation}/ and
+monitor/docs/{how-to,explanation,reference}/ (globbed at test time, so a new
+page is covered without editing this file), plus the core docs in CORE_DOCS
+at their pre-quadrant paths. These tests fail when a page uses characters
+outside the allowlist, carries changelog sections or old-version phrasing,
+has paste-unsafe shell fences, cites INI keys or defaults that disagree with
+conf_parser, or (TESTING.md) points at files that do not exist.
+
+Exemptions: docs/reference/documentation-style.md quotes the banned phrases,
+so it skips the old-version phrasing check; docs/reference/release-notes.md
+records one-time cutovers, so it skips both current-state wording checks
+(changelog headings and old-version phrasing). Every other check applies to
+both.
 """
 
 import re
@@ -24,6 +33,33 @@ CORE_DOCS = (
   "docs/design-document.md",
   "docs/TESTING.md",
 )
+
+_EVERGREEN_FILES = ("README.md", "docs/index.md")
+_EVERGREEN_DIRS = (
+  "docs/tutorials",
+  "docs/how-to",
+  "docs/reference",
+  "docs/explanation",
+  "monitor/docs/how-to",
+  "monitor/docs/explanation",
+  "monitor/docs/reference",
+)
+
+
+def _evergreen_docs() -> tuple[str, ...]:
+  found = set(CORE_DOCS)
+  found.update(rel for rel in _EVERGREEN_FILES if (_REPO / rel).is_file())
+  for rel_dir in _EVERGREEN_DIRS:
+    for path in (_REPO / rel_dir).rglob("*.md"):
+      found.add(path.relative_to(_REPO).as_posix())
+  return tuple(sorted(found))
+
+
+EVERGREEN_DOCS = _evergreen_docs()
+STYLE_GUIDE = "docs/reference/documentation-style.md"
+RELEASE_NOTES = "docs/reference/release-notes.md"
+CURRENT_STATE_DOCS = tuple(d for d in EVERGREEN_DOCS if d != RELEASE_NOTES)
+PHRASING_DOCS = tuple(d for d in CURRENT_STATE_DOCS if d != STYLE_GUIDE)
 
 _HISTORY_HEADING_RE = re.compile(
   r"^#+\s*(document history|change ?log|revision history)\b",
@@ -65,6 +101,17 @@ PASTE_LINE_MAX = 68
 _SHELL_FENCE_OPEN_RE = re.compile(r"^(\s*)```(?:bash|sh|shell)\s*$")
 _FENCE_CLOSE_RE = re.compile(r"^\s*```\s*$")
 _HEREDOC_RE = re.compile(r"(?<!<)<<-?[ \t]*['\"]?[A-Za-z_]\w*")
+
+# Character allowlist (docs/reference/documentation-style.md, V16): ASCII;
+# U+00B0 degree and U+00B5 micro signs; letters for accented proper names:
+# Latin-1 Supplement U+00C0-U+00FF without the operators U+00D7 and U+00F7,
+# plus Latin Extended-A U+0100-U+017F (all letters, for Central European
+# names). Dashes, arrows, quotes, nbsp, U+00A7 and emoji stay out.
+_ALLOWED_NON_ASCII = (
+  frozenset("\u00b0\u00b5")
+  | frozenset(chr(c) for c in range(0xC0, 0x100) if c not in (0xD7, 0xF7))
+  | frozenset(chr(c) for c in range(0x100, 0x180))
+)
 
 _TESTING_PATH_RE = re.compile(
   r"`((?:[\w.-]+/)*[\w.-]+\.(?:py|sh|ts|tsx|mts|mjs|js|ini|json|yaml|toml))`"
@@ -124,7 +171,7 @@ def _shell_fence_bodies(text: str) -> list[tuple[int, list[str]]]:
   return fences
 
 
-@pytest.mark.parametrize("rel", CORE_DOCS)
+@pytest.mark.parametrize("rel", EVERGREEN_DOCS)
 def test_core_doc_shell_fences_are_paste_safe(rel):
   bad = []
   for start, body in _shell_fence_bodies(_doc_text(rel)):
@@ -139,25 +186,34 @@ def test_core_doc_shell_fences_are_paste_safe(rel):
   )
 
 
-@pytest.mark.parametrize("rel", CORE_DOCS)
-def test_core_doc_is_ascii(rel):
-  bad = [
-    f"{rel}:{n}: {line.strip()[:80]}"
-    for n, line in enumerate(_doc_text(rel).splitlines(), 1)
-    if not line.isascii()
+def _disallowed_chars(line: str) -> list[str]:
+  return [
+    f"U+{ord(ch):04X}"
+    for ch in line
+    if not ch.isascii() and ch not in _ALLOWED_NON_ASCII
   ]
+
+
+@pytest.mark.parametrize("rel", EVERGREEN_DOCS)
+def test_core_doc_chars_in_allowlist(rel):
+  bad = []
+  for n, line in enumerate(_doc_text(rel).splitlines(), 1):
+    chars = _disallowed_chars(line)
+    if chars:
+      bad.append(f"{rel}:{n}: {' '.join(chars)}: {line.strip()[:80]}")
   assert not bad, (
-    "core docs are plain ASCII (use -, ->, x, >=, ...):\n" + "\n".join(bad)
+    "evergreen docs are ASCII plus the degree sign, micro sign and "
+    "accented letters (use -, ->, x, >=, ...):\n" + "\n".join(bad)
   )
 
 
-@pytest.mark.parametrize("rel", CORE_DOCS)
+@pytest.mark.parametrize("rel", CURRENT_STATE_DOCS)
 def test_core_doc_has_no_history_section(rel):
   match = _HISTORY_HEADING_RE.search(_doc_text(rel))
   assert match is None, f"{rel}: changelog heading {match.group(0)!r}"
 
 
-@pytest.mark.parametrize("rel", CORE_DOCS)
+@pytest.mark.parametrize("rel", PHRASING_DOCS)
 def test_core_doc_has_no_old_version_phrasing(rel):
   hits = [
     f"{rel}:{n}: {line.strip()[:120]}"
@@ -167,7 +223,7 @@ def test_core_doc_has_no_old_version_phrasing(rel):
   assert not hits, "old-version / changelog phrasing:\n" + "\n".join(hits)
 
 
-@pytest.mark.parametrize("rel", CORE_DOCS)
+@pytest.mark.parametrize("rel", EVERGREEN_DOCS)
 def test_core_doc_section_keys_exist_in_registry(rel):
   bad = []
   for section, key in _SECTION_KEY_RE.findall(_doc_text(rel)):
@@ -180,7 +236,7 @@ def test_core_doc_section_keys_exist_in_registry(rel):
   assert not bad, f"{rel}:\n" + "\n".join(bad)
 
 
-@pytest.mark.parametrize("rel", CORE_DOCS)
+@pytest.mark.parametrize("rel", EVERGREEN_DOCS)
 def test_core_doc_table_defaults_match_code(rel):
   bad = []
   for key, value in _TABLE_KEY_DEFAULT_RE.findall(_doc_text(rel)):
@@ -251,3 +307,20 @@ def test_old_version_regex_flags_changelog_prose():
   assert _OLD_VERSION_RE.search("since 2026-11-02 it runs at normal priority")
   assert not _OLD_VERSION_RE.search("This script is used to seal tars")
   assert not _OLD_VERSION_RE.search("run.py --since 2026-01-04")
+
+
+def test_char_allowlist_admits_units_and_names_only():
+  assert not _disallowed_chars(
+    "21 \u00b0C, 5 \u00b5s, Dvo\u0159\u00e1k, Jos\u00e9"
+  )
+  for ch in "\u00a7\u00d7\u00f7\u2014\u2013\u2192\u2026\u201c\u00a0\u2713":
+    assert _disallowed_chars(ch) == [f"U+{ord(ch):04X}"]
+
+
+def test_evergreen_scope_covers_quadrants_and_core_docs():
+  assert set(CORE_DOCS) <= set(EVERGREEN_DOCS)
+  assert "README.md" in EVERGREEN_DOCS
+  assert STYLE_GUIDE in EVERGREEN_DOCS
+  assert STYLE_GUIDE in CURRENT_STATE_DOCS
+  assert STYLE_GUIDE not in PHRASING_DOCS
+  assert RELEASE_NOTES not in CURRENT_STATE_DOCS
