@@ -3,8 +3,8 @@
 Evergreen docs describe the code at HEAD: the root README.md, docs/index.md,
 every Markdown page under docs/{tutorials,how-to,reference,explanation}/ and
 monitor/docs/{how-to,explanation,reference}/ (globbed at test time, so a new
-page is covered without editing this file), plus the core docs in CORE_DOCS
-at their pre-quadrant paths. These tests fail when a page uses characters
+page is covered without editing this file), plus CORE_DOCS, which must exist.
+These tests fail when a page uses characters
 outside the allowlist, carries changelog sections or old-version phrasing,
 has paste-unsafe shell fences, cites INI keys or defaults that disagree with
 conf_parser, or (TESTING_DOCS pages) points at files that do not exist.

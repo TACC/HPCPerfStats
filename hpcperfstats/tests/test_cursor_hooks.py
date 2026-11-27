@@ -592,7 +592,7 @@ def test_evergreen_doc_dirs_trigger_docs_rules(path):
   ],
 )
 def test_install_deploy_and_design_pages_keep_their_sync_rules(path, expected):
-  """The pages that replaced README install, DEPLOY and the design doc keep their rules."""
+  """Each install, compose, configuration and architecture page triggers its rules."""
   rules = set(triggered_rules_for_paths([f"/repo/HPCPerfStats/{path}"]))
   assert expected <= rules, sorted(expected - rules)
 
@@ -836,7 +836,7 @@ def test_plan_templates_order_closing_todos():
 
 
 def test_plan_template_single_copy_with_monitor_appendix():
-  """One plan template: the monitor fork is merged as an appendix."""
+  """One plan template; monitor plans use its appendix (no monitor/docs/plans/)."""
   repo_root = Path(__file__).resolve().parents[2]
   text = (repo_root / "docs" / "plans" / "PLAN_TEMPLATE.md").read_text(
     encoding="utf-8"

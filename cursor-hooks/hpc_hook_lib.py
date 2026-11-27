@@ -17,8 +17,6 @@ READ_TOOL_NAMES = frozenset({"Read", "ReadFile"})
 
 PLAN_TOOL_NAMES = frozenset({"CreatePlan"})
 
-PLAN_TEMPLATE_READ_SUFFIX = "docs/plans/PLAN_TEMPLATE.md"
-
 HPCPERFSTATS_ROUTER_BASENAMES = frozenset(
   {
     "agent-discipline-core.mdc",
@@ -395,7 +393,7 @@ def paths_from_plan_markdown(text: str) -> list[str]:
 
 def is_plan_template_read_path(path: str) -> bool:
   normalized = (path or "").replace("\\", "/")
-  return normalized.endswith((PLAN_TEMPLATE_READ_SUFFIX, "PLAN_TEMPLATE.md"))
+  return normalized.endswith("PLAN_TEMPLATE.md")
 
 
 def tool_name_from_tool_part(part: dict) -> str | None:

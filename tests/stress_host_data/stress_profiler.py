@@ -11,8 +11,8 @@ from typing import Any
 
 from django.db import connection
 
-# Default report directory when HPCPERFSTATS_STRESS_REPORT_DIR is unset: the
-# checkout's gitignored test_runs/stress/, independent of the working directory.
+# Used when HPCPERFSTATS_STRESS_REPORT_DIR is unset; anchored to the checkout,
+# not the working directory.
 DEFAULT_REPORT_DIR = Path(__file__).resolve().parents[2] / "test_runs" / "stress"
 
 

@@ -217,7 +217,7 @@ def _md_cell(paths: list[str]) -> str:
 
   Returns:
     str: Code-spanned paths relative to ``hpcperfstats/``, joined by ``;``,
-    or ``None`` when ``paths`` is empty.
+    or the text ``"None"`` when ``paths`` is empty.
 
   Examples:
     >>> _md_cell(["hpcperfstats/lib/a.py", "hpcperfstats/b.py"])
