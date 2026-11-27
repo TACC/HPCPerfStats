@@ -84,7 +84,8 @@ analyze_conf.py
 *egg*
 *.swp
 
-# Diagnosis workflow optional JSON (see docs/TESTING.md, HPCPERFSTATS_UM_DIAG_JSON_OUT)
+# Diagnosis workflow optional JSON (HPCPERFSTATS_UM_DIAG_JSON_OUT; see
+# docs/how-to/develop/diagnose-update-metrics.md)
 tmp/
 # Ephemeral test run logs (checkout-root test_runs/ + nested package copies)
 test_runs/*

@@ -2134,7 +2134,8 @@ def loaded48_conf_overrides(env: Any) -> dict[str, Callable[[], Any]]:
   pct = str(env.get("HPCPERFSTATS_LOADED48_RSS_LIMIT_PCT", "")).strip()
   if pct.isdigit() and 1 <= int(pct) <= 100:
     # Lower sync_process_tree_rss_limit_cgroup_pct so a short soak reaches the
-    # ingest RSS-pressure gate (needs a cgroup memory.max, see TESTING.md).
+    # ingest RSS-pressure gate (needs a cgroup memory.max, see
+    # docs/how-to/develop/run-sync-timedb-benchmarks.md).
     out["get_sync_process_tree_rss_limit_cgroup_pct"] = lambda: int(pct)
   # Write-stage sizing (writers are DB sessions; queue is slot backpressure).
   for var, getter in (

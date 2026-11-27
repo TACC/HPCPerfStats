@@ -1,7 +1,7 @@
 ---
 description: Operator diagnostics must use copy/paste Compose blocks per service
 alwaysApply: false
-globs: docs/plans/**,.cursor/plans/**,docs/TESTING.md,docs/upgrade.md,HPCPerfStats/README.md,docs/tutorials/install-hpcperfstats.md,docs/reference/compose-services.md
+globs: docs/plans/**,.cursor/plans/**,docs/how-to/develop/run-tests.md,docs/reference/test-layout.md,docs/how-to/develop/run-sync-timedb-benchmarks.md,docs/how-to/develop/diagnose-update-metrics.md,docs/upgrade.md,HPCPerfStats/README.md,docs/tutorials/install-hpcperfstats.md,docs/reference/compose-services.md
 ---
 
 # Compose Operator Terminal Commands
@@ -1266,7 +1266,7 @@ test -n "$J" && python3 -c 'import json, sys; d = json.load(
 - **`podman-runtime.mdc`** — rootless runtime, `/data` storage, project
   isolation, and conservative cleanup.
 - **`docker-compose-non-unit-testing.mdc`** — agents run `tests/run_*_workflow.sh`; operators doing the same follow those scripts or the one-block `compose_test` pattern inside them.
-- **`readme-installation-sync.mdc`** — long-lived operator docs in `README.md` / `docs/TESTING.md` use the same `docker compose exec` shape.
+- **`readme-installation-sync.mdc`** — long-lived operator docs in `README.md` / `docs/how-to/develop/run-tests.md` use the same `docker compose exec` shape.
 - **`workspace-layout-and-python-env.mdc`** — host `.venv` is for agent-side unit work, not operator production diagnostics.
 - **`plan-live-disk-sync.mdc`** — operator discovery findings table; retire pending blocks when results arrive; disk-only plan authority.
 - **`deploy-ini-with-code-no-phase-zero.mdc`** — read-only operator data gathering anytime; INI change + restart only with code redeploy.

@@ -336,7 +336,8 @@ RESCAN_ERROR_LOG_INTERVAL_SECONDS = 300.0
 # Only the newest window days are rescanned for jobs that end mid-pass.
 RESCAN_RECENT_DAYS = 2
 STALL_EXIT_AFTER_SECONDS = 900.0
-# User-facing stall_reason strings (docs/TESTING.md); producer sets
+# User-facing stall_reason strings
+# (docs/how-to/develop/diagnose-update-metrics.md); producer sets
 # no_ready_candidates / listing_query_failed; consumer sets compute_* /
 # worker_* after sustained zero processed progress.
 DOCUMENTED_SCHEDULER_STALL_REASONS = frozenset(

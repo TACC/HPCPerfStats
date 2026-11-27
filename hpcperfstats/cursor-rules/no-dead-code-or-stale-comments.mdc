@@ -31,7 +31,7 @@ Every pattern below was removed by hand in the 2026-11 repo-wide cleanup (`git l
 | 10 | Section rulers (`#####`, `# ---- name ----`, `// =====`) and comments that narrate the next line | A plain comment, only when it adds a fact the code does not show | 12 rulers in columnar `job_table` / `detail_series` / `kernels`; `# Warmup` above a variable named `warm` |
 | 11 | Non-ASCII glyphs in comments and docstrings (em/en dash, arrows, ellipsis, multiplication sign, `>=` sign, micro, unicode minus) | ASCII: `-`, `->`, `...`, `x`, `>=`, `us` | normalized in about 40 chunks; user-facing string literals are out of scope |
 | 12 | Placeholder or garbled docstrings: `Attribute.`, `String for ini path`, `list[str] produced by this call`, `__init__.` name echo, summaries split mid-sentence by a bulk reflow | Real prose per `python-docstring-and-typing-contract.mdc`; after `python_def_docstring_upgrade.py`, read the diff for broken sentences | 22 split summaries in `conf_parser`; `Attribute.` in `listend.py`, `dcgm_blank`, `spa_static_root_heal` |
-| 13 | Doc or comment pointers to renamed or deleted files | On rename or delete, `grep -rn <old basename>` across code, docs and `cursor-rules/` | `variableMetadata.js` (now `.ts`) in frontend utils and job_detail docstrings; `docs/TESTING.md` link to a deleted plan |
+| 13 | Doc or comment pointers to renamed or deleted files | On rename or delete, `grep -rn <old basename>` across code, docs and `cursor-rules/` | `variableMetadata.js` (now `.ts`) in frontend utils and job_detail docstrings; a testing-doc link to a deleted plan |
 
 ## Generated snapshots
 

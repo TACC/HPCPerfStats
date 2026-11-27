@@ -185,7 +185,8 @@ def test_bokeh_embed_job_list_fixtures_next_built_bundle_no_histogram_failure_co
   if not smoke_index.is_file():
     pytest.skip(
       "Built frontend missing bokeh-playwright-smoke/index.html; from "
-      "hpcperfstats/site/frontend run `npm run build` (see docs/TESTING.md)."
+      "hpcperfstats/site/frontend run `npm run build` (see "
+      "docs/how-to/develop/run-tests.md)."
     )
 
   paths = [

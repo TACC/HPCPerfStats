@@ -86,7 +86,7 @@ Examples: `urlconf_route_catalog.py`, `extended-search-validation.test.ts`, `job
   workloads; **hard-fail** on fixed growth/peak/leaked ceilings. Requires
   `[dev]` (memray). Fail closed if memray is missing.
 - **Do not** add a second tracemalloc hard-fail commit gate alongside memray.
-  Keep **tracemalloc** for optional offline debugging only (`docs/TESTING.md`).
+  Keep **tracemalloc** for optional offline debugging only (`docs/how-to/develop/run-tests.md` → Profile memory).
 
 ## Module priority for new tests
 
@@ -103,4 +103,4 @@ Examples: `urlconf_route_catalog.py`, `extended-search-validation.test.ts`, `job
 - `every-error-regression-test.mdc` — mandatory regression on fixes
 - `docker-compose-non-unit-testing.mdc` / `full-test-with-db-valkey.mdc` — compose runners
 - `web-pages-full-e2e-completion-gate.mdc` — web-facing completion bar
-- `testing-doc-sync.mdc` — keep `docs/TESTING.md` aligned
+- `testing-doc-sync.mdc` — keep `docs/reference/test-layout.md` (Test layers, Where tests live, Pre-merge matrix) aligned

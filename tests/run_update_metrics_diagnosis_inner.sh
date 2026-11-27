@@ -4,7 +4,8 @@ set -euo pipefail
 cd /home/hpcperfstats
 
 export HPCPERFSTATS_COMPOSE_NETWORK=1
-# Optional: write a copy of the diagnosis JSON to the bind-mounted repo (see TESTING.md).
+# Optional: write a copy of the diagnosis JSON to the bind-mounted repo
+# (see docs/how-to/develop/diagnose-update-metrics.md).
 export HPCPERFSTATS_UM_DIAG_JSON_OUT="${HPCPERFSTATS_UM_DIAG_JSON_OUT:-/home/hpcperfstats/test_runs/diagnosis/update_metrics_diagnosis.json}"
 mkdir -p "$(dirname "${HPCPERFSTATS_UM_DIAG_JSON_OUT}")"
 

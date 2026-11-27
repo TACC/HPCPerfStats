@@ -35,7 +35,7 @@ Compose networked workflow so `db` and `valkey` resolve correctly.
 
 The orchestrator runs DB pytest, Valkey cache, web E2E, pipeline E2E,
 update_metrics diagnosis, the 400,000-row stress smoke, security audit, and
-Bokeh browser E2E. Keep `docs/TESTING.md` synchronized when this matrix changes.
+Bokeh browser E2E. Keep `docs/how-to/develop/run-tests.md` (Run the complete check) synchronized when this matrix changes.
 
 ## Why this is required
 

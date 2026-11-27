@@ -657,7 +657,10 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
   {
     "id": "testing_docs",
     "patterns": [
-      "docs/TESTING.md",
+      "docs/how-to/develop/run-tests.md",
+      "docs/reference/test-layout.md",
+      "docs/how-to/develop/run-sync-timedb-benchmarks.md",
+      "docs/how-to/develop/diagnose-update-metrics.md",
     ],
     "rules": [
       "testing-doc-sync.mdc",
@@ -714,7 +717,6 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
       "monitor/docs/explanation/*",
       "monitor/docs/reference/*",
       "docs/using-the-website-as-a-researcher.md",
-      "docs/TESTING.md",
       "hpcperfstats/tests/test_core_docs_drift_guard.py",
     ],
     "exact_paths": [

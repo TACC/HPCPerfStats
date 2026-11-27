@@ -34,7 +34,7 @@ When adding or moving **any** library module (not an entry script):
 2. **Imports** — use the **`hpcperfstats.{parent}.lib.{module}`** prefix in product code, tests, and monkeypatch strings (`patch("hpcperfstats.dbload.lib.conf_parser…")`). Entry scripts stay `hpcperfstats.dbload.sync_timedb`, etc.
 3. **Git** — after creating files under a new or existing lib tree, run `git add` on those paths and confirm `git check-ignore -v <path>` exits **non-zero** (see **Git tracking** below). A staged commit must show **`A`** or **`R`**, not delete-only for moved content.
 4. **Tests** — add or extend tests under **`analysis/metrics/tests/`** only (not beside lib modules); extend drift guards (`test_package_layout_shims.py`, `test_package_layout_deprecated_paths.py`); add a `git check-ignore` sample if you introduce a **new** lib root.
-5. **Docs / router** — update cursor-rules, `docs/TESTING.md`, and compose runner paths when they cite old filesystem locations.
+5. **Docs / router** — update cursor-rules, `docs/reference/test-layout.md`, `docs/how-to/develop/run-tests.md`, and compose runner paths when they cite old filesystem locations.
 
 ## New `{parent}/lib/` root (rare)
 

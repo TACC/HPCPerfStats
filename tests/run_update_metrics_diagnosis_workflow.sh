@@ -30,7 +30,7 @@ Environment (optional; forwarded into the web container):
   HPCPERFSTATS_UM_DIAG_LARGE_HOSTS / HPCPERFSTATS_UM_DIAG_LARGE_STEPS   (default 25 x 32 = 800 rows)
   HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS (test sets 1)
 
-See docs/TESTING.md (update_metrics diagnosis section).
+See docs/how-to/develop/diagnose-update-metrics.md.
 EOF
 }
 

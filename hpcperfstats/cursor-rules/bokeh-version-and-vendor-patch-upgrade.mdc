@@ -61,7 +61,7 @@ If Bokeh regressions reappear in the browser console after upgrades, prefer fixi
 4. `npm run build` (full export; syncs vendor via `write-site-identity`) → fix load-path breaks (includes `app/bokeh-playwright-smoke/` for Playwright regression). Production Docker/redeploy uses **`npm run build:prod`** (`frontend-prod-test-build-boundary.mdc`). Confirm **`out/vendor/bokeh.min.js`** (then static copy) exists.
 5. `npm test -- --run` (Vitest), including `bokehjs-bundle-entry` (UMD vendor assert) + Bokeh embed tests.
 6. `pytest hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (Playwright + CDN Bokeh; see below). For the **third** (Next-bundle) test, run **`npm run build`** first or that test skips. Confirm `_FAILURE_SUBSTRINGS` still includes **`could not resolve type`**.
-7. Regenerate **`test/fixtures/bokeh-*.json`** if schema changes; update **`docs/TESTING.md`** if workflow or commands change (`testing-doc-sync.mdc`).
+7. Regenerate **`test/fixtures/bokeh-*.json`** if schema changes; update **`docs/how-to/develop/run-tests.md`** if workflow or commands change (`testing-doc-sync.mdc`).
 8. Re-verify the **Python-side runtime shim** (section above): grep the new Bokeh for `_should_validate` / `is_unstable` sites, run `test_bokeh_validation_patch.py`, and confirm `Property` keeps its type version tag in the FT image.
 ## Playwright vs production bundle
 
@@ -74,4 +74,4 @@ If Bokeh regressions reappear in the browser console after upgrades, prefer fixi
 - **`web-pages-e2e-test-maintenance.mdc`** — fixtures, `_BOKEH_CDN_JS`, and regeneration steps.
 - **`bokeh-layout-surface-split.mdc`** — embed layout, `BokehEmbed`, ResizeObserver patch.
 - **`frontend-prod-test-build-boundary.mdc`** — full `build` vs `build:prod` for smoke route.
-- **`testing-doc-sync.mdc`** — keep `docs/TESTING.md` aligned with npm commands.
+- **`testing-doc-sync.mdc`** — keep `docs/how-to/develop/run-tests.md` aligned with npm commands.

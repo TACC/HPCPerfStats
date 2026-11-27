@@ -13,7 +13,7 @@ Ephemeral **test execution artifacts** and **runtime verification notes** belong
 
 | Committed (repo docs) | Local only (`test_runs/`) |
 |-----------------------|---------------------------|
-| **`docs/TESTING.md`** — how to run tests, prerequisites, workflow commands | Dated run summaries, pass/fail tables, agent verification notes |
+| **`docs/how-to/develop/run-tests.md`** — how to run tests, prerequisites, workflow commands | Dated run summaries, pass/fail tables, agent verification notes |
 | **`docs/plans/`**, **`docs/artifacts/`** — design baselines and interpreted findings | Raw JSON/stdout captures from a specific machine run |
 | Test source (`test_*.py`, `tests/run_*_workflow.sh`) | Compose orchestrator transcripts, Podman env snapshots |
 
@@ -34,7 +34,7 @@ Create **`test_runs/`** (and subdirs as needed) before writing. Prefer **UTC dat
 When running compose workflows, reporting test outcomes in chat, or closing a task that executed tests:
 
 1. Write or append results to **`test_runs/test_run_log_<date>.md`** (command, exit code, blocker notes)—not **`docs/test_run_log_*.md`**.
-2. Point users to **`test_runs/`** for local artifacts; keep **`docs/TESTING.md`** limited to reproducible commands.
+2. Point users to **`test_runs/`** for local artifacts; keep **`docs/how-to/develop/run-tests.md`** limited to reproducible commands.
 3. Do not commit contents of **`test_runs/`** (directory is gitignored except **`test_runs/README.md`**).
 
 ## Script defaults
@@ -50,5 +50,5 @@ Override paths via script arguments or env vars when comparing multiple runs on 
 ## Overlap
 
 - **`plan-creation-contract.mdc`** — committed **`docs/plans/`** docs must follow the plan structure (facts, tests, final code review); ephemeral run logs still belong here in **`test_runs/`**.
-- **`testing-doc-sync.mdc`** — update **`docs/TESTING.md`** when *workflow* changes; run *results* go here.
+- **`testing-doc-sync.mdc`** — update the testing docs (**`docs/how-to/develop/run-tests.md`**, **`docs/reference/test-layout.md`**) when *workflow* changes; run *results* go here.
 - **`full-test-with-db-valkey.mdc`**, **`web-pages-full-e2e-completion-gate.mdc`** — report pass/fail in chat and persist details under **`test_runs/`**.

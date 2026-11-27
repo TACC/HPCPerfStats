@@ -1,6 +1,7 @@
 ---
-description: Keep docs/TESTING.md synced with testing changes
+description: Keep the testing docs (run-tests, test-layout, sync_timedb benchmarks, update_metrics diagnosis) synced with testing changes
 alwaysApply: false
+globs: docs/how-to/develop/run-tests.md,docs/reference/test-layout.md,docs/how-to/develop/run-sync-timedb-benchmarks.md,docs/how-to/develop/diagnose-update-metrics.md
 ---
 
 # Testing Documentation Sync
@@ -8,21 +9,28 @@ alwaysApply: false
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When test behavior, test scope, or test execution workflow changes, update
-`HPCPerfStats/docs/TESTING.md` in the same task.
+the testing docs in the same task:
+
+| Page | Holds |
+|------|-------|
+| `HPCPerfStats/docs/how-to/develop/run-tests.md` | Prerequisites, commands, compose workflows, opt-in suites, frontend build and tests, coverage, accessibility, git hooks and static analysis, memory profiling, troubleshooting |
+| `HPCPerfStats/docs/reference/test-layout.md` | Test layers, where tests live, markers and gates, runners, test modules, contract tests, frontend coverage, pre-merge matrix |
+| `HPCPerfStats/docs/how-to/develop/run-sync-timedb-benchmarks.md` | sync_timedb benchmark and loaded-soak procedure (`docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md` stays the results ledger) |
+| `HPCPerfStats/docs/how-to/develop/diagnose-update-metrics.md` | update_metrics diagnosis workflow, columnar parity, stall reasons |
 
 ## Trigger conditions
 - New/removed/renamed test files.
 - Changes to test commands, markers, fixtures, or test dependencies.
-- Changes to **committed** Bokeh `json_item` fixtures under `hpcperfstats/site/frontend/test/fixtures/` or to how they are generated (regeneration commands, Django entrypoints, Playwright CDN pin). Keep `docs/TESTING.md` aligned with `web-pages-e2e-test-maintenance.mdc` → **Bokeh job-list `json_item` fixtures**.
+- Changes to **committed** Bokeh `json_item` fixtures under `hpcperfstats/site/frontend/test/fixtures/` or to how they are generated (regeneration commands, Django entrypoints, Playwright CDN pin). Keep `docs/how-to/develop/run-tests.md` aligned with `web-pages-e2e-test-maintenance.mdc` → **Bokeh job-list `json_item` fixtures**.
 - Changes to test runners/scripts (for example `scripts/run_tests.py`,
   `tests/run_web_e2e_workflow.sh`, compose-based test workflows, or
   `pyproject.toml` test runner metadata).
 - Changes to test prerequisites (DB/Valkey/Playwright/setup steps).
 
 ## Required actions
-- Update `HPCPerfStats/docs/TESTING.md` to reflect the new commands, scope, and prerequisites.
+- Update the page from the table above that holds the changed commands, scope, or prerequisites.
 - **Run logs and local runtime artifacts** belong under **`test_runs/`** per **`test-runs-output-directory.mdc`** — do not add new **`docs/test_run_log_*.md`** files.
-- When **`testing-best-practices.mdc`** changes, sync the **Best practices** section in `docs/TESTING.md` in the same task.
+- When **`testing-best-practices.mdc`** changes, sync `docs/reference/test-layout.md` (Test layers, Where tests live, Pre-merge matrix) in the same task.
 - Keep examples copy-paste ready and consistent with current scripts/config.
 - Include both quick-start commands and any specialized runners when applicable.
 - Describe the current test setup only, per `docs-current-state-only.mdc`: no document history table, no notes on removed tests or old flags, no "previously"/"now" phrasing.

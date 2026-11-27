@@ -51,7 +51,7 @@ This allowlist must stay aligned with **top-level routes intended to hit Django/
 
 ## Documentation sync
 
-- If deployment steps or file responsibilities change, update **`HPCPerfStats/README.md`** (nginx section) and **`HPCPerfStats/docs/TESTING.md`** (nginx contract blurb) in the **same task**.
+- If deployment steps or file responsibilities change, update **`HPCPerfStats/README.md`** (nginx section) and **`HPCPerfStats/docs/reference/test-layout.md`** (Deploy and proxy contract tests) in the **same task**.
 
 ## Overlap
 

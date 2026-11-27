@@ -123,3 +123,64 @@ The hook resolves the workspace root from its own location (two directories up).
 In a bare clone without a workspace `.cursor/rules` tree it finds no rules and fails open: edits are allowed and internal errors only print to stderr.
 
 Not ported (Cursor-only): CreatePlan / live `.cursor/plans` gates.
+
+## Maintainer tooling
+
+These gates and scripts serve the agent workflow; the developer test commands are in [Run tests](../docs/how-to/develop/run-tests.md).
+
+### Python docstring and type-hint inventory gate
+
+Every in-scope production module, class and def must pass the full Google/Napoleon surface in `python-docstring-and-typing-contract.mdc`: behavior summaries that are not name-echoes or upgrade-helper AI slop, Args/Returns/Yields, Raises when applicable, Examples with real usage on every def, module and class Attributes (including private), subclass and override superclass prose, and signature annotations.
+The gate also rejects call-site deferrals, `Internal helper for` / `Compute or apply` templates, `Value polymorphism` boilerplate, and `>>> name(...)  # doctest: +SKIP` placeholder Examples.
+It runs as a commit-stage hook; check both packages from the checkout:
+
+```bash
+# Fail if any in-scope surface is non-compliant
+../.venv/bin/python3 scripts/python_def_inventory.py --check
+
+# Regenerate committed snapshot
+../.venv/bin/python3 scripts/python_def_inventory.py --write \
+  docs/python_def_inventory.json
+
+# Gate unit tests (fixtures + full-tree green)
+../.venv/bin/python3 -m pytest -q \
+  hpcperfstats/tests/test_python_def_inventory_gate.py
+
+# Tools package (in-tree under hpcperfstats-tools/)
+../.venv/bin/python3 -m pytest -q \
+  hpcperfstats-tools/tests/test_python_def_inventory_gate.py
+```
+
+The optional bulk upgrade helper must not emit call-site or ellipsis-placeholder boilerplate; annotations may use `Any` with explicit Args prose, and `# doctest: +SKIP` only with concrete example calls.
+Review its diff:
+
+```bash
+../.venv/bin/python3 scripts/python_def_docstring_upgrade.py \
+  --path-filter hpcperfstats/dbload --apply
+
+# Rewrap / fill full surface to Ruff line-length (80 - main repo and
+# hpcperfstats-tools)
+../.venv/bin/python3 scripts/python_def_docstring_upgrade.py \
+  --force-docs --line-length 80 --apply
+../.venv/bin/python3 scripts/python_def_docstring_upgrade.py \
+  --root hpcperfstats-tools \
+  --force-docs --line-length 80 --apply
+```
+
+### Plan close hook stages
+
+A plan is not done until both hook stages are green (`plan-creation-contract.mdc`, `docs/plans/PLAN_TEMPLATE.md` todo `git-hooks-pre-close`).
+Run `pre-commit run --all-files` and `pre-commit run --hook-stage pre-push --all-files` from the checkout; no commit or push is needed, only the suites and the fixes.
+
+### Chat failure registry
+
+`scripts/extract_chat_failure_signatures.py` mines agent transcripts for failure signatures into a registry JSON for triage.
+It writes to the script's default `--output` path (or `--output PATH`); the file is generated, not committed.
+
+```bash
+T="$HOME/.cursor/projects/<PROJECT_ID>/agent-transcripts"
+../.venv/bin/python3 scripts/extract_chat_failure_signatures.py \
+  --transcripts-dir "$T" --since 2026-01-04 --until 2026-06-04
+```
+
+`<PROJECT_ID>` is the Cursor project directory name.

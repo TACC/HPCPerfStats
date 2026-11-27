@@ -405,7 +405,7 @@ def test_triggered_rules_dispatch_no_dead_code_rule_by_tree():
     "hpcperfstats/listend.py",
     "hpcperfstats/site/frontend/src/views/JobDetail.tsx",
     "services-conf/supervisor_startup.sh",
-    "docs/TESTING.md",
+    "docs/how-to/develop/run-tests.md",
   ):
     rules = triggered_rules_for_paths([path])
     assert "no-dead-code-or-stale-comments.mdc" in rules, path
@@ -595,6 +595,26 @@ def test_evergreen_doc_dirs_trigger_docs_rules(path):
 def test_install_deploy_and_design_pages_keep_their_sync_rules(path, expected):
   """The pages that replaced README install, DEPLOY and the design doc keep their rules."""
   rules = set(triggered_rules_for_paths([f"/repo/HPCPerfStats/{path}"]))
+  assert expected <= rules, sorted(expected - rules)
+
+
+@pytest.mark.parametrize(
+  "path",
+  [
+    "docs/how-to/develop/run-tests.md",
+    "docs/reference/test-layout.md",
+    "docs/how-to/develop/run-sync-timedb-benchmarks.md",
+    "docs/how-to/develop/diagnose-update-metrics.md",
+  ],
+)
+def test_testing_doc_pages_keep_their_sync_rules(path):
+  """Each testing doc page triggers the testing, operator and current-state rules."""
+  rules = set(triggered_rules_for_paths([f"/repo/HPCPerfStats/{path}"]))
+  expected = {
+    "testing-doc-sync.mdc",
+    "compose-operator-terminal-commands.mdc",
+    "docs-current-state-only.mdc",
+  }
   assert expected <= rules, sorted(expected - rules)
 
 
@@ -3123,7 +3143,9 @@ def test_doc_read_ledger_fallback_counts_mid_turn_read(tmp_path):
   assert lib.doc_read_issues([STATE_DOC], [], extra_read_basenames=extra) == []
   # Unrelated non-rule reads are still not recorded.
   assert not lib.record_turn_activity(
-    str(transcript), "Read", {"path": "/repo/HPCPerfStats/docs/TESTING.md"}
+    str(transcript),
+    "Read",
+    {"path": "/repo/HPCPerfStats/docs/how-to/develop/run-tests.md"},
   )
 
 

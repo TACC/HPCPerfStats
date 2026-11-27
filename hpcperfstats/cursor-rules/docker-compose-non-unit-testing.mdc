@@ -37,7 +37,7 @@ Stress tests are **opt-in** (`HPCPERFSTATS_STRESS_HOST_DATA=1`); the workflow sc
   calls **`podman_compose_teardown "${COMPOSE_TEST[@]}"`** unless `--keep-env`.
 - Cleanup is project-scoped. Never globally prune Podman images, build cache,
   containers, volumes, networks, or system storage.
-- Document the script in `docs/TESTING.md` in the same change.
+- Document the script in `docs/how-to/develop/run-tests.md` (Run the compose workflows) and `docs/reference/test-layout.md` (Runners) in the same change.
 - Keep `monitor/` read-only per workspace guardrails unless the user explicitly approves edits there.
 
 ## Overlap

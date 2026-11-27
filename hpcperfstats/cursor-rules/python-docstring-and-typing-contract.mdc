@@ -77,5 +77,5 @@ Do **not** weaken the checker to make a PR green.
 
 - **`django-python-cursor-rules.mdc`** — general Django/Python style; this rule owns docstring/hint coverage.
 - **`test-first-discipline.mdc`** / **`testing-best-practices.mdc`** — gate tests for the inventory.
-- **`testing-doc-sync.mdc`** — keep `docs/TESTING.md` aligned with gate commands.
+- **`cursor-hooks/README.md`** (Maintainer tooling) — keep the gate commands there aligned with this rule.
 - **`workspace-layout-and-python-env.mdc`** — host `.venv` interpreter; in-tree tools path under the checkout.

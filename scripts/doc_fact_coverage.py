@@ -119,7 +119,7 @@ def _looks_like_path(token: str) -> bool:
     bool: ``True`` for tokens kept as ``path`` facts.
 
   Examples:
-    >>> _looks_like_path("docs/TESTING.md"), _looks_like_path("and/or")
+    >>> _looks_like_path("docs/index.md"), _looks_like_path("and/or")
     (True, False)
   """
   if "/" not in token:

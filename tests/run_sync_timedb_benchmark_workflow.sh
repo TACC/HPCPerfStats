@@ -325,7 +325,8 @@ if [[ "$LOADED48" -eq 1 ]]; then
   # Opt-in GC pause probe for the soak child: trace | off (test hosts only).
   [[ -n "${HPCPERFSTATS_LOADED48_GC_MODE:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_GC_MODE=${HPCPERFSTATS_LOADED48_GC_MODE}")
-  # Opt-in all-thread stack dumps every N seconds (wait attribution); see TESTING.md.
+  # Opt-in all-thread stack dumps every N seconds (wait attribution);
+  # see docs/how-to/develop/run-sync-timedb-benchmarks.md.
   [[ -n "${HPCPERFSTATS_LOADED48_STACKDUMP_S:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_STACKDUMP_S=${HPCPERFSTATS_LOADED48_STACKDUMP_S}")
   # Forward only when set. Unset stays in-process (N = ingest threads). =1 opts into the legacy Popen pool.

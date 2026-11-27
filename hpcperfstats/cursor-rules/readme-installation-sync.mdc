@@ -48,5 +48,5 @@ Use this checklist when touching the listed areas. If any row applies, extend or
 
 - **`syslog-cluster-ingest.mdc`** — the cluster syslog section of `docs/reference/compose-services.md` stays aligned with `[SYSLOG]` and pipeline **514**.
 - **`immutable-image-ini-policy.mdc`** — the install pages must not instruct runtime bind-mount overrides that contradict immutable **`hpcperfstats.ini`** in images.
-- **`nginx-django-route-allowlist-sync.mdc`** — when nginx snippets or compose mounts change deployment steps, the proxy section of `docs/reference/compose-services.md` stays accurate (and **`docs/TESTING.md`** per that rule).
+- **`nginx-django-route-allowlist-sync.mdc`** — when nginx snippets or compose mounts change deployment steps, the proxy section of `docs/reference/compose-services.md` stays accurate (and **`docs/reference/test-layout.md`** per that rule).
 - **`postgres-docker-shared-memory.mdc`** — if **`shm_size`** or Postgres container tuning changes materially, `docs/reference/compose-services.md` should mention operator-visible tuning when failures are likely.

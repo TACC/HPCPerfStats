@@ -2974,7 +2974,10 @@ def test_update_metrics_exits_on_compute_all_failed(monkeypatch):
 
 @pytest.mark.machine_unit_mock
 def test_update_metrics_stall_reason_doc_drift_guard():
-  """Lock documented stall_reason strings to code constants (docs/TESTING.md)."""
+  """Lock documented stall_reason strings to code constants.
+
+  The strings are documented in docs/how-to/develop/diagnose-update-metrics.md.
+  """
   expected = frozenset(
     {
       "no_ready_candidates",

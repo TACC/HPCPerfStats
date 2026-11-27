@@ -26,9 +26,9 @@ Solve one task on a running site or in the checkout.
 
 ### Develop in the checkout
 
-- Run tests
-- Run `sync_timedb` benchmarks
-- Diagnose `update_metrics`
+- [Run tests](how-to/develop/run-tests.md)
+- [Run `sync_timedb` benchmarks](how-to/develop/run-sync-timedb-benchmarks.md)
+- [Diagnose `update_metrics`](how-to/develop/diagnose-update-metrics.md)
 - Build Codon kernels
 - Add a CPU type
 
@@ -45,7 +45,7 @@ Look up code, configuration and contract facts.
 - `sync_timedb` threads and processes
 - `sync_timedb` stall signatures
 - `update_metrics` state machine
-- Test layout
+- [Test layout](reference/test-layout.md)
 - Web UI metrics
 - Analysis architectures
 - Security posture

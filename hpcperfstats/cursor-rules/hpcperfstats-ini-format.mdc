@@ -93,7 +93,7 @@ In the **same task**:
 
 ## Env-only overrides (not ini keys)
 
-Do **not** add ini entries for knobs that are **environment-only** unless you also wire a `conf_parser` reader. Document env vars in **`docs/TESTING.md`** or **`docs/reference/pipeline-configuration.md`** (Environment overrides) (for example `HPCPERFSTATS_LARGE_JOB_*`, `WEB_CONCURRENCY`, `HPCPERFSTATS_METRICS_*` overrides).
+Do **not** add ini entries for knobs that are **environment-only** unless you also wire a `conf_parser` reader. Document env vars in **`docs/how-to/develop/run-tests.md`** or **`docs/reference/pipeline-configuration.md`** (Environment overrides) (for example `HPCPERFSTATS_LARGE_JOB_*`, `WEB_CONCURRENCY`, `HPCPERFSTATS_METRICS_*` overrides).
 
 ## Overlap
 

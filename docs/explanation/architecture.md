@@ -24,7 +24,7 @@ Non-goals:
 - Modifying application source code on user jobs; XALT itself is upstream.
 - Guaranteeing sub-second real-time dashboards for every metric: the pipeline is near-line, and latency depends on ingest intervals and worker scheduling.
 
-The repo's operational health signals (not a complete SLO spec) are the Compose healthchecks for `db`, `db_pg18`, `valkey`, `rabbitmq` and `proxy` (`docker-compose.defaults.yaml`), automated tests for `listend` message handling, `sync_timedb` archive edge cases, metrics updates and web and API behaviour ([`docs/TESTING.md`](../TESTING.md)), and idempotent metrics recomputation.
+The repo's operational health signals (not a complete SLO spec) are the Compose healthchecks for `db`, `db_pg18`, `valkey`, `rabbitmq` and `proxy` (`docker-compose.defaults.yaml`), automated tests for `listend` message handling, `sync_timedb` archive edge cases, metrics updates and web and API behaviour ([Test layout](../reference/test-layout.md)), and idempotent metrics recomputation.
 
 ## Data flow
 
@@ -263,7 +263,7 @@ API behaviour clients rely on:
 - Python tests run under pytest with Django settings (`pyproject.toml`), under `hpcperfstats/tests/` and `hpcperfstats/site/.../tests/`.
 - Web route or SPA changes update `test_web_pages_e2e.py` and the Playwright `test_web_pages_browser_e2e.py`.
 - DB- and Valkey-dependent tests run inside the rootless Podman compose network (`podman-compose`) so hostnames like `db` and `valkey` resolve; the Valkey cache workflow is `tests/run_valkey_cache_pytest_workflow.sh`.
-- [`docs/TESTING.md`](../TESTING.md) lists the test entrypoints.
+- [Run tests](../how-to/develop/run-tests.md) lists the test entrypoints, and [Test layout](../reference/test-layout.md) maps the suites.
 
 ## Alternatives and trade-offs
 

@@ -7,7 +7,7 @@ page is covered without editing this file), plus the core docs in CORE_DOCS
 at their pre-quadrant paths. These tests fail when a page uses characters
 outside the allowlist, carries changelog sections or old-version phrasing,
 has paste-unsafe shell fences, cites INI keys or defaults that disagree with
-conf_parser, or (TESTING.md) points at files that do not exist.
+conf_parser, or (TESTING_DOCS pages) points at files that do not exist.
 
 Exemptions: docs/reference/documentation-style.md quotes the banned phrases,
 so it skips the old-version phrasing check; docs/reference/release-notes.md
@@ -29,9 +29,13 @@ _REPO = Path(__file__).resolve().parents[2]
 CORE_DOCS = (
   "README.md",
   "docs/using-the-website-as-a-researcher.md",
-  "docs/TESTING.md",
 )
-TESTING_DOC = "docs/TESTING.md"
+TESTING_DOCS = (
+  "docs/how-to/develop/run-tests.md",
+  "docs/reference/test-layout.md",
+  "docs/how-to/develop/run-sync-timedb-benchmarks.md",
+  "docs/how-to/develop/diagnose-update-metrics.md",
+)
 
 _EVERGREEN_FILES = ("README.md", "docs/index.md")
 _EVERGREEN_DIRS = (
@@ -116,7 +120,7 @@ _TESTING_PATH_RE = re.compile(
   r"`((?:[\w.-]+/)*[\w.-]+\.(?:py|sh|ts|tsx|mts|mjs|js|ini|json|yaml|toml))`"
 )
 
-# Bare names checked against tracked files; other bare names in TESTING.md
+# Bare names checked against tracked files; other bare names in TESTING_DOCS
 # are runtime artifacts (hpcperfstats.ini, manifest.json, sidecars), as is
 # anything under test_runs/.
 _TEST_FILE_NAME_RE = re.compile(r"^test_\w+\.py$|\.test\.[jt]sx?$|\.sh$")
@@ -247,13 +251,13 @@ def test_core_doc_table_defaults_match_code(rel):
   assert not bad, f"{rel}:\n" + "\n".join(bad)
 
 
-def test_testing_doc_paths_exist():
+@pytest.mark.parametrize("rel", TESTING_DOCS)
+def test_testing_doc_paths_exist(rel):
   tracked = _tracked_paths()
   basenames = {Path(p).name for p in tracked}
   missing = []
   cited = {
-    p.removeprefix("./")
-    for p in _TESTING_PATH_RE.findall(_doc_text(TESTING_DOC))
+    p.removeprefix("./") for p in _TESTING_PATH_RE.findall(_doc_text(rel))
   }
   for path in sorted(cited):
     if path.startswith("test_runs/"):
@@ -264,9 +268,7 @@ def test_testing_doc_paths_exist():
       found = any(p == path or p.endswith("/" + path) for p in tracked)
     if not found:
       missing.append(path)
-  assert not missing, "docs/TESTING.md cites missing files:\n" + "\n".join(
-    missing
-  )
+  assert not missing, f"{rel} cites missing files:\n" + "\n".join(missing)
 
 
 def test_section_key_regex_reads_doc_forms():
@@ -318,6 +320,7 @@ def test_char_allowlist_admits_units_and_names_only():
 
 def test_evergreen_scope_covers_quadrants_and_core_docs():
   assert set(CORE_DOCS) <= set(EVERGREEN_DOCS)
+  assert set(TESTING_DOCS) <= set(EVERGREEN_DOCS)
   assert "README.md" in EVERGREEN_DOCS
   assert STYLE_GUIDE in EVERGREEN_DOCS
   assert STYLE_GUIDE in CURRENT_STATE_DOCS

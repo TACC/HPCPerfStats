@@ -79,7 +79,7 @@ When touching this boundary:
 1. Keep **`build:prod`** on `pipeline_web.Dockerfile` `frontend-builder` and `rebuild_frontend.sh`.
 2. Update **`test_dockerignore_test_artifacts.py`** if `frontend/test/` layout or dockerignore patterns change (`dockerignore-test-artifacts-sync.mdc`).
 3. Run **`copy-next-export.production.test.ts`** and **`npm run typecheck:all`**.
-4. Document **`build` vs `build:prod`** in `docs/TESTING.md` when commands change (`testing-doc-sync.mdc`).
+4. Document **`build` vs `build:prod`** in `docs/how-to/develop/run-tests.md` (Build the static export) when commands change (`testing-doc-sync.mdc`).
 5. Remember compose **`staticfiles_data`** is disk staging that masks image `STATIC_ROOT`: from-scratch rebuilds land SPA via **`spa_static_root_heal`** fingerprint sync in **`django_startup.sh`**, then **`staticfiles_ram_publish`** onto tmpfs nginx serves (`nginx-static-url-prefix.mdc`); `rebuild_frontend.sh` remains an optional SPA-only hot path (copy + static ram publish).
 
 ## Overlap
@@ -89,4 +89,4 @@ When touching this boundary:
 - **`frontend-stack-wiring-contract.mdc`** — test mock layers; test-utils path under `test/vitest/test-utils/`
 - **`bokeh-version-and-vendor-patch-upgrade.mdc`** — full `build` before Playwright; Bokeh fixture regen
 - **`web-pages-e2e-test-maintenance.mdc`** — fixture paths under `test/fixtures/`
-- **`testing-doc-sync.mdc`** — `docs/TESTING.md` build command sync
+- **`testing-doc-sync.mdc`** — `docs/how-to/develop/run-tests.md` build command sync

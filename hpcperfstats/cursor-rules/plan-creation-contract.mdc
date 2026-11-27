@@ -87,7 +87,7 @@ pre-commit run --all-files
 pre-commit run --hook-stage pre-push --all-files
 ```
 
-(Install hooks first via `./scripts/install-git-hooks.sh` when missing — see **`docs/TESTING.md`** → Static analysis.) Fix every failure in the same task; log results under **`test_runs/`**. Do **not** mark **`git-hooks-pre-close`** or **`post-implementation-review`** completed, and do **not** claim the plan complete, while any commit or push hook fails. This does **not** require creating a git commit or pushing — only running the hook suites.
+(Install hooks first via `./scripts/install-git-hooks.sh` when missing — see **`docs/how-to/develop/run-tests.md`** → Run git hooks and static analysis.) Fix every failure in the same task; log results under **`test_runs/`**. Do **not** mark **`git-hooks-pre-close`** or **`post-implementation-review`** completed, and do **not** claim the plan complete, while any commit or push hook fails. This does **not** require creating a git commit or pushing — only running the hook suites.
 
 ### sync_timedb / ingest-stall plans (mandatory YAML todos)
 

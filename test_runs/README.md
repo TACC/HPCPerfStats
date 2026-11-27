@@ -7,4 +7,4 @@ Local, gitignored output from test workflows and agent verification runs.
 - **Update-metrics diagnosis JSON:** `diagnosis/`
 - **Optional pytest/workflow captures:** `pytest/`, `workflows/`
 
-How to run tests (commands, prerequisites) lives in **`docs/TESTING.md`**, not here.
+To run the tests, see [Run the tests](../docs/how-to/develop/run-tests.md).

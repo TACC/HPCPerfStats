@@ -74,7 +74,6 @@ LEGACY_ALLOWED = frozenset(
     "docs/SYNC_TIMEDB_PARALLELISM.md",
     "docs/SYNC_TIMEDB_STATE_MACHINE.md",
     "docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md",
-    "docs/TESTING.md",
     "docs/UPDATE_METRICS_STATE_MACHINE.md",
     "docs/apply_monitor_variable_renames.py",
     "docs/artifacts/per_jid_duplicate_query_exceptions.md",

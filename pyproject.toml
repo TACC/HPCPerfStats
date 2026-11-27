@@ -60,7 +60,9 @@ test = [
 ]
 dev = [
   "ruff>=0.17.6",
-  "pylint>=4.1.4",  # optional; Ruff is the primary linter (see docs/TESTING.md)
+  # pylint is optional; Ruff is the primary linter
+  # (see docs/how-to/develop/run-tests.md).
+  "pylint>=4.1.4",
   "vulture>=2.16",
   "pre-commit>=4.7.0",
   "memray>=1.20.0",  # commit-hook memory-leak smoke (scripts/run_commit_memory_leak_check.py)

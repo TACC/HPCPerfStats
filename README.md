@@ -47,12 +47,12 @@ The most used pages:
 - [Pipeline configuration](docs/reference/pipeline-configuration.md): every tuning key in `hpcperfstats.ini` with its default.
 - [Pipeline concurrency](docs/explanation/pipeline-concurrency.md): how threads, memory and connections are sized.
 - [Using the website as a researcher](docs/using-the-website-as-a-researcher.md): reading the job UI, plots and metrics.
-- [docs/TESTING.md](docs/TESTING.md): test commands and workflows.
+- [Run tests](docs/how-to/develop/run-tests.md): test commands and workflows; [Test layout](docs/reference/test-layout.md) lists the suites.
 - [Monitor metrics reference](monitor/docs/METRICS_REFERENCE.md): every monitor-reported variable.
 
 ## Contributing
 
-Follow [docs/TESTING.md](docs/TESTING.md) for the test workflows and [Documentation style](docs/reference/documentation-style.md) for docs.
+Follow [Run tests](docs/how-to/develop/run-tests.md) for the test workflows and [Documentation style](docs/reference/documentation-style.md) for docs.
 
 Developers and maintainers:
 
