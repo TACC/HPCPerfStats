@@ -3,7 +3,7 @@
 This tutorial takes a new Rocky Linux host from nothing to a running HPCPerfStats site, then connects cluster nodes to it.
 It is for HPC operators doing a fresh install; for an existing stack, follow [Upgrade the stack](../how-to/operate/upgrade-the-stack.md) instead.
 
-You build the central container stack first, then the node monitor RPM, then wire the scheduler and accounting into it.
+You build the central container stack first, then the node monitor RPM, then wire in the scheduler and the `hpcperfstats-tools` accounting connector.
 Every value you are asked to set has a reference entry in [Pipeline configuration](../reference/pipeline-configuration.md) or [Compose services](../reference/compose-services.md).
 
 ## Before you begin

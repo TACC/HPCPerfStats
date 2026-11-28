@@ -5,14 +5,16 @@ It is for developers changing any layer and operators who want to know what each
 
 HPC centers need multi-resolution visibility into how jobs use nodes: CPU, memory, accelerators, network and power, correlated with scheduler accounting (job IDs, time ranges, nodelist).
 Raw telemetry alone is not enough; operators and researchers need job-indexed views and derived metrics.
-HPCPerfStats (formerly known as TACC Stats) combines two parts:
+HPCPerfStats (formerly known as TACC Stats) combines three components:
 
-1. A lightweight node daemon that samples hardware and ships UTF-8 text payloads to a message broker.
-2. An off-cluster Python stack that archives raw messages, loads structured rows into PostgreSQL/TimescaleDB, computes aggregates and plots, and serves a Django + React (Next.js) web application.
+1. `monitor`: a lightweight node daemon that samples hardware and ships UTF-8 text payloads to a message broker.
+2. `hpcperfstats`: an off-cluster container stack of nginx, the RabbitMQ broker, the ingest and metrics pipeline, PostgreSQL/TimescaleDB, Valkey and a Django + React (Next.js) web application.
+   It archives raw messages, loads structured rows into the database, computes aggregates and plots, and serves the web UI and API.
+3. `hpcperfstats-tools`: the Slurm connector, which loads `sacct` accounting through the API, plus a job-efficiency CLI and the Python API client.
 
 ## Goals
 
-- Collect representative node-level performance samples on cluster nodes with bounded overhead ([`docs/measurements/monitor_overhead_stampede3_spr_2026-08-14.md`](../measurements/monitor_overhead_stampede3_spr_2026-08-14.md) records a Stampede3 SPR `pidstat` capture).
+- Collect representative node-level performance samples on cluster nodes with bounded overhead ([overhead profiles](../measurements/overhead_profile/profiles.md) record the cost per node type).
 - Reliably transport samples from nodes to a central service via RabbitMQ.
 - Persist raw archives and normalized time-series and job records for audit and reprocessing.
 - Join node telemetry with Slurm accounting-backed job metadata for per-job analysis.
@@ -132,8 +134,17 @@ Monitor C code has its own agent rule tree, `monitor/cursor-rules/`, and applica
 - `hpcperfstats/analysis/`: metrics computation, plotting, roofline and vendor-specific logic; `update_metrics.py` persists plot and detail artifacts after recompute.
 - `hpcperfstats/site/`: the Django project, DRF APIs, OpenAPI schema, and the React/Next frontend under `site/frontend/`.
 
-`hpcperfstats-tools` (an in-tree directory with its own Python distribution, import `hpcperfstats_tools`) is the canonical CLI and client for the Django API: endpoints, auth headers and schemas.
+### hpcperfstats-tools
+
+`hpcperfstats-tools/` is an in-tree Python setuptools distribution (import `hpcperfstats_tools`) that runs off the site, typically on a Slurm login node.
+It is the canonical CLI and client for the Django API: endpoints, auth headers and schemas.
+
+- `hpcperfstats-sacct-gen` is the Slurm connector: it runs `sacct` for a date range and POSTs each day to the API ingest endpoint ([Runtime processes](#runtime-processes) has the server side).
+- `hpcperfstats-jobstats` prints a job-efficiency summary for one job from the same API data as the web UI.
+- `ApiClient` and `get_job_full_dataframe()` are the Python client.
+
 Server-side business rules stay in Django; the client validates responses.
+The [package README](../../hpcperfstats-tools/README.md) covers install, configuration and options.
 
 ### Runtime image
 
@@ -148,6 +159,24 @@ The native stack:
 - Stdlib `zlib` and other image-built natives link zlib-ng under `/opt/zlib-ng` (`ZLIB_COMPAT`; a direct rpath link, not apt `zlib1g`).
 - The image `zstd` CLI and CPython `_zstd` / `compression.zstd` use zstd 1.6.0 under `/opt/zstd` (CLI gzip and zlib support linked to zlib-ng; symlinked into `/usr/local/bin` and `/usr/bin`; not apt `zstd`).
 - Production images install Intel MKL from PyPI and source-compile numpy, numexpr and pandas against it for both ABIs (not a host `pip` step), so full image rebuilds take longer than wheel-only installs.
+
+### Image builds
+
+The images trade build time for runtime speed and size, and build on the host that runs them.
+The rebuild scripts call `podman build` and then `podman-compose up --no-build`, so Podman's layer cache is the only build cache: no cache mounts, ccache, mold or wheelhouse are used, and pip runs with `--no-cache-dir`.
+
+- Native code targets the build host's CPU.
+  `services-conf/bake_clang_flags.sh` sets `-O2 -march=native -mtune=native -flto=thin` for every native library in the `web`/`pipeline`, `proxy` and `hpcperfstats-db` images, and `clang_march_native_probe.sh` fails the build when `-march=native` is unusable.
+  zlib-ng, libffi, numpy and the Codon kernels use their own native-CPU switches.
+- Linking is Clang ThinLTO with `lld` and the LLVM binutils; the flags are dropped for `./configure` probes only.
+- CPython is built twice (GIL and free-threaded) with `--enable-optimizations` and `--with-lto`, and jemalloc is force-linked.
+- Build stages keep compilers out of the runtime images: `python-build` and `codon-build` compile under `/opt`, `hpcperfstats-base` copies only those prefixes onto `debian:trixie-slim`, and `proxy` and `hpcperfstats-db` copy their prefixes from a build stage onto a bare Alpine image.
+- Layers run from slowest to fastest changing: native libraries, then CPython, then the pip layers keyed on `pyproject.toml`, and the full source copy last, installed with `pip install --no-deps .`.
+  The `frontend-builder` stage copies `package.json` and `package-lock.json` and runs `npm ci` before it copies the frontend source.
+- Each native build strips its ELF files, and the image build removes build-only Python packages, static archives and the Rust toolchain, failing when unstripped files remain.
+- `./scripts/rebuild_pipeline.sh` builds the `hpcperfstats-pipeline-refresh` stage, which reuses the live SPA export instead of running npm.
+
+`hpcperfstats/tests/test_dockerfile_*.py` pin the stage order, flags and prune steps.
 
 ## Runtime processes
 
