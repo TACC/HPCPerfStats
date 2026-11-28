@@ -37,7 +37,7 @@ Solve one task on a running site or in the checkout.
 The monitor package (`hpcperfstatsd`) starts at its [landing page](../monitor/README.md).
 
 - [Build the monitor RPM](../monitor/docs/how-to/build-the-rpm.md)
-- [Deploy the monitor to nodes](../monitor/docs/how-to/deploy-to-nodes.md)
+- [Deploy the monitor to nodes](../monitor/docs/how-to/build-the-rpm.md#deploy-to-nodes)
 - [Run a monitor correctness campaign](../monitor/docs/how-to/run-correctness-campaign.md)
 - [Profile the monitor daemon](../monitor/docs/how-to/profile-the-daemon.md)
 - [Cross-compile the monitor](../monitor/docs/how-to/cross-compile.md)

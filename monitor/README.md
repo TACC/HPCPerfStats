@@ -1,26 +1,50 @@
 # HPCPerfStats monitor
 
-`hpcperfstatsd` is the C data collector of HPCPerfStats: a RabbitMQ daemon that samples host, network, file-system, GPU and CPU-counter statistics and streams them as UTF-8 text payloads to a broker.
-This page is for monitor developers, RPM builders and node operators; it covers the tree, the one build command and where every monitor doc lives.
+`hpcperfstatsd` is the node daemon of HPCPerfStats: it collects host, network, file-system, GPU and CPU-counter metrics on each compute node and sends them as UTF-8 text payloads to a broker over RabbitMQ.
+This page is for node operators first (install the RPM), then monitor developers (build, test and where every monitor doc lives).
 
-The consumer contract is `HPCPerfStats/hpcperfstats/listend.py`: it expects a stable host field and `$`-prefixed rotation lines (`monitor-workspace-contract.mdc`).
+## Install the RPM
 
-## Directory layout
+Install an `hpcperfstatsd` RPM built for your cluster: your site's build, or one you make with [Build the RPM](docs/how-to/build-the-rpm.md).
+The RPM installs the daemon `/usr/sbin/hpcperfstatsd`, its conf `/etc/hpcperfstats/hpcperfstats.conf` and the systemd unit `hpcperfstats.service`.
 
-| Path                       | Purpose                                                                                                                                                                               |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/`                     | Production C sources and headers (`hpcperfstatsd`, collectors, schema, buffers).                                                                                                      |
-| `tests/`                   | `make check` targets: C unit drivers, shell regressions, `Makefile.am`, `run_tests.sh` ([tests/README.md](tests/README.md)).                                                          |
-| `measurement/`             | Node measurement kit (cadence, overhead, jitter): [measurement/RUNBOOK.md](measurement/RUNBOOK.md); the site and pipeline kit is `tests/site_measurement/`.                           |
-| `scripts/`                 | Static bundle and prefix helpers (`build_static_bundle.sh`, `ensure_dotbuild_prefix_static.sh`), RPM prepare wrappers, `run_valgrind_check.sh`, `run_cpp_linter.sh`.                  |
-| `site/`                    | Per-checkout RPM site overrides: untracked `hpcperfstats.site.conf` (broker, credentials) and its tracked `.example` ([build the RPM](docs/how-to/build-the-rpm.md)).                 |
-| `m4/`, `configure.ac`      | Autotools.                                                                                                                                                                            |
-| `docs/`                    | Monitor docs (list below).                                                                                                                                                            |
-| `python/hpcperfstats_raw/` | Standard-library Python reader for raw monitor files (`python3 -m hpcperfstats_raw summary <FILE>`); tests in `python/tests/`, run by `make check` (`tests/test_raw_data_reader.sh`). |
-| `README`                   | Short plain-text pointer to this page.                                                                                                                                                |
+To install it on a node:
+
+1. Install the package as root; its `%post` enables and starts the service:
+
+   ```bash
+   sudo dnf install ./hpcperfstatsd-<VERSION>-<RELEASE>.<ARCH>.rpm
+   ```
+
+   `<VERSION>-<RELEASE>.<ARCH>` is the file name the build printed, for example `3.1-1.el9.x86_64`.
+
+2. Unless the RPM was built with your site conf, set `server`, `queue`, `port`, `user` and `password` in `/etc/hpcperfstats/hpcperfstats.conf` (mode `0600`; [the keys](docs/how-to/build-the-rpm.md#set-the-site-conf)).
+
+3. Restart the service so it reads the conf:
+
+   ```bash
+   sudo systemctl restart hpcperfstats
+   ```
+
+4. Check that it runs and publishes:
+
+   ```bash
+   systemctl status hpcperfstats --no-pager
+   journalctl -u hpcperfstats --since -15min \
+     | grep -E 'abled types|RMQ .* failed'
+   ```
+
+   The unit is active, `Enabled types` lists the collectors, and no `RMQ connect/attach failed`, `RMQ queue declare/bind failed` or `RMQ publish failed` line follows.
+   The daemon publishes its schema at start and its samples every `send_freq` (300 s by default).
+   On the HPCPerfStats host, `podman-compose -p hpcperfstats exec rabbitmq rabbitmqctl list_queues name messages consumers` shows your `queue`.
+
+The unit is `hpcperfstats`, not `hpcperfstatsd`, which is the package and binary name.
+To roll a new RPM out to a whole cluster (consumer order, conf upgrades, switching a collector off), see [Deploy to nodes](docs/how-to/build-the-rpm.md#deploy-to-nodes); the site-wide install, including the scheduler prolog, is the [install tutorial](../docs/tutorials/install-hpcperfstats.md).
 
 ## Build and test
 
+This section is for monitor developers.
+The consumer contract is `HPCPerfStats/hpcperfstats/listend.py`: it expects a stable host field and `$`-prefixed rotation lines (`monitor-workspace-contract.mdc`).
 Run these from `HPCPerfStats/monitor/`.
 
 To build and test:
@@ -96,6 +120,20 @@ Without clang, `ld.lld`, the aarch64 sysroot or prefix, `--push` still runs the 
 `PREFIX`, `ARM_SYSROOT` and `ARM_PREFIX` override the paths.
 The test is `tests/test_run_warning_gate.sh`.
 
+## Directory layout
+
+| Path                       | Purpose                                                                                                                                                                               |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/`                     | Production C sources and headers (`hpcperfstatsd`, collectors, schema, buffers).                                                                                                      |
+| `tests/`                   | `make check` targets: C unit drivers, shell regressions, `Makefile.am`, `run_tests.sh` ([tests/README.md](tests/README.md)).                                                          |
+| `measurement/`             | Node measurement kit (cadence, overhead, jitter): [measurement/RUNBOOK.md](measurement/RUNBOOK.md); the site and pipeline kit is `tests/site_measurement/`.                           |
+| `scripts/`                 | Static bundle and prefix helpers (`build_static_bundle.sh`, `ensure_dotbuild_prefix_static.sh`), RPM prepare wrappers, `run_valgrind_check.sh`, `run_cpp_linter.sh`.                  |
+| `site/`                    | Per-checkout RPM site overrides: untracked `hpcperfstats.site.conf` (broker, credentials) and its tracked `.example` ([build the RPM](docs/how-to/build-the-rpm.md)).                 |
+| `m4/`, `configure.ac`      | Autotools.                                                                                                                                                                            |
+| `docs/`                    | Monitor docs (list below).                                                                                                                                                            |
+| `python/hpcperfstats_raw/` | Standard-library Python reader for raw monitor files (`python3 -m hpcperfstats_raw summary <FILE>`); tests in `python/tests/`, run by `make check` (`tests/test_raw_data_reader.sh`). |
+| `README`                   | Short plain-text pointer to this page.                                                                                                                                                |
+
 ## Add code and tests
 
 New or extracted C helpers need `make check` coverage: register the driver in `tests/Makefile.am` and keep `monitor_unit_cppflags` there aligned with the `src/Makefile.am` `hpcperfstatsd_CPPFLAGS` defines (`monitor-c-new-function-unittests.mdc`).
@@ -107,8 +145,7 @@ When a change alters what the daemon prints (a line kind, banner property, mark,
 
 How-to guides:
 
-- [Build the RPM](docs/how-to/build-the-rpm.md): configure options, site conf, fleet and debug RPMs.
-- [Deploy to nodes](docs/how-to/deploy-to-nodes.md): rollout order and emergency collector disable.
+- [Build the RPM](docs/how-to/build-the-rpm.md): build for your cluster, site conf, fleet scripts, deploy to nodes, debug RPMs.
 - [Run a correctness campaign](docs/how-to/run-correctness-campaign.md): validators, fault injection, counter checks.
 - [Profile the daemon](docs/how-to/profile-the-daemon.md): syscalls and CPU hot paths.
 - [Cross-compile](docs/how-to/cross-compile.md): qemu-user smoke for another CPU family.

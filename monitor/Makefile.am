@@ -44,7 +44,6 @@ dist-hook:
 EXTRA_DIST = README README.md \
 	docs/C_REFACTOR_CHECKLIST.md \
 	docs/how-to/build-the-rpm.md \
-	docs/how-to/deploy-to-nodes.md \
 	docs/how-to/run-correctness-campaign.md \
 	docs/how-to/profile-the-daemon.md \
 	docs/how-to/cross-compile.md \

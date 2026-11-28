@@ -9,9 +9,9 @@ alwaysApply: false
 
 When a change under `HPCPerfStats/monitor/` affects **how developers build, test, or navigate the tree**, or **where major logic lives**, update documentation in the same change (or immediately after):
 
-1. **`HPCPerfStats/monitor/README.md`** — landing page: package overview, directory layout, quick build and test, and the index of every page under `monitor/docs/`.
+1. **`HPCPerfStats/monitor/README.md`** — landing page, in this order: package overview, **Install the RPM** (the first section: install, conf, restart, verify it publishes), then the developer sections (build and test, directory layout, add code and tests) and the index of every page under `monitor/docs/`. Keep install first; developer-only material goes after it.
 2. **`HPCPerfStats/monitor/docs/reference/source-modules.md`** — the key source modules table and per-collector behaviour, when modules are added, renamed, split, or removed.
-3. **`HPCPerfStats/monitor/docs/how-to/*.md`** — build/RPM/fleet matrices (`build-the-rpm.md`), deploy order (`deploy-to-nodes.md`), correctness campaign and check inventory (`run-correctness-campaign.md`), profiling (`profile-the-daemon.md`), cross-compile (`cross-compile.md`).
+3. **`HPCPerfStats/monitor/docs/how-to/*.md`** — build/RPM, site conf, fleet scripts, deploy order and debug RPM (`build-the-rpm.md`), correctness campaign and check inventory (`run-correctness-campaign.md`), profiling (`profile-the-daemon.md`), cross-compile (`cross-compile.md`).
 4. **`HPCPerfStats/monitor/tests/README.md`** — when only the test suite layout, `Makefile.am` rules, or `run_tests.sh` behavior changes.
 
 Do **not** duplicate the on-disk stats format in the README or the quadrant pages; it lives in **`docs/RAW_DATA_FORMAT.md`** (format + Python reader) and the generated **`docs/METRICS_REFERENCE.md`** (per-key meanings), kept current under **monitor-raw-data-format-docs**. The plain-text **`README`** only points there.

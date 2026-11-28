@@ -85,7 +85,7 @@ It rides every jid payload, including the full-resource unmarked one, and is omi
 Tests override the cgroup root with `HPCPERFSTATS_CGROUP_ROOT`.
 
 The shared build adds three conf keys: `jid_require_step_id`, `jid_discover_pid_cap` and `affinity_pid_sample_limit`.
-The consumer must understand `%jobs` and `%affinity` before shared-node RPMs reach a fleet; [deploy to nodes](../how-to/deploy-to-nodes.md) gives the order.
+The consumer must understand `%jobs` and `%affinity` before shared-node RPMs reach a fleet; [deploy to nodes](../how-to/build-the-rpm.md#deploy-to-nodes) gives the order.
 
 `<PID>`, `<JID>` and `<TOKEN>` are a process id, a Slurm job id and a cgroup scope name.
 
@@ -178,7 +178,5 @@ The daemon runs on loaded compute nodes, so it keeps per-sample syscalls few and
 - [Raw data format](../RAW_DATA_FORMAT.md)
 - [x86 counters and roofline peaks](x86-counters-and-roofline.md)
 - [Source modules](../reference/source-modules.md)
-- [Deploy to nodes](../how-to/deploy-to-nodes.md)
+- [Build the RPM](../how-to/build-the-rpm.md)
 - [Legacy formats](../reference/legacy-formats.md)
-  </content>
-  </invoke>
