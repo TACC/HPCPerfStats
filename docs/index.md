@@ -25,6 +25,7 @@ Solve one task on a running site or in the checkout.
 
 ### Develop in the checkout
 
+- [Set up the agent workspace](how-to/develop/set-up-the-agent-workspace.md)
 - [Run tests](how-to/develop/run-tests.md)
 - [Run `sync_timedb` benchmarks](how-to/develop/run-sync-timedb-benchmarks.md)
 - [Diagnose `update_metrics`](how-to/develop/diagnose-update-metrics.md)
@@ -51,6 +52,7 @@ Look up code, configuration and contract facts.
 - [Monitor raw data format](../monitor/docs/RAW_DATA_FORMAT.md)
 - [Monitor source modules](../monitor/docs/reference/source-modules.md)
 - [Monitor legacy formats](../monitor/docs/reference/legacy-formats.md)
+- [hpcperfstats-tools](../hpcperfstats-tools/README.md): the Slurm accounting connector, `hpcperfstats-jobstats` and the API client
 - [Pipeline configuration](reference/pipeline-configuration.md)
 - [Compose services](reference/compose-services.md)
 - [`sync_timedb` state machine](reference/sync-timedb-state-machine.md)
