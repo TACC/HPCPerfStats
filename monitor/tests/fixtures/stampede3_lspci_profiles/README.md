@@ -1,7 +1,6 @@
 # Stampede3 LSPCI profile dumps
 
-Canonical queue-class `lspci` captures for Stampede3 platforms used by
-shm validate profile identity (`--profile` / `tacc_system_profiles.py`).
+Canonical queue-class `lspci` captures for Stampede3 platforms used by shm validate profile identity (`--profile` / `tacc_system_profiles.py`).
 
 | File      | Queue / class                                                 |
 | --------- | ------------------------------------------------------------- |
@@ -13,8 +12,8 @@ shm validate profile identity (`--profile` / `tacc_system_profiles.py`).
 | `pvc`     | Intel PVC Max 1550 + OPA                                      |
 | `amd-rtx` | AMD Turin + NVIDIA GB202 + IB + OPA                           |
 
-**Authoritative path:** this directory (in git). Do not depend on workspace-root
-`Stampede3-LSPCI profiles/`.
+This directory (in git) is the authoritative path.
+Do not depend on workspace-root `Stampede3-LSPCI profiles/`.
 
-**Refresh:** on a representative node of each queue, run `lspci` (or `lspci -nn`)
-and replace the matching basename file. Keep basenames stable.
+To refresh a profile, run `lspci` (or `lspci -nn`) on a representative node of each queue and replace the matching basename file.
+Keep basenames stable.

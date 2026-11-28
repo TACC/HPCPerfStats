@@ -244,7 +244,8 @@ Add a row when you vendor a third-party package such as Google or ai-tells from 
 
 Each hook's `files:` pattern covers the evergreen pages that follow this guide and widens as pages migrate.
 The four hooks share one pattern, the `md_lint_files` YAML anchor in `.pre-commit-config.yaml`, and one exclude, `md_lint_exclude`.
-The hooks exclude `docs/history/`, `docs/measurements/`, generated docs (lint the generator templates instead), `node_modules` and `test_runs`.
+The pattern takes every tracked `README*.md` (not `RULES_README.md`), the same set the drift guard checks.
+The hooks exclude the records (`docs/history/`, `docs/measurements/` and the paper kits), generated docs (lint the generator templates instead), `node_modules` and `test_runs/` except its `README.md`.
 After mdformat touches a doc that a test pins, run that test, because mdformat changes code-span escapes.
 
 ### Regeneration hooks

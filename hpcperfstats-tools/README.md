@@ -1,130 +1,82 @@
 # hpcperfstats-tools
 
-Command-line tools for querying and feeding an [HPCPerfStats](https://github.com/TACC/hpcperfstats) deployment. These tools run independently of the main Django portal and talk to it via the REST API.
+Command-line tools and a Python client that query and feed an [HPCPerfStats](https://github.com/TACC/hpcperfstats) deployment through its REST API.
+This page is for users who run the tools on a login node and for developers who change the client.
 
-> **Canonical location:** this package now lives **in-tree** under the main HPCPerfStats git checkout at `hpcperfstats-tools/`. Develop and install from there (`pip install ./hpcperfstats-tools` or `pip install -e ./hpcperfstats-tools`). The standalone GitHub repo `TACC/hpcperfstats-tools` is an archive/redirect only — do not dual-write.
+The package lives in the HPCPerfStats checkout at `hpcperfstats-tools/`; develop and install it from there.
+The standalone `TACC/hpcperfstats-tools` repository is an archive only.
 
-## Installation
-
-```bash
-# From the HPCPerfStats git checkout root:
-pip install ./hpcperfstats-tools
-# Editable during development:
-# pip install -e ./hpcperfstats-tools
-```
+## Install
 
 Requires Python 3.14+.
+From the checkout root:
 
-## Configuration
+```bash
+python3 -m pip install ./hpcperfstats-tools
+```
 
-Tools read the API base URL from a small INI config file.
+For development, `python3 -m pip install -e ./hpcperfstats-tools` installs it editable.
 
-**Config file:** Set the `HPCPERFSTATS_TOOLS_INI` environment variable to the path of your INI file (for example the path to `hpcperfstats-tools.ini.example` or a copy of it).
+## Configure
+
+The tools read the API base URL from the INI file named by `HPCPERFSTATS_TOOLS_INI`; `hpcperfstats-tools.ini.example` is the template:
 
 ```ini
 [API]
-# Base URL for the HPCPerfStats REST API
 base_url = http://localhost:8000/api/
 ```
 
-For a deployed portal, use the real base URL, for example `https://stats.cluster.domain.edu/api/`.
+For a deployed portal, use its URL, such as `https://stats.cluster.domain.edu/api/`.
 
-## REST paths (contract with the server)
+Both tools authenticate with an API key from the web UI (`/api-key/`), sent in the `X-API-Key` header.
+A run that passes `--api-key` caches the key in `~/.hpcperfstats-api` for that base URL; later runs use the cached key.
 
-`ApiClient` accepts relative paths under the configured `base_url`. When the Django app adds or renames machine API routes, update this client (and its tests) in the same change as the server. **Canonical route list:** `hpcperfstats/site/lib/machine/api_urls.py` in the main HPCPerfStats repository (`urlpatterns`).
+## Run hpcperfstats-jobstats
 
-## API key
-
-Both tools authenticate with an API key. Keys are created in the HPCPerfStats web UI (for example `/api-key/` or `/login_prompt` after signing in).
-
-- **First use:** pass the key with `--api-key`. It will be stored in `~/.hpcperfstats-api` for that API base URL.
-- **Later runs:** the cached key is used automatically, or you can pass `--api-key` again.
-- Tools send API keys via request headers (`X-API-Key`), not query-string parameters.
-
-## Tools
-
-### hpcperfstats-jobstats
-
-Prints a job-efficiency style summary for a single Slurm job (CPU/GPU utilization, memory, and so on) using the same data as the HPCPerfStats web UI.
+`hpcperfstats-jobstats` prints a job-efficiency summary for one Slurm job (CPU and GPU utilization, memory) from the same data as the web UI:
 
 ```bash
-# Summary for job 12345 (uses config base_url and cached API key)
-hpcperfstats-jobstats 12345
-
-# Override API URL and pass key explicitly
-hpcperfstats-jobstats --api-url https://stats.cluster.edu/api/ --api-key YOUR_KEY 12345
-
-# Skip TLS verification (e.g. dev with self-signed cert)
-hpcperfstats-jobstats --insecure 12345
+hpcperfstats-jobstats <JOB_ID>
+hpcperfstats-jobstats --api-url <API_URL> --api-key <API_KEY> \
+  <JOB_ID>
 ```
 
-**Options:**
+`<JOB_ID>`: the Slurm job ID; `<API_URL>`: the API base URL; `<API_KEY>`: your API key.
 
-| Option       | Description                                 |
-| ------------ | ------------------------------------------- |
-| `jid`        | Job ID (required).                          |
-| `--api-url`  | Base URL for the API (default from config). |
-| `--api-key`  | API key (optional; otherwise uses cache).   |
-| `--insecure` | Disable TLS certificate verification.       |
+| Option       | Description                                  |
+| ------------ | -------------------------------------------- |
+| `jid`        | Job ID (required)                            |
+| `--api-url`  | API base URL (default from the INI file)     |
+| `--api-key`  | API key (optional; otherwise the cached key) |
+| `--insecure` | Disable TLS certificate verification         |
 
-### hpcperfstats-sacct-gen
+## Run hpcperfstats-sacct-gen
 
-Runs `sacct` for a date range in one of two **mutually exclusive** modes:
+`hpcperfstats-sacct-gen` runs Slurm `sacct` for a date range and POSTs each day to the API ingest endpoint, or with `-f DIR` writes `DIR/YYYY-MM-DD.txt` files instead.
+Usage, the staff key it needs and the HTTP 409 guard are in [Step 11: Load accounting data](../docs/tutorials/install-hpcperfstats.md#step-11-load-accounting-data).
 
-- **API mode** (default): POSTs the pipe-delimited output to the HPCPerfStats ingest endpoint when that day’s sacct body has at least one job row (header-only or empty days are skipped, same as `-f`). The API stores the data using the same logic as the portal’s sync_acct and also writes `{acct_path}/YYYY-MM-DD.txt` for a manual `sync_acct.py` reimport only when the body has at least one job row. The API returns HTTP 409 when a POST would replace an on-disk file with fewer lines (staff API key required). Header-only or empty POSTs skip the write without a 409.
-- **File mode** (`-f DIR`): writes the same pipe-delimited body to `DIR/YYYY-MM-DD.txt` locally (same naming as the ingest API). `DIR` must already exist. No API URL or key required. Do not combine with `--api-key`.
-
-```bash
-# Ingest today only (default API mode)
-hpcperfstats-sacct-gen
-
-# Ingest a specific date range (both ends inclusive)
-hpcperfstats-sacct-gen 2024-01-01 2024-01-08
-
-# Pass API key (and cache it for next time)
-hpcperfstats-sacct-gen --api-key YOUR_KEY 2024-01-01 2024-01-02
-
-# Write daily .txt files instead of POSTing (DIR must exist)
-hpcperfstats-sacct-gen -f /path/to/accounting 2024-01-01 2024-01-08
-```
-
-**Options:**
-
-| Option       | Description                                                                                  |
-| ------------ | -------------------------------------------------------------------------------------------- |
-| `start_date` | Start date (YYYY-MM-DD or parseable). Default: today.                                        |
-| `end_date`   | End date, inclusive. Default: start_date (same day).                                         |
-| `-f DIR`     | Write `DIR/YYYY-MM-DD.txt` files instead of API ingest. Mutually exclusive with `--api-key`. |
-| `--api-key`  | API key (optional in API mode; otherwise uses cache). Mutually exclusive with `-f`.          |
-
-**Requirements:**
-
-- Slurm `sacct` on the machine where the command runs.
-- **API mode:** `[API] base_url` in your tools INI (see Configuration); staff-capable API key for the ingest endpoint.
-- **File mode:** `-f DIR` must be an existing directory.
-
-## Python library usage
-
-`hpcperfstats-tools` also exposes reusable client helpers:
+## Use the Python client
 
 ```python
 from hpcperfstats_tools import ApiClient, get_job_full_dataframe
 
-client = ApiClient("https://stats.cluster.edu/api/", api_key="YOUR_KEY")
+client = ApiClient("https://stats.cluster.edu/api/", api_key="<API_KEY>")
 home = client.get_json("home/")
-
 df = get_job_full_dataframe(
   jid="12345",
   api_url="https://stats.cluster.edu/api/",
-  api_key="YOUR_KEY",
+  api_key="<API_KEY>",
 )
-print(df.head())
 ```
 
-- `ApiClient` centralizes auth headers, JSON calls, and redirect-safe text POST.
-- `get_job_full_dataframe()` builds a pandas DataFrame for a job by fetching
-  job metadata and type-detail sample series over the REST API.
+`ApiClient` handles auth headers, JSON calls and redirect-safe text POSTs.
+`get_job_full_dataframe()` builds a pandas DataFrame from a job's metadata and type-detail sample series.
+
+## REST path contract
+
+`ApiClient` takes paths relative to `base_url`.
+The route list is `urlpatterns` in `hpcperfstats/site/lib/machine/api_urls.py`; a change that adds or renames a machine API route updates this client and its tests in the same commit.
 
 ## License
 
-GNU Lesser General Public License v2.1 (LGPL-2.1), same as the main HPCPerfStats package. See [LICENSE](LICENSE).
+LGPL-2.1, the same as HPCPerfStats; see [LICENSE](LICENSE).

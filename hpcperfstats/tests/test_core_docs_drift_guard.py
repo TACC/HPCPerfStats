@@ -3,9 +3,11 @@
 Evergreen docs describe the code at HEAD: the root README.md, docs/index.md,
 every Markdown page under docs/{tutorials,how-to,reference,explanation}/ and
 monitor/docs/{how-to,explanation,reference}/ (globbed at test time, so a new
-page is covered without editing this file), plus CORE_DOCS, which must exist.
-These tests fail when a page uses characters
+page is covered without editing this file), every tracked package
+README*.md outside the records and node_modules, plus CORE_DOCS, which must
+exist. These tests fail when a page uses characters
 outside the allowlist, carries changelog sections or old-version phrasing,
+uses a bold paragraph as a heading,
 has paste-unsafe shell fences, cites INI keys or defaults that disagree with
 conf_parser, or (TESTING_DOCS pages) points at files that do not exist.
 
@@ -46,12 +48,50 @@ _EVERGREEN_DIRS = (
 )
 
 
+# Records (docs/reference/documentation-style.md, "Records and evergreen
+# pages") keep their READMEs out of the package-README scope.
+_RECORD_PREFIXES = (
+  "docs/history/",
+  "docs/measurements/",
+  "monitor/measurement/",
+  "tests/site_measurement/",
+  "protocols/",
+)
+
+
+def _tracked_paths() -> list[str]:
+  out = subprocess.run(
+    ["git", "-C", str(_REPO), "ls-files"],
+    check=True,
+    capture_output=True,
+    text=True,
+  ).stdout
+  return out.splitlines()
+
+
+def _is_package_readme(rel: str) -> bool:
+  """Tracked README*.md below the root, outside records and node_modules."""
+  name = rel.rsplit("/", 1)[-1]
+  return (
+    "/" in rel
+    and name.startswith("README")
+    and name.endswith(".md")
+    and not rel.startswith(_RECORD_PREFIXES)
+    and "node_modules/" not in rel
+  )
+
+
 def _evergreen_docs() -> tuple[str, ...]:
   found = set(CORE_DOCS)
   found.update(rel for rel in _EVERGREEN_FILES if (_REPO / rel).is_file())
   for rel_dir in _EVERGREEN_DIRS:
     for path in (_REPO / rel_dir).rglob("*.md"):
       found.add(path.relative_to(_REPO).as_posix())
+  found.update(
+    rel
+    for rel in _tracked_paths()
+    if _is_package_readme(rel) and (_REPO / rel).is_file()
+  )
   return tuple(sorted(found))
 
 
@@ -113,6 +153,9 @@ _ALLOWED_NON_ASCII = (
   | frozenset(chr(c) for c in range(0x100, 0x180))
 )
 
+# A whole line of bold (or __bold__) text, optionally ending in a colon.
+_BOLD_HEADING_RE = re.compile(r"^\s*(\*\*|__)[^*_]+\1:?\s*$")
+
 _TESTING_PATH_RE = re.compile(
   r"`((?:[\w.-]+/)*[\w.-]+\.(?:py|sh|ts|tsx|mts|mjs|js|ini|json|yaml|toml))`"
 )
@@ -125,16 +168,6 @@ _TEST_FILE_NAME_RE = re.compile(r"^test_\w+\.py$|\.test\.[jt]sx?$|\.sh$")
 
 def _doc_text(rel: str) -> str:
   return (_REPO / rel).read_text(encoding="utf-8")
-
-
-def _tracked_paths() -> list[str]:
-  out = subprocess.run(
-    ["git", "-C", str(_REPO), "ls-files"],
-    check=True,
-    capture_output=True,
-    text=True,
-  ).stdout
-  return out.splitlines()
 
 
 def _values_equal(doc_value: str, code_default: str) -> bool:
@@ -204,6 +237,35 @@ def test_core_doc_chars_in_allowlist(rel):
   assert not bad, (
     "evergreen docs are ASCII plus the degree sign, micro sign and "
     "accented letters (use -, ->, x, >=, ...):\n" + "\n".join(bad)
+  )
+
+
+def _bold_heading_lines(text: str) -> list[int]:
+  """Line numbers of paragraphs that are only bold text (V2, MD036).
+
+  Fence bodies are skipped; list items and table rows never match.
+  """
+  hits, in_fence = [], False
+  lines = text.splitlines()
+  for n, line in enumerate(lines, 1):
+    if line.lstrip().startswith("```"):
+      in_fence = not in_fence
+      continue
+    if in_fence or not _BOLD_HEADING_RE.match(line):
+      continue
+    before = lines[n - 2].strip() if n > 1 else ""
+    after = lines[n].strip() if n < len(lines) else ""
+    if not before and not after:
+      hits.append(n)
+  return hits
+
+
+@pytest.mark.parametrize("rel", EVERGREEN_DOCS)
+def test_core_doc_has_no_bold_heading(rel):
+  bad = [f"{rel}:{n}" for n in _bold_heading_lines(_doc_text(rel))]
+  assert not bad, (
+    "bold paragraph used as a heading (V2); use a ## heading or a "
+    "sentence:\n" + "\n".join(bad)
   )
 
 
@@ -313,6 +375,30 @@ def test_char_allowlist_admits_units_and_names_only():
   )
   for ch in "\u00a7\u00d7\u00f7\u2014\u2013\u2192\u2026\u201c\u00a0\u2713":
     assert _disallowed_chars(ch) == [f"U+{ord(ch):04X}"]
+
+
+def test_bold_heading_check_flags_standalone_bold_only():
+  text = (
+    "Intro.\n\n**Heading:**\n\nBody.\n\n- **Term** - list item\n\n"
+    "| **a** | b |\n\n```text\n\n**in fence**\n\n```\n\n"
+    "**Bold** then prose.\n"
+  )
+  assert _bold_heading_lines(text) == [3]
+
+
+def test_package_readmes_in_scope_records_out():
+  assert "cursor-hooks/README.md" in EVERGREEN_DOCS
+  assert "monitor/tests/README.md" in EVERGREEN_DOCS
+  assert "test_runs/README.md" in EVERGREEN_DOCS
+  assert "hpcperfstats/analysis/README_ARCH_AGNOSTIC.md" in EVERGREEN_DOCS
+  for rel in (
+    "docs/measurements/README.md",
+    "monitor/measurement/README.md",
+    "tests/site_measurement/README.md",
+    "hpcperfstats/cursor-rules/RULES_README.md",
+    "hpcperfstats/site/frontend/node_modules/x/README.md",
+  ):
+    assert not _is_package_readme(rel), rel
 
 
 def test_evergreen_scope_covers_quadrants_and_core_docs():
