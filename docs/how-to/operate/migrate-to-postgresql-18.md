@@ -52,6 +52,7 @@ The phases run in order; only D2 to E stop anything.
 
 Run this once on every site that still serves PG15 before it pulls code where `db` is PG18.
 The include line goes in before the pull, so no compose command can start PG18 as `db` on the copy target: until the pull lands, every compose command fails because the included file does not exist yet, and running containers keep running.
+Never use a `docker-compose.override.yaml` for the include line or the cutover: a command that names `-f docker-compose.yaml` skips the override.
 
 1. Stop the copy (if it runs) and `db_pg18`, then add the include line and look for a `db_pg18:` stanza in the site file:
 
