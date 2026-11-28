@@ -250,13 +250,14 @@ After mdformat touches a doc that a test pins, run that test, because mdformat c
 
 ### Regeneration hooks
 
-Two commit-stage hooks keep generated reference pages current.
+Three commit-stage hooks keep generated pages and blocks current.
 Each one's `files:` pattern lists every input of its generator, and `hpcperfstats/tests/test_doc_generators_fresh.py` checks that pattern against the inputs.
 
-| Hook                             | Generator                                            | Page                                               |
-| -------------------------------- | ---------------------------------------------------- | -------------------------------------------------- |
-| `monitor-variables-consumer-map` | `scripts/docs/gen_monitor_variables_consumer_map.py` | `docs/reference/monitor-variables-consumer-map.md` |
-| `monitor-naming-tables`          | `scripts/docs/gen_monitor_naming_tables.py`          | `docs/reference/monitor-naming-tables.md`          |
+| Hook                             | Generator                                            | Page                                                                                                |
+| -------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `monitor-variables-consumer-map` | `scripts/docs/gen_monitor_variables_consumer_map.py` | `docs/reference/monitor-variables-consumer-map.md`                                                  |
+| `monitor-naming-tables`          | `scripts/docs/gen_monitor_naming_tables.py`          | `docs/reference/monitor-naming-tables.md`                                                           |
+| `readme-measurement-summary`     | `scripts/docs/gen_readme_measurement_summary.py`     | The marked measurement block in `README.md`, from `docs/measurements/overhead_profile/profiles.csv` |
 
 A hook runs its generator with `--fix`: a stale page is rewritten and the hook fails with the command to run.
 Run the generator in the checkout, then commit the page with the other paths:

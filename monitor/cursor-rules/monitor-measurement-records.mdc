@@ -35,7 +35,11 @@ someone reading the paper later can check every number against. Layout and file 
    `monitor/measurement/bin/aggregate_profiles.py --out docs/measurements/overhead_profile
    docs/measurements/overhead_profile/*/profile.json` and copy each `profile.json` into
    `tests/site_measurement/results/` (gitignored, for `emit_paper_facts.py`). Never hand-edit
-   `profile.json`, `report.md`, `profile_row.csv` or the generated `profiles.*`.
+   `profile.json`, `report.md`, `profile_row.csv` or the generated `profiles.*`. The measurement
+   summary block in `HPCPerfStats/README.md` regenerates from `profiles.csv`: run
+   `../.venv/bin/python3 scripts/docs/gen_readme_measurement_summary.py` and commit `README.md` with
+   the tables (the `readme-measurement-summary` pre-commit hook fails while the block is stale). For
+   a new campaign record, point `CAMPAIGN_REL` in that script at it; never hand-edit the block.
 4. **Harness changes that move a reported number.** When a change under `monitor/measurement/lib/`
    (report, collector matrix, counter rotation, leg summary) changes a value or field in
    `profile.json` / `report.md`, rebuild the committed profiles from their raw tree with
@@ -59,6 +63,7 @@ someone reading the paper later can check every number against. Layout and file 
 - `ls docs/measurements/overhead_profile/` shows one directory per run of the campaign, each with the
   three profile files.
 - `aggregate_profiles.py` ran after the last profile change (`profiles.md` lists every directory).
+- `scripts/docs/gen_readme_measurement_summary.py --check` passes.
 - The summary record's numbers match the plan's tables for the same runs.
 - The law 6 grep prints nothing.
 

@@ -124,6 +124,12 @@ repos:
         language: system
         files: ^(scripts/docs/gen_monitor_naming_tables\.py|docs/reference/monitor-naming-tables\.md|hpcperfstats/dbload/lib/monitor_naming/(load_map\.py|monitor_variable_rename_map\.yaml))$
         pass_filenames: false
+      - id: readme-measurement-summary
+        name: regenerate the README.md measurement summary block
+        entry: ../.venv/bin/python3 scripts/docs/gen_readme_measurement_summary.py --fix
+        language: system
+        files: ^(scripts/docs/gen_readme_measurement_summary\.py|README\.md|docs/measurements/overhead_profile/profiles\.csv)$
+        pass_filenames: false
 
   # Markdown lint (docs/reference/documentation-style.md, "Lint toolchain").
   # files: covers every evergreen page by pattern (root and package

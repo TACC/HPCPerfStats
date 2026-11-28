@@ -27,6 +27,10 @@ GENERATORS = {
     "scripts/docs/gen_monitor_variables_consumer_map.py",
     "--check",
   ],
+  "readme_measurement_summary": [
+    "scripts/docs/gen_readme_measurement_summary.py",
+    "--check",
+  ],
   "overhead_profiles": [
     "monitor/measurement/bin/aggregate_profiles.py",
     "--check",
@@ -98,6 +102,11 @@ def _naming_tables_inputs() -> list[str]:
   ]
 
 
+def _readme_summary_inputs() -> list[str]:
+  script = "scripts/docs/gen_readme_measurement_summary.py"
+  return [script, "README.md", _module_literal(script, "CSV_REL")]
+
+
 REGEN_HOOKS = {
   "monitor-variables-consumer-map": (
     "scripts/docs/gen_monitor_variables_consumer_map.py",
@@ -106,6 +115,10 @@ REGEN_HOOKS = {
   "monitor-naming-tables": (
     "scripts/docs/gen_monitor_naming_tables.py",
     _naming_tables_inputs,
+  ),
+  "readme-measurement-summary": (
+    "scripts/docs/gen_readme_measurement_summary.py",
+    _readme_summary_inputs,
   ),
 }
 

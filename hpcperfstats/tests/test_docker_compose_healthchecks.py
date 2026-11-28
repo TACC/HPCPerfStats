@@ -341,7 +341,9 @@ def test_install_tutorial_is_fresh_only_and_upgrade_doc_holds_existing_stack():
   tutorial = (repo_root / _INSTALL_TUTORIAL).read_text()
   upgrade = (repo_root / _UPGRADE_DOC).read_text()
   release_notes = (repo_root / _RELEASE_NOTES_DOC).read_text()
-  assert readme.index("## Install") < readme.index("## Quick start")
+  readme_install = readme.split("## Install", 1)[1].split("\n## ", 1)[0]
+  assert _INSTALL_TUTORIAL in readme_install
+  assert "docs/reference/compose-services.md#common-commands" in readme_install
   assert _UPGRADE_DOC in readme
   assert _INSTALL_TUTORIAL in readme
   assert "../how-to/operate/upgrade-the-stack.md" in tutorial
