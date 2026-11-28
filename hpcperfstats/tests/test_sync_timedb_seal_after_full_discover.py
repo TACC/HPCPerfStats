@@ -180,14 +180,6 @@ def _day_raw(tmp_path, monkeypatch, sealed=None):
   with tarfile.open(tar, "w") as tf:
     tf.add(str(in_tar), arcname=str(in_tar).lstrip("/"))
   ah.invalidate_mutable_tar_authority_members(str(tar))
-  walked = (in_tar, in_zst, nowhere, active, other_day, lock, not_a_host)
-  monkeypatch.setattr(
-    qo,
-    "iter_find_stats_stdout_chunks",
-    lambda *_a, **_k: iter(
-      ["\0".join((str(p), "1", "3", "1", "")).encode() for p in walked]
-    ),
-  )
 
   def _no_shared_collect(*_a, **_k):
     raise AssertionError("seal check must not use the shared day collect")
@@ -208,30 +200,30 @@ def _day_raw(tmp_path, monkeypatch, sealed=None):
 def test_unarchived_raw_is_in_neither_the_open_tar_nor_the_sealed_copy(
   tmp_path, monkeypatch
 ):
-  daily, tar, nowhere = _day_raw(tmp_path, monkeypatch)
-  assert qo._closed_raw_not_archived(str(tmp_path), daily, tar) == [nowhere]
+  _daily, tar, nowhere = _day_raw(tmp_path, monkeypatch)
+  assert qo._closed_raw_not_archived(str(tmp_path), tar) == [nowhere]
 
 
 def test_unarchived_check_does_not_wait_on_the_shared_day_collect_lock(
   tmp_path, monkeypatch
 ):
   """04 2026-10-29: 08-27's seal waited 14+ min behind verify-pass collects."""
-  daily, tar, nowhere = _day_raw(tmp_path, monkeypatch)
+  _daily, tar, nowhere = _day_raw(tmp_path, monkeypatch)
   # A shared walk in progress would block any day-scoped collect forever.
   monkeypatch.setattr(ah._DAY_SCOPED_CLOSED_RAW_WALK, "_running", True)
-  assert qo._closed_raw_not_archived(str(tmp_path), daily, tar) == [nowhere]
+  assert qo._closed_raw_not_archived(str(tmp_path), tar) == [nowhere]
 
 
 def test_unarchived_check_fails_closed_on_an_unreadable_open_tar(
   tmp_path, monkeypatch
 ):
-  daily, tar, _nowhere = _day_raw(tmp_path, monkeypatch)
+  _daily, tar, _nowhere = _day_raw(tmp_path, monkeypatch)
   with open(tar, "ab") as fh:
     fh.write(b"\0" * (qo._EMPTY_TAR_MAX_BYTES + 1))
   monkeypatch.setattr(
     ah, "get_mutable_tar_authority_member_map", lambda *_a, **_k: {}
   )
-  assert qo._closed_raw_not_archived(str(tmp_path), daily, tar) is None
+  assert qo._closed_raw_not_archived(str(tmp_path), tar) is None
 
 
 def _run_discover(tmp_path, monkeypatch, mtime_days, *, raise_exc=False):

@@ -218,6 +218,69 @@ def _basename_date(path: str) -> date | None:
     return None
 
 
+def closed_raw_paths_for_day(archive_data_dir: str, day: date) -> list[str]:
+  """
+  List one calendar day's closed raw stats files by name, without a stat.
+
+  Reads each host directory (``<archive>/<host>/<name>``, host names ending
+  in ``host_name_ext``, dot-prefixed sidecar dirs skipped, the same depth
+  and filter as the discover walk) and keeps the regular files whose name
+  resolves to ``day`` (digit epoch in the day's local range, or an ISO
+  prefix); ``current*``, lock sidecars and active segments are excluded.
+  Cost is one ``readdir`` per host plus ``d_type`` (no per-file stat), and a
+  ``current`` stat only for that day's names, so it never waits on or
+  repeats the whole-archive GNU stat walk.
+
+  Args:
+    archive_data_dir (str): Raw stats archive root.
+    day (date): Calendar day to list.
+
+  Returns:
+    list[str]: Closed raw paths of ``day`` (empty without a host suffix).
+
+  Raises:
+    OSError: When the archive root or a host directory cannot be read.
+
+  Examples:
+    >>> closed_raw_paths_for_day("/nope", date(2026, 8, 5))
+    []
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    stats_file_is_active_segment,
+  )
+
+  suffix = (cfg.get_host_name_ext() or "").strip()
+  if not suffix or not os.path.isdir(archive_data_dir):
+    return []
+  start = datetime(day.year, day.month, day.day)
+  lo = int(start.timestamp())
+  hi = int(datetime.fromordinal(start.toordinal() + 1).timestamp())
+  paths: list[str] = []
+  with os.scandir(archive_data_dir) as hosts:
+    host_dirs = [
+      h.path
+      for h in hosts
+      if h.name.endswith(suffix)
+      and not h.name.startswith(".")
+      and h.is_dir(follow_symlinks=False)
+    ]
+  for host_dir in host_dirs:
+    with os.scandir(host_dir) as names:
+      paths.extend(
+        e.path
+        for e in names
+        if (
+          lo <= int(e.name) < hi
+          if e.name.isdigit()
+          else _basename_date(e.name) == day
+        )
+        and not e.name.startswith(("current", "."))
+        and not _is_lock_name(e.name)
+        and e.is_file(follow_symlinks=False)
+      )
+  return [p for p in paths if not stats_file_is_active_segment(p)]
+
+
 def discover_ingest_capacity_limit() -> int:
   """
   Return the tighter of the job-queue member cap and ingest queue max size.

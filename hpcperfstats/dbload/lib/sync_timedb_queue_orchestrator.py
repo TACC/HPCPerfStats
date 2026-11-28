@@ -2536,7 +2536,6 @@ def _remaining_raw_all_in_open_tar(
 
 def _closed_raw_not_archived(
   archive_data_dir: str,
-  tgz_archive_dir: str,
   tar_path: str,
 ) -> list[str] | None:
   """
@@ -2547,14 +2546,13 @@ def _closed_raw_not_archived(
   seals (hpcperfstats04 2026-10-29: 08-25 sealed without 189 of its files).
   A file counts as archived when it is a same-size member of the open tar or
   of the sealed ``.tar.zst`` (sealed member map). The day's raw comes from
-  the census fd walk streamed and kept by filename day, not the shared
-  day-scoped collect, which serializes on a process lock behind verify
-  passes and builds the whole archive listing (hpcperfstats04 2026-10-29:
-  08-27's seal waited 14+ minutes on that lock).
+  the name-only host listing ``jd.closed_raw_paths_for_day``, not the shared
+  day-scoped collect, which serializes behind verify passes and stats the
+  whole archive (hpcperfstats04 2026-10-29: 08-27's seal waited 14+ minutes
+  on it).
 
   Args:
     archive_data_dir (str): Raw stats archive root.
-    tgz_archive_dir (str): Daily archive directory.
     tar_path (str): Open daily ``.tar``.
 
   Returns:
@@ -2562,7 +2560,7 @@ def _closed_raw_not_archived(
     when the day scan or the open-tar member read failed.
 
   Examples:
-    >>> _closed_raw_not_archived("/nope", "/nope", "/nope/2020-01-10.tar")
+    >>> _closed_raw_not_archived("/nope", "/nope/2020-01-10.tar")
     []
   """
   from hpcperfstats.dbload.lib import (
@@ -2571,22 +2569,10 @@ def _closed_raw_not_archived(
   )
 
   day = calendar_date_from_daily_tar_path(tar_path)
-  # Host dirs end in host_name_ext (same rule as the discover filter).
-  suffix = (cfg.get_host_name_ext() or "").strip()
-  if day is None or not suffix:
+  if day is None:
     return []
   try:
-    raw = [
-      rec.path
-      for rec in iter_find_printf_records_streaming(
-        iter_find_stats_stdout_chunks(archive_data_dir)
-      )
-      if os.path.basename(os.path.dirname(rec.path)).endswith(suffix)
-      and not is_internal_archive_stats_path(rec.path)
-      and not _is_lock_name(os.path.basename(rec.path))
-      and jd.calendar_day_from_find_record(rec, tgz_archive_dir) == day
-      and not ah.stats_file_is_active_segment(rec.path)
-    ]
+    raw = jd.closed_raw_paths_for_day(archive_data_dir, day)
     if not raw:
       return []
     in_tar = {}
@@ -2770,8 +2756,8 @@ def _run_day_close_job(
   except ValueError:
     return "skipped"
   min_age_h = _day_close_min_age_hours()
-  # Without an open tar this check walks the raw tree (shared batched walk):
-  # say so, or a slot waiting on it shows nothing after its claim line.
+  # Without an open tar this check lists the day's raw once per zst and
+  # manifest identity (DE-35 adoption): say so before it runs.
   if not os.path.isfile(tar_path):
     _log(
       f"queue_orchestrator day_close stage_enter day={day_token} "
@@ -3248,7 +3234,7 @@ def _run_day_close_job(
       return "yielded"
     # Raw nothing queued (no archive holds it) goes to ingest; seal after.
     unarchived = (
-      _closed_raw_not_archived(root, tgz_archive_dir, tar_path)
+      _closed_raw_not_archived(root, tar_path)
       if os.path.isfile(tar_path)
       else []
     )

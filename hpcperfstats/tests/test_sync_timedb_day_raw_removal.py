@@ -3311,3 +3311,121 @@ def test_done_sealed_only_day_restores_and_reseals_late_unarchived_raw(
   assert members is not None and all(
     members.get(name) == size for name, size in sizes.items()
   ), "sealed map holds both raw at full size (INV-COPY)"
+
+
+def _clean_done_sealed_only_day(tmp_path, day):
+  """Sealed-only day, ``done`` manifest, its one raw deleted (clean)."""
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  os.remove(tar_path)
+  seg.unlink()
+  state = _make_coordinator(tmp_path)._get_or_create_day(tar_path)
+  with state._lock:
+    state._manifest["entries"] = {
+      str(seg): {"status": "verified", "deleted": True}
+    }
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    _save_manifest(state._manifest_path, state._manifest)
+  return tar_path, zst, state._manifest_path
+
+
+def _count_census_walks(tmp_path, monkeypatch):
+  """Forbid the shared batched walk; count name-only day listings."""
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_archive_helpers as ah,
+    sync_timedb_job_discover as jd,
+  )
+
+  def _shared_walk(*_a, **_k):
+    raise AssertionError("shared batched closed-raw walk used")
+
+  monkeypatch.setattr(ah, "build_day_scoped_closed_raw_by_gz", _shared_walk)
+  monkeypatch.setattr(ah._DAY_SCOPED_CLOSED_RAW_WALK, "collect", _shared_walk)
+  monkeypatch.setattr(
+    cfg, "get_host_name_ext", lambda: "cluster.integration.test"
+  )
+  monkeypatch.setattr(cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    cfg, "get_daily_archive_dir_path", lambda: str(tmp_path / "daily")
+  )
+  walks = []
+  real_listing = jd.closed_raw_paths_for_day
+
+  def _listing(archive_dir, day):
+    walks.append(day)
+    return real_listing(archive_dir, day)
+
+  monkeypatch.setattr(jd, "closed_raw_paths_for_day", _listing)
+  return walks
+
+
+def test_job_entry_check_on_clean_done_days_walks_once_then_never(
+  tmp_path, monkeypatch
+):
+  """hpcperfstats01 2026-11-26: 8 slots wedged at ``stage=complete_check``.
+
+  Each zst-only ``done`` day's job-entry completeness check queued behind
+  the shared batched raw walk (DE-35 adoption). It must list the day by
+  name at most once, and a re-claim of the unchanged day must not list it
+  again.
+  """
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
+
+  days = [datetime(2025, 3, 26 + n) for n in range(6)] + [
+    datetime(2025, 4, n) for n in (1, 2)
+  ]
+  for day in days:
+    _clean_done_sealed_only_day(tmp_path, day)
+  walks = _count_census_walks(tmp_path, monkeypatch)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+
+  def _claim_all():
+    return [
+      qo._run_day_close_job(
+        f"{day:%Y-%m-%d}",
+        tgz_archive_dir=str(tmp_path / "daily"),
+        archive_data_dir=str(tmp_path),
+        log_fn=lambda *a, **k: None,
+      )
+      for day in days
+    ]
+
+  assert _claim_all() == ["complete"] * len(days)
+  assert sorted(walks) == sorted(d.date() for d in days), walks
+  walks.clear()
+  assert _claim_all() == ["complete"] * len(days)
+  assert walks == [], "unchanged clean day re-walked (memo miss)"
+
+
+def test_unmanifested_raw_memo_rewalks_after_zst_or_manifest_change(
+  tmp_path, monkeypatch
+):
+  """The clean-day memo holds only while the zst and manifest are unchanged."""
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+    blocking_closed_raw_remains_for_day,
+  )
+
+  tar_path, zst, manifest = _clean_done_sealed_only_day(
+    tmp_path, datetime(2025, 4, 3)
+  )
+  walks = _count_census_walks(tmp_path, monkeypatch)
+  for _check in range(3):
+    assert blocking_closed_raw_remains_for_day(tar_path) == {}
+  assert len(walks) == 1
+  with open(manifest, encoding="utf-8") as fh:
+    doc = json.load(fh)
+  _save_manifest(manifest, doc)
+  assert blocking_closed_raw_remains_for_day(tar_path) == {}
+  assert len(walks) == 2, "manifest change re-walks"
+  assert blocking_closed_raw_remains_for_day(tar_path) == {}
+  assert len(walks) == 2
+  with open(zst, "ab") as fh:
+    fh.write(b"")
+  os.utime(zst, ns=(1, 1))
+  assert blocking_closed_raw_remains_for_day(tar_path) == {}
+  assert len(walks) == 3, "zst identity change re-walks"

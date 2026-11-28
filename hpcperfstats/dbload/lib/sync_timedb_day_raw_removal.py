@@ -17,6 +17,10 @@ Attributes:
   _UNMANIFESTED_RAW_LOGGED: Last ``(adopted_sealed, adopted_unarchived)``
     logged per day, so a sealed-only day's unmanifested-raw line repeats
     only when its counts change.
+  _UNMANIFESTED_RAW_SCANS: Per sealed-only tar, the unlisted raw its last
+    day listing found, keyed by the ``(zst, manifest)`` archive identities,
+    so a day is re-listed only after its zst or manifest changes.
+  _UNMANIFESTED_RAW_SCANS_LOCK: Guards ``_UNMANIFESTED_RAW_SCANS``.
   _log_day_raw_verify_complete: Attribute.
   remaining_raw_blocking_day_incomplete: Attribute.
 """
@@ -34,6 +38,7 @@ from typing import Any
 from django.db import close_old_connections
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
 from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
 from hpcperfstats.dbload.lib.file_locking import (
   cleanup_orphan_fnctl_lock_sidecars,
@@ -120,6 +125,8 @@ REPAIR_REQUIRED_STATUSES = frozenset(
 )
 KICK_NO_HANDOFF_PROGRESS = frozenset({"noop", "quarantine_terminal"})
 _UNMANIFESTED_RAW_LOGGED: dict[str, tuple[int, int]] = {}
+_UNMANIFESTED_RAW_SCANS: dict[str, tuple[tuple[Any, Any], list[str]]] = {}
+_UNMANIFESTED_RAW_SCANS_LOCK = threading.Lock()
 
 VERIFY_STAGE_NONE = "none"
 VERIFY_STAGE_PRE_SEAL = "pre_seal_complete"
@@ -1220,8 +1227,18 @@ class _DayRawRemovalState:
     reseals and deletes it). An invalid map adopts nothing, since the kind
     cannot be told, and queues its rebuild for a later pass.
 
+    The day is listed by name (``jd.closed_raw_paths_for_day``), never by
+    the shared batched raw walk, and at most once per ``(zst, manifest)``
+    identity pair: the job-entry check, the coordinator reopen and the
+    later stages reuse that listing (hpcperfstats01 2026-11-26: eight
+    clean zst-only days held every day_close slot ~30 h at
+    ``stage=complete_check`` behind that walk).
+
     Returns:
       list[str]: Paths recorded by this call (empty when none).
+
+    Raises:
+      OSError: When the day listing cannot read the archive.
 
     Examples:
       >>> _DayRawRemovalState()._adopt_unmanifested_raw()
@@ -1233,11 +1250,22 @@ class _DayRawRemovalState:
       return []
     with self._lock:
       listed = set(self._manifest.get("entries", {}))
+    key = (archive_identity(zst_path), archive_identity(self._manifest_path))
+    with _UNMANIFESTED_RAW_SCANS_LOCK:
+      memo = _UNMANIFESTED_RAW_SCANS.get(self.tar_path)
+    if memo is None or memo[0] != key:
+      unlisted = [
+        path
+        for path in jd.closed_raw_paths_for_day(
+          self.archive_data_dir, self.day_date
+        )
+        if path not in listed
+      ]
+      memo = (key, unlisted)
+      with _UNMANIFESTED_RAW_SCANS_LOCK:
+        _UNMANIFESTED_RAW_SCANS[self.tar_path] = memo
     found = [
-      path
-      for paths in (self._build_remaining_raw_for_daily_tar() or {}).values()
-      for path in paths or ()
-      if path not in listed and os.path.isfile(path)
+      path for path in memo[1] if path not in listed and os.path.isfile(path)
     ]
     members = sealed_members_lookup(zst_path) if found else None
     adopted = [] if members is None else found
