@@ -123,7 +123,6 @@ def _looks_like_non_runtime_dev_artifact(rel_path: str) -> bool:
       "docs/",
       ".build/",
       ".github/",
-      "artifacts/",
       "staticfiles/",
       "hpcperfstats-tools/",
     )
@@ -202,12 +201,16 @@ def test_dockerignore_lists_required_dev_patterns():
     "docker-compose*.yaml",
     ".build/",
     ".github/",
-    "artifacts/",
     "hpcperfstats/site/frontend/README.md",
     "hpcperfstats-tools/",
   )
   for pattern in required:
     assert pattern in content, f"missing .dockerignore pattern: {pattern}"
+
+
+def test_dockerignore_drops_retired_top_level_dirs():
+  """The retired top-level artifacts/ tree (now test_runs/) stays unlisted."""
+  assert "artifacts/" not in _dockerignore_patterns(_repo_root())
 
 
 def test_pipeline_rebuild_frontend_staging_not_excluded():

@@ -40,6 +40,7 @@ The monitor package (`hpcperfstatsd`) starts at its [landing page](../monitor/RE
 - [Run a monitor correctness campaign](../monitor/docs/how-to/run-correctness-campaign.md)
 - [Profile the monitor daemon](../monitor/docs/how-to/profile-the-daemon.md)
 - [Cross-compile the monitor](../monitor/docs/how-to/cross-compile.md)
+- [Refactor monitor C code file by file](../monitor/docs/C_REFACTOR_CHECKLIST.md)
 
 ## Reference
 

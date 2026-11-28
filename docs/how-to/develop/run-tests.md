@@ -26,8 +26,9 @@ The host Python environment is the workspace virtualenv one level up, `../.venv`
   podman-compose version
   ```
 
-  Expect rootless `true` and graph, image, volume, cache and temp paths below `/data/podman/$USER`.
-  Host npm, pip, Playwright, XDG and temporary paths resolve below `/data/user/$USER`.
+  Expect rootless `true` and graph, image, volume, cache and temp paths below `/data/podman/<USER>`.
+  Host npm, pip, Playwright, XDG and temporary paths resolve below `/data/user/<USER>`.
+  `<USER>`: your login name.
 
 - Frontend tests need `npm ci` in `hpcperfstats/site/frontend`.
 
@@ -123,7 +124,7 @@ It verifies rootless Podman, creates missing local files from their `.example` t
 - Production uses project `hpcperfstats`; the long-running local development stack uses `hpcperfstats-dev`.
 - Inner scripts such as `tests/run_db_pytest_inner.sh` stream into `web` through `compose_run_inner_script`.
   Extra pytest arguments pass through a workflow-managed temporary file.
-- Bind-mount work copies and all growth-prone temporary state use `/data/user/$USER/tmp`; they never fall back to `$HOME/.cache`, `/tmp` or `/var/tmp`.
+- Bind-mount work copies and all growth-prone temporary state use `/data/user/<USER>/tmp`; they never fall back to `$HOME/.cache`, `/tmp` or `/var/tmp`.
 - When `pip install -e ".[test]"` fails on the bind mount, `tests/run_pipeline_e2e_workflow.sh` sources `tests/pip_compose_test_extras_fallback.sh`; the other inner scripts use the same pins through `compose_inner_pip_install` in `tests/compose_inner_pip_install.sh`.
 
 The baked ini uses `host = /run/postgresql`: `web` and `pipeline` connect over the shared `postgres_runtime` tmpfs socket (password auth via `services-conf/postgres_pg_hba.conf`).
@@ -215,7 +216,7 @@ The URL drift guard keeps the endpoint matrix complete:
 
 - `EXPECTED_ROUTE_TEMPLATES` in `hpcperfstats/tests/urlconf_route_catalog.py` is the canonical template set; `hpcperfstats/tests/test_endpoint_route_snapshot.py` asserts the live Django resolver matches it.
 - `build_pipeline_http_endpoint_specs()` in the same module expands every template to concrete paths.
-- Phase 2 drives each check through Playwright (`page.goto` for HTML and redirects, `APIRequestContext` for JSON APIs) with status and `Content-Type` checks.
+- The browser phase of `tests/run_pipeline_e2e_workflow.sh` (phase 2) drives each check through Playwright (`page.goto` for HTML and redirects, `APIRequestContext` for JSON APIs) with status and `Content-Type` checks.
 - Adding a URL without updating the catalog and the builder fails CI.
 
 ### sync_timedb regression battery
@@ -558,7 +559,7 @@ tests/run_security_audit_workflow.sh
 ```
 
 The workflow builds the `web` image unless you pass `--skip-build`.
-GitHub Actions (`.github/workflows/security-audit.yaml`) installs rootless Podman, points storage at `/data/podman/$USER`, and runs it with `permissions: contents: read`, weekly and on pull requests that touch dependency or audit files.
+GitHub Actions (`.github/workflows/security-audit.yaml`) installs rootless Podman, points storage at `/data/podman/<USER>` for the runner account, and runs it with `permissions: contents: read`, weekly and on pull requests that touch dependency or audit files.
 
 To audit only the host environment or the frontend:
 

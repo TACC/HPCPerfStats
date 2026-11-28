@@ -78,7 +78,7 @@ Nominal peaks live in `hpcperfstats/analysis/metrics/lib/plot/roofline_peaks.py`
 
 ### PMU sharing metrics
 
-Monitor 3.1 Phase 1b builds (the version stays 3.1) carry the PMU sharing counters `pmu_enabled_time` / `pmu_running_time` / `pmu_solo_running_time` on `host_cpu_hw`.
+The Arm CPU-counter backend publishes the PMU sharing counters `pmu_enabled_time` / `pmu_running_time` / `pmu_solo_running_time` on `host_cpu_hw`; on samples without them both metrics are empty.
 They are lifetime ns summed across CPUs by ingest, so they are counters rather than a per-CPU percent; x86 direct-perf builds publish the same three keys, and the metrics apply unchanged.
 
 - `avg_pmu_running_pct` = 100 x running / enabled.

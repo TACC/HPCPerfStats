@@ -215,7 +215,7 @@ PGDATA often sits on a different host mount than the pipeline archive data, so c
 The `host_data` compression policy (`compress_after = 8 days`) runs on a daily fixed schedule at 01:00 in the INI `timezone`, pinned by migration `0040`, with no `max_runtime` (a run that overruns finishes its chunk).
 The multi-hour chunk rewrite then does not compete with daytime ingest for WAL.
 The migration is a bounded `alter_job` (no compress or decompress) and soft-skips when Timescale or the policy is absent.
-The `0032` Phase 2 policy restore (`add_compression_policy`) re-pins the same schedule through the shared `compression_schedule` helper, so a re-added policy does not fall back to the floating default.
+The policy restore in migration `0032` (`add_compression_policy`) re-pins the same schedule through the shared `compression_schedule` helper, so a re-added policy does not fall back to the floating default.
 
 ## db image
 
