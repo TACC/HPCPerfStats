@@ -7,7 +7,7 @@ Use it when you need an RPM for a set of compute nodes; the per-node install ste
 
 - A monitor checkout on a build host with the same CPU family (x86_64 or aarch64) and OS major release as the compute nodes.
   The RPM takes the build host's architecture, and the daemon links glibc dynamically.
-- The build packages from [Step 8 of the install tutorial](../../../docs/tutorials/install-hpcperfstats.md#step-8-build-and-install-the-node-monitor), including `cmake` for rabbitmq-c and `rpm-build`.
+- The build packages from [Build the monitor RPM in the install tutorial](../../../docs/tutorials/install-hpcperfstats.md#build-the-monitor-rpm), including `cmake` for rabbitmq-c and `rpm-build`.
 - Network access for the pinned dependency downloads.
 - Run every command on this page from `HPCPerfStats/monitor/`.
 

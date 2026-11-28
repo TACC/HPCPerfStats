@@ -3,7 +3,8 @@
 This tutorial takes a new Rocky Linux host from nothing to a running HPCPerfStats site, then connects cluster nodes to it.
 It is for HPC operators doing a fresh install; for an existing stack, follow [Upgrade the stack](../how-to/operate/upgrade-the-stack.md) instead.
 
-You build the central container stack first, then the node monitor RPM, then wire in the scheduler and the `hpcperfstats-tools` accounting connector.
+Steps 1 to 11 are the shortest path to a working site: prepare the host, start the container stack, install the node monitor RPM, then wire in the scheduler and the `hpcperfstats-tools` accounting connector.
+Optional configuration and building the monitor RPM yourself follow the steps.
 Every value you are asked to set has a reference entry in [Pipeline configuration](../reference/pipeline-configuration.md) or [Compose services](../reference/compose-services.md).
 
 ## Before you begin
@@ -123,8 +124,7 @@ To create the site Compose file:
 2. In `docker-compose.yaml`, set `volumes -> ssh_keys -> device` to the host directory of pipeline SSH keys, which mounts as `/hpcperfstats/.ssh/`.
 
 3. Set `volumes -> proxy_ssl_source -> device` to the flat directory that holds `fullchain.pem` and `privkey.pem` (the example uses `/opt/certs`).
-   For Let's Encrypt, set `device: /etc/letsencrypt` and uncomment the `services.proxy.environment` block with `HPCPERFSTATS_SSL_CERTS_REL=live/your.hostname`.
-   Never bind only the `live/hostname` leaf: its archive symlinks break.
+   For a Let's Encrypt tree, see [Use Let's Encrypt certificates](#use-lets-encrypt-certificates).
 
 4. Review the other `device:` paths; the defaults below match the example.
 
@@ -178,8 +178,6 @@ To configure it:
    - `timezone`: the cluster's local timezone.
    - `secret_key`: a long random string.
 
-3. Optional: set `total_cores`, the CPU budget for application parallelism; without it the code uses `40`.
-
 Leave the `[RMQ]`, PostgreSQL, Valkey and path defaults alone: they are wired for Compose.
 [Pipeline configuration](../reference/pipeline-configuration.md) lists every other key, including the optional `[SYSLOG]` section for cluster syslog.
 
@@ -211,12 +209,153 @@ To build the images and start the site:
 The site shows the job list, empty until data arrives.
 Use the same script for every later image refresh.
 
-## Step 8: Build and install the node monitor
+## Step 8: Install the node monitor
 
+Each node runs the daemon `hpcperfstatsd` from an RPM built for your cluster: your site's build, or one you make with [Build the monitor RPM](#build-the-monitor-rpm).
+
+To install it on each node:
+
+1. Install the package as root; its `%post` enables and starts the service:
+
+   ```bash
+   sudo dnf install ./hpcperfstatsd-<VERSION>-<RELEASE>.<ARCH>.rpm
+   ```
+
+   `<VERSION>-<RELEASE>.<ARCH>`: the file name the build printed.
+
+The RPM installs `/usr/sbin/hpcperfstatsd`, its conf `/etc/hpcperfstats/hpcperfstats.conf` and the systemd service `hpcperfstats`.
+The unit is `hpcperfstats`, not `hpcperfstatsd`, which is the package and binary name.
+`rpm -q hpcperfstatsd` prints the installed version; the per-node detail is in [Install the RPM](../../monitor/README.md#install-the-rpm).
+
+## Step 9: Point the monitor at the site
+
+The monitor reads `/etc/hpcperfstats/hpcperfstats.conf`; the installed file lists every key with a comment.
+
+To configure it on each node:
+
+1. Unless the RPM was built with your site conf, edit `/etc/hpcperfstats/hpcperfstats.conf`:
+
+   | Field              | Description                                                                           |
+   | ------------------ | ------------------------------------------------------------------------------------- |
+   | `server`           | Hostname or IP of the RabbitMQ server (the site host)                                 |
+   | `queue`            | System or cluster name being monitored                                                |
+   | `port`             | RabbitMQ port (default `5672`)                                                        |
+   | `user`, `password` | RabbitMQ account (default `guest`)                                                    |
+   | `sample_freq`      | Fast-tier sampling interval in seconds                                                |
+   | `sample_freq_slow` | Full-sample interval in seconds (`>= sample_freq`; used when `enable_slow_tier` is 1) |
+   | `send_freq`        | RabbitMQ send interval in seconds                                                     |
+
+   The shipped values:
+
+   ```ini
+   server localhost
+   queue default
+   port 5672
+   user guest
+   password guest
+   sample_freq 30
+   sample_freq_slow 600
+   send_freq 300
+   ```
+
+2. Restart the service so it reads the conf:
+
+   ```bash
+   sudo systemctl restart hpcperfstats
+   ```
+
+   `sudo systemctl stop hpcperfstats` stops it.
+   `sudo systemctl reload hpcperfstats` sends `SIGHUP` (the unit's `ExecReload`) after a config edit.
+
+The daemon `hpcperfstatsd` sends samples to RabbitMQ over the administrative network; `podman-compose -p hpcperfstats exec rabbitmq rabbitmqctl list_queues name messages consumers` shows the queue for your `queue` name.
+
+## Step 10: Tell the monitor about jobs
+
+The default monitor learns the running job from `/var/run/stats_jobid` on each node.
+
+To mark jobs, add to the scheduler prolog and epilog:
+
+1. In the prolog, write the job ID into `/var/run/stats_jobid`.
+2. In the epilog, write `-` into `/var/run/stats_jobid`.
+
+Shared-node fleets use a different monitor build instead ([Shared-node fleets](#shared-node-fleets)).
+
+## Step 11: Load accounting data
+
+Job records come from Slurm `sacct` through `hpcperfstats-sacct-gen` in the `hpcperfstats-tools` package.
+By default it runs `sacct` for a date range and POSTs the result to the API ingest endpoint.
+
+To set up accounting ingest on the Slurm login node:
+
+1. Install the tools from the checkout:
+
+   ```bash
+   python3 -m pip install ./hpcperfstats-tools
+   ```
+
+2. Set `HPCPERFSTATS_TOOLS_INI` to an INI file with `[API] base_url`; `hpcperfstats-tools/hpcperfstats-tools.ini.example` is the template.
+
+3. Run the ingest as a user whose Slurm permissions cover the jobs and accounts you need, with a staff-capable API key:
+
+   ```bash
+   hpcperfstats-sacct-gen --api-key <API_KEY>
+   hpcperfstats-sacct-gen 2024-01-01 2024-01-08 --api-key <API_KEY>
+   ```
+
+   `<API_KEY>`: a staff-capable key from the site.
+   The first form ingests today only (default range today .. today); the second ingests an inclusive date range.
+
+`--api-key` is optional once a key is cached: each run that passes it saves the key in `~/.hpcperfstats-api` for that `[API] base_url`, and later API-mode runs use the cached key.
+
+Each successful POST also creates or overwrites the daily file `{acct_path}/YYYY-MM-DD.txt` (the same pipe-delimited body Slurm returned) when the body has at least one job row.
+The API rejects a payload with fewer lines than the existing file for that date (HTTP 409), so a partial `sacct` export cannot replace a fuller one; header-only or empty POSTs skip the write without a 409.
+API mode needs the shared data volume on `web` at `/hpcperfstats/` (as on `pipeline`), so the API can write under `acct_path` (default `/hpcperfstats/accounting`).
+To write the daily files without the API, see [Load accounting from files](#load-accounting-from-files).
+
+## Optional configuration
+
+The site works without these; apply the ones your site needs.
+
+### Tune for the host size
+
+Set `total_cores` under `[DEFAULT]` in `hpcperfstats.ini`, the CPU budget for application parallelism; without it the code uses `40`.
+The image bakes the INI, so rerun `./scripts/rebuild_full_site.sh` after the edit.
+[Pipeline configuration](../reference/pipeline-configuration.md) covers the pool and memory keys.
+
+### Use Let's Encrypt certificates
+
+To serve a Let's Encrypt certificate, set `volumes -> proxy_ssl_source -> device` to `/etc/letsencrypt` in `docker-compose.yaml`, and uncomment the `services.proxy.environment` block with `HPCPERFSTATS_SSL_CERTS_REL=live/your.hostname`.
+Never bind only the `live/hostname` leaf: its archive symlinks break.
+
+### Shared-node fleets
+
+Fleets where jobs share a node use a monitor built with `--enable-shared-node-multi-jid` instead of the `/var/run/stats_jobid` prolog in Step 10.
+Apply migration `0036` and deploy the matching `listend` and `sync_timedb` consumer before installing that build.
+It discovers job ids from process environments, does not use `/var/run/stats_jobid`, and adds `%jobs` and `%affinity` lines to each sample.
+The consumer stores CPU and GPU affinity in `job_affinity` and stamps non-GPU `host_data.dev` as `j:<jid>`, so two jobs can share a host second; that `dev` key is the shared-node membership on `host_data`.
+Payloads without those marks stay on empty `dev`.
+An allocated node whose steps have finished stays tagged with the job, because the monitor reads the root `slurmstepd` title.
+For older data, metrics count untagged samples toward a job on hosts it held alone (no other job in accounting or in `job_affinity` overlapping its window); a later accounting row for a co-tenant marks the job for recompute.
+
+### Load accounting from files
+
+File mode writes the same daily files as Step 11 locally without calling the API:
+
+```bash
+hpcperfstats-sacct-gen -f /path/to/accounting \
+  2024-01-01 2024-01-08
+```
+
+`-f DIR` is mutually exclusive with `--api-key`, `DIR` must already exist, and no API URL or key is required.
+Place or sync the resulting `.txt` files where `sync_acct.py` expects them (`acct_path`); [Accounting reimport](../reference/compose-services.md#accounting-reimport) loads them.
+
+## Build the monitor RPM
+
+Build the RPM yourself when your site has none for the cluster; [Build the monitor RPM](../../monitor/docs/how-to/build-the-rpm.md) covers the site conf, fleet scripts and rollout.
 The monitor RPM builds with a static bundle: pinned `libev` and `rabbitmq-c` archives (plus `libbpf` when the eBPF profiler is enabled), linked into `hpcperfstatsd` with `--enable-all-static`.
 x86 core counters come from `perf_event` directly, so no counter library is bundled.
 
-To build and install the RPM:
+To build the RPM:
 
 1. Install the build prerequisites on the build host:
 
@@ -244,8 +383,9 @@ To build and install the RPM:
      rpmbuild/SPECS/hpcperfstats.spec
    ```
 
-4. Install the resulting `hpcperfstatsd` RPM on each node.
-   It installs the systemd service `hpcperfstats`.
+Install the resulting `hpcperfstatsd` RPM on each node as in [Step 8](#step-8-install-the-node-monitor).
+
+### Developer builds
 
 Optional build variants of `scripts/build_static_bundle.sh`:
 
@@ -256,104 +396,7 @@ Optional build variants of `scripts/build_static_bundle.sh`:
 | `./scripts/build_static_bundle.sh --release`        | A release-optimized monitor (same as `HPC_BUNDLE_RELEASE_BUILD=1`) |
 | `./scripts/build_static_bundle.sh --disable-lustre` | Passes extra configure arguments through                           |
 
-## Step 9: Point the monitor at the site
-
-The monitor reads `/etc/hpcperfstats/hpcperfstats.conf`; the installed file lists every key with a comment.
-
-To configure and start it on each node:
-
-1. Edit `/etc/hpcperfstats/hpcperfstats.conf`:
-
-   | Field              | Description                                                                           |
-   | ------------------ | ------------------------------------------------------------------------------------- |
-   | `server`           | Hostname or IP of the RabbitMQ server (the site host)                                 |
-   | `queue`            | System or cluster name being monitored                                                |
-   | `port`             | RabbitMQ port (default `5672`)                                                        |
-   | `sample_freq`      | Fast-tier sampling interval in seconds                                                |
-   | `sample_freq_slow` | Full-sample interval in seconds (`>= sample_freq`; used when `enable_slow_tier` is 1) |
-   | `send_freq`        | RabbitMQ send interval in seconds                                                     |
-
-   The shipped values:
-
-   ```ini
-   server localhost
-   queue default
-   port 5672
-   sample_freq 30
-   sample_freq_slow 600
-   send_freq 300
-   ```
-
-2. Start the service:
-
-   ```bash
-   sudo systemctl start hpcperfstats
-   ```
-
-   `sudo systemctl restart hpcperfstats` and `sudo systemctl stop hpcperfstats` restart and stop it.
-   `sudo systemctl reload hpcperfstats` sends `SIGHUP` (the unit's `ExecReload`) after a config edit.
-
-The daemon `hpcperfstatsd` sends samples to RabbitMQ over the administrative network; `podman-compose -p hpcperfstats exec rabbitmq rabbitmqctl list_queues name messages consumers` shows the queue for your `queue` name.
-
-## Step 10: Tell the monitor about jobs
-
-The default monitor learns the running job from `/var/run/stats_jobid` on each node.
-
-To mark jobs, add to the scheduler prolog and epilog:
-
-1. In the prolog, write the job ID into `/var/run/stats_jobid`.
-2. In the epilog, write `-` into `/var/run/stats_jobid`.
-
-Shared-node fleets use a monitor built with `--enable-shared-node-multi-jid` instead.
-Apply migration `0036` and deploy the matching `listend` and `sync_timedb` consumer before installing that build.
-It discovers job ids from process environments, does not use `/var/run/stats_jobid`, and adds `%jobs` and `%affinity` lines to each sample.
-The consumer stores CPU and GPU affinity in `job_affinity` and stamps non-GPU `host_data.dev` as `j:<jid>`, so two jobs can share a host second; that `dev` key is the shared-node membership on `host_data`.
-Payloads without those marks stay on empty `dev`.
-An allocated node whose steps have finished stays tagged with the job, because the monitor reads the root `slurmstepd` title.
-For older data, metrics count untagged samples toward a job on hosts it held alone (no other job in accounting or in `job_affinity` overlapping its window); a later accounting row for a co-tenant marks the job for recompute.
-
-## Step 11: Load accounting data
-
-Job records come from Slurm `sacct` through `hpcperfstats-sacct-gen` in the `hpcperfstats-tools` package.
-By default it runs `sacct` for a date range and POSTs the result to the API ingest endpoint.
-
-To set up accounting ingest on the Slurm login node:
-
-1. Install the tools from the checkout:
-
-   ```bash
-   python3 -m pip install ./hpcperfstats-tools
-   ```
-
-   For development, `python3 -m pip install -e ./hpcperfstats-tools` installs it editable.
-
-2. Set `HPCPERFSTATS_TOOLS_INI` to an INI file with `[API] base_url`; `hpcperfstats-tools/hpcperfstats-tools.ini.example` is the template.
-
-3. Run the ingest as a user whose Slurm permissions cover the jobs and accounts you need, with a staff-capable API key:
-
-   ```bash
-   hpcperfstats-sacct-gen --api-key <API_KEY>
-   hpcperfstats-sacct-gen 2024-01-01 2024-01-08 --api-key <API_KEY>
-   ```
-
-   `<API_KEY>`: a staff-capable key from the site.
-   The first form ingests today only (default range today .. today); the second ingests an inclusive date range.
-
-`--api-key` is optional once a key is cached: each run that passes it saves the key in `~/.hpcperfstats-api` for that `[API] base_url`, and later API-mode runs use the cached key.
-
-Each successful POST also creates or overwrites the daily file `{acct_path}/YYYY-MM-DD.txt` (the same pipe-delimited body Slurm returned) when the body has at least one job row.
-The API rejects a payload with fewer lines than the existing file for that date (HTTP 409), so a partial `sacct` export cannot replace a fuller one; header-only or empty POSTs skip the write without a 409.
-API mode needs the shared data volume on `web` at `/hpcperfstats/` (as on `pipeline`), so the API can write under `acct_path` (default `/hpcperfstats/accounting`).
-
-File mode writes the same daily files locally without calling the API:
-
-```bash
-hpcperfstats-sacct-gen -f /path/to/accounting \
-  2024-01-01 2024-01-08
-```
-
-`-f DIR` is mutually exclusive with `--api-key`, `DIR` must already exist, and no API URL or key is required.
-Place or sync the resulting `.txt` files where `sync_acct.py` expects them (`acct_path`); [Accounting reimport](../reference/compose-services.md#accounting-reimport) loads them.
+For development, `python3 -m pip install -e ./hpcperfstats-tools` installs the accounting tools editable.
 
 ## What you built
 

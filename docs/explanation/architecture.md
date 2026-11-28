@@ -122,7 +122,7 @@ The primary maintainer contact is in the `pyproject.toml` authors (Texas Advance
 
 The monitor collects node-level statistics from hardware counters read through `perf_event_open` (no MSR access), `/proc`, `/sys`, accelerators (DCGM and others) and network counters.
 It publishes them to RabbitMQ as UTF-8 text messages; one message can carry several batched samples, up to the soft size cap `STATS_BUFFER_RMQ_SOFT_MAX_BYTES` (`monitor/src/stats_buffer.h`).
-It builds with Autotools, and production packaging is the static bundle plus RPM spec under `monitor/` ([Install HPCPerfStats](../tutorials/install-hpcperfstats.md#step-8-build-and-install-the-node-monitor)).
+It builds with Autotools, and production packaging is the static bundle plus RPM spec under `monitor/` ([Build the monitor RPM](../tutorials/install-hpcperfstats.md#build-the-monitor-rpm)).
 The shipped config samples fast-tier keys every `sample_freq` (30 s) and takes a full sample every `sample_freq_slow` (600 s), plus a sample at job start and end.
 
 Monitor C code has its own agent rule tree, `monitor/cursor-rules/`, and application Python work treats `monitor/` as read-only unless the change is approved; a dual workspace (`.cursor/workspace-profile` first word `dual`) follows the monitor tree for monitor edits.

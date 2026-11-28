@@ -56,49 +56,6 @@ The installer takes the workspace root as an optional argument (default: the par
 It also links `~/.local/bin/git-isolated-commit` to `agent-workspace/isolated_commit.py` when that name is free, adds the `isolated-commit.link` entries to the checkout's git config, and runs the sync script, which writes the `.claude/rules/` stubs and the `.claude/cursor-*.md` rule indexes.
 Rerunning it changes nothing that already exists, except the copies you refresh with `--force`.
 
-## Lay out the workspace by hand
-
-The installer builds this layout:
-
-```text
-<WORKSPACE_ROOT>/
-  HPCPerfStats/        git checkout (pyproject.toml, docker-compose.yaml)
-  .venv/               host Python virtualenv
-  CLAUDE.md            from CLAUDE.md.template
-  .claude/             Claude Code settings, hook, sync script, stubs
-  .cursor/
-    rules/             symlink -> HPCPerfStats/hpcperfstats/cursor-rules
-    hooks/             symlink -> HPCPerfStats/cursor-hooks
-    hooks.json         copy of HPCPerfStats/cursor-hooks/hooks.json
-    plans/             live *.plan.md files (outside git)
-    workspace-profile  optional; first word dual
-```
-
-Scripts and hooks find the virtualenv as `../.venv` from the checkout, so the checkout directory must be named `HPCPerfStats` and sit next to `.venv`.
-The sync script and the Claude Code hook find the workspace root two directories above their own file, so they are copies, not symlinks into the checkout.
-
-To set up the Cursor part without the installer, run these from `<WORKSPACE_ROOT>`:
-
-1. Link the rules and hooks, and copy the hook config:
-
-   ```bash
-   mkdir -p .cursor/plans
-   ln -sf ../HPCPerfStats/hpcperfstats/cursor-rules .cursor/rules
-   ln -sf ../HPCPerfStats/cursor-hooks .cursor/hooks
-   cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
-   ```
-
-   Cursor refuses a symlinked `hooks.json`, so it is a copy.
-   Copy it again after every change to `HPCPerfStats/cursor-hooks/hooks.json`.
-
-2. Optional: mark the workspace as dual:
-
-   ```bash
-   echo dual > .cursor/workspace-profile
-   ```
-
-   In a dual workspace, edits under `HPCPerfStats/monitor/` follow `HPCPerfStats/monitor/cursor-rules/` and everything else follows `.cursor/rules/`.
-
 ## Install the dev tools and git hooks
 
 To install the Python packages and the pre-commit and pre-push hooks, run these from the checkout:
@@ -154,6 +111,49 @@ git isolated-commit -m "<MESSAGE>" -- <PATHS>
 Git runs it as the `git-isolated-commit` symlink the installer puts in `~/.local/bin`, so that directory must be on your `PATH`.
 The slots are `<WORKSPACE_ROOT>/.HPCPerfStats-commit-<N>`, so `../.venv` resolves inside them.
 Ignored files that hooks need in the slot, such as `hpcperfstats.ini` and the frontend `node_modules`, are linked in through `isolated-commit.link` entries; add more with `git config --add isolated-commit.link <PATH>`.
+
+## Lay out the workspace by hand
+
+The installer builds this layout:
+
+```text
+<WORKSPACE_ROOT>/
+  HPCPerfStats/        git checkout (pyproject.toml, docker-compose.yaml)
+  .venv/               host Python virtualenv
+  CLAUDE.md            from CLAUDE.md.template
+  .claude/             Claude Code settings, hook, sync script, stubs
+  .cursor/
+    rules/             symlink -> HPCPerfStats/hpcperfstats/cursor-rules
+    hooks/             symlink -> HPCPerfStats/cursor-hooks
+    hooks.json         copy of HPCPerfStats/cursor-hooks/hooks.json
+    plans/             live *.plan.md files (outside git)
+    workspace-profile  optional; first word dual
+```
+
+Scripts and hooks find the virtualenv as `../.venv` from the checkout, so the checkout directory must be named `HPCPerfStats` and sit next to `.venv`.
+The sync script and the Claude Code hook find the workspace root two directories above their own file, so they are copies, not symlinks into the checkout.
+
+To set up the Cursor part without the installer, run these from `<WORKSPACE_ROOT>`:
+
+1. Link the rules and hooks, and copy the hook config:
+
+   ```bash
+   mkdir -p .cursor/plans
+   ln -sf ../HPCPerfStats/hpcperfstats/cursor-rules .cursor/rules
+   ln -sf ../HPCPerfStats/cursor-hooks .cursor/hooks
+   cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
+   ```
+
+   Cursor refuses a symlinked `hooks.json`, so it is a copy.
+   Copy it again after every change to `HPCPerfStats/cursor-hooks/hooks.json`.
+
+2. Optional: mark the workspace as dual:
+
+   ```bash
+   echo dual > .cursor/workspace-profile
+   ```
+
+   In a dual workspace, edits under `HPCPerfStats/monitor/` follow `HPCPerfStats/monitor/cursor-rules/` and everything else follows `.cursor/rules/`.
 
 ## Verify the result
 
