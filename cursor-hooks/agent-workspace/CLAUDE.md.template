@@ -1,0 +1,136 @@
+# HPCPerfStats workspace
+
+Shared with Cursor. Cursor config under `.cursor/` is the source of truth; Claude Code reads it
+through the links and generated stubs below, so never copy rules or skills by hand.
+
+Installed by `HPCPerfStats/cursor-hooks/agent-workspace/install-agent-workspace.sh` from
+`CLAUDE.md.template`; edit this copy freely, the installer never overwrites it.
+
+## Layout
+
+`<WORKSPACE_ROOT>` is this directory: it holds the git checkout, the host venv and the agent metadata.
+
+| Resource | Path |
+|----------|------|
+| Git checkout | `HPCPerfStats/` (contains `pyproject.toml`, `docker-compose.yaml`) |
+| External API client | `HPCPerfStats/hpcperfstats-tools/` (`pip install -e ./hpcperfstats-tools`) |
+| Host Python venv | `.venv/bin/python3` |
+| Cursor rules (authoritative, git) | `HPCPerfStats/hpcperfstats/cursor-rules/` |
+| Cursor hooks (authoritative, git) | `HPCPerfStats/cursor-hooks/` |
+| Cursor plans (live tasks, not git) | `.cursor/plans/*.plan.md` |
+
+```text
+<WORKSPACE_ROOT>/.cursor/
+  rules/       -> symlink -> HPCPerfStats/hpcperfstats/cursor-rules
+  hooks/       -> symlink -> HPCPerfStats/cursor-hooks
+  hooks.json   -> real file (copy of HPCPerfStats/cursor-hooks/hooks.json)
+  plans/       -> real directory; live `*.plan.md` plan files (outside git)
+  workspace-profile -> optional; first word `dual` = container + monitor workspace
+```
+
+Only the workspace root has a `.cursor/` directory; there is no `HPCPerfStats/.cursor/`.
+`HPCPerfStats/docs/plans/` holds `PLAN_TEMPLATE.md` only, not live plans.
+
+## Agents
+
+- Use agents for non-overlapping parts of any change, up to 10 at a time.
+
+## Operator commands
+
+- When the operator needs to run commands on a site host (for example a root shell with the
+  podman containers `hpcperfstats_db_1` / `hpcperfstats_pipeline_1`), give **one large paste
+  block** with every command, not several small ones. Read-only unless told otherwise; keep
+  output bounded.
+- Operator commands for other hosts must not assume the optional dev-host tools below: use
+  base tools (`grep`, not `rg`; no `bc`/`parallel`/`pv`/`mlr`) unless verified there.
+
+## Host tools (dev host, if installed)
+
+Prefer these in your own Bash work over ad-hoc equivalents when they are installed:
+`bc` (shell math), `parallel` (not serial loops / `xargs -P`), `pv` (progress on long pipes),
+`ts`/`sponge` (moreutils), `mlr` (CSV/JSON slicing instead of throwaway Python), `difft`,
+`hyperfine` (benchmarks), `strace`/`ltrace`/`perf`, `pidstat`/`iostat`/`mpstat`, `lsof`,
+`numactl -H`, `lstopo-no-graphics`, `yq`, `sqlite3`, `skopeo`/`buildah`, `clang`;
+`.venv/bin/py-spy` and `.venv/bin/pre-commit`. Use `podman exec ... db psql -h localhost` for the
+database's own `psql`. Install pip packages into `.venv`; ask the operator for system packages.
+
+## Commits (overrides Claude Code defaults)
+
+- Commit on whatever branch is checked out. Never create, switch or merge branches, and never
+  create worktrees, unless asked.
+- No attribution of any kind: no `Co-Authored-By`, no "Generated with Claude Code", nothing that
+  credits an AI. Commits are attributed to the human author only.
+- Stage only the files you changed, by explicit path (never `git add -A`). Commit or push only
+  when asked. Never use `--no-verify` without asking.
+- Commit with `git isolated-commit -m "msg" -- <paths you changed>` (do not `git add` first).
+  A plain `git commit` lets pre-commit stash every unstaged change in this shared checkout
+  (other sessions', Cursor's, yours) and restore it afterwards; an edit saved in that window can
+  be lost. The helper (`HPCPerfStats/cursor-hooks/agent-workspace/isolated_commit.py`, linked as
+  `~/.local/bin/git-isolated-commit`) snapshots only the named paths, runs the real commit +
+  hooks in a reusable slot worktree `<WORKSPACE_ROOT>/.HPCPerfStats-commit-N` (the one sanctioned
+  worktree exception; slots sit next to the checkout so `../.venv` and `../.build` resolve), then
+  advances the branch by compare-and-swap and refreshes only those paths in the shared index.
+  Hook auto-fixes are copied back to the shared file only if it is unchanged since the snapshot.
+  If HEAD moved and the paths overlap, it aborts without publishing. `--dry-run` runs the hooks
+  without publishing. Ignored local files that hooks need are symlinked into slots via
+  `git config --add isolated-commit.link <path>` (the installer adds `hpcperfstats.ini`,
+  `hpcperfstats/site/frontend/node_modules` and the generated frontend API clients).
+
+## Cursor rules
+
+- Always-on rules (imported below) are mandatory every turn.
+- Path-scoped rules: `.claude/rules/cursor-*.md` stubs load when you touch matching files and tell
+  you to Read the full `.cursor/rules/<name>.mdc` before editing. Do that.
+- Rules with no globs are indexed below; Read the `.mdc` when its description fits the task.
+- Edit rules only in `.cursor/rules/*.mdc` (symlink to `HPCPerfStats/hpcperfstats/cursor-rules`). The
+  stubs are regenerated at session start by `.claude/scripts/sync-cursor-rules.py` (do not hand-edit
+  generated files; run the script after adding a rule or changing its frontmatter).
+
+@.claude/cursor-always-on.md
+@.claude/cursor-agent-requested.md
+
+## Dual workspace (container + monitor)
+
+`.cursor/workspace-profile` (first word `dual`) makes this workspace serve both container and
+monitor work; without the file the workspace keeps the container profile.
+
+- `.cursor/rules` still points at the container tree (`hpcperfstats/cursor-rules`); its
+  always-on rules load every turn (above).
+- Edits under `HPCPerfStats/monitor/**` follow `HPCPerfStats/monitor/cursor-rules/` instead:
+  the sync script generates `.claude/rules/cursor-mon-*.md` stubs scoped to `monitor/**`, and the
+  hooks require that tree's always-on rules plus its routed rules, Read this turn. For a rule
+  name in both trees, the monitor copy governs monitor paths; Reading the other copy does not count.
+- Guardrail exceptions live in the rules themselves (`workspace-guardrails.mdc`,
+  `monitor-workspace-contract.mdc`, `out-of-monitor-hpcperfstats-rules.mdc`).
+- Delete the marker and re-run the sync script to go back to container-only.
+- Monitor build: `HPCPerfStats/monitor/scripts/build_static_bundle.sh`, then `make check` in
+  `monitor/.build-static`; `run_valgrind_check.sh` and `run_cpp_linter.sh`. Dependency prefix is
+  `<WORKSPACE_ROOT>/.build/`.
+
+## Skills
+
+`.claude/skills/*` are symlinks to `.cursor/skills/*`. Add new Cursor skills by linking:
+`ln -s ../../.cursor/skills/<name> .claude/skills/<name>`.
+
+## Hooks (port of `.cursor/hooks.json`)
+
+Cursor's hooks exist because context loss made agents skip rules. `.claude/hooks/hpc_claude_hooks.py`
+(a copy of `HPCPerfStats/cursor-hooks/hpc_claude_hooks.py`, wired by `.claude/settings.json`)
+enforces the same discipline, reusing Cursor's own router (`HPCPerfStats/cursor-hooks/hook_task_router.py`)
+so both tools agree on which rule a path triggers:
+
+- **PreToolUse (Edit/Write/NotebookEdit):** denied until every triggered `.mdc` was Read *this turn*
+  (since the last user prompt). Bug/stall/timeout prompts add the bugfix rules; `.cursor/plans/*.plan.md`
+  adds the plan-authoring rules. Router entries may also list `docs` (checkout-relative files) that
+  must be Read the same way. Read the listed files, then retry.
+- **Stop:** after edits, the final message needs `## Agent rule dispatch` (listing every triggered
+  rule), `## Final code review (senior engineer pass)`, and `## Post-implementation review` (>=3 bullets).
+  Blocks up to 3 times, like Cursor's `loop_limit`.
+- **Stop (every turn):** the final message's `bash`/`sh` fences must be paste-safe: no heredoc
+  and no line over 68 chars (terminal copy adds a 2-space indent and hard-wraps).
+- **PostToolUse:** reminds about rule dual-registration (`agent-discipline-core.mdc` + `hook_task_router.py`)
+  and the `cp cursor-hooks/hooks.json .cursor/hooks.json` step when those files are edited.
+- **UserPromptSubmit:** one-paragraph reminder each turn, plus task-keyword rule hints.
+
+Not ported: Cursor's `CreatePlan`-specific gates. Follow `plan-live-disk-sync.mdc` by hand.
+Edits outside the workspace or under `.claude/`, `.venv/`, `test_runs/` are not gated.

@@ -133,6 +133,23 @@ In a bare clone without a workspace `.cursor/rules` tree it finds no rules and f
 
 Not ported (Cursor-only): CreatePlan / live `.cursor/plans` gates.
 
+## Agent workspace templates
+
+`agent-workspace/` holds what a new workspace needs outside the checkout; [Set up the agent workspace](../docs/how-to/develop/set-up-the-agent-workspace.md) runs its installer.
+
+| File                         | Installed as                                         |
+| ---------------------------- | ---------------------------------------------------- |
+| `install-agent-workspace.sh` | None (run it; `--dry-run` previews)                  |
+| `isolated_commit.py`         | `~/.local/bin/git-isolated-commit` (symlink)         |
+| `sync-cursor-rules.py`       | `<WORKSPACE_ROOT>/.claude/scripts/` (copy)           |
+| `settings.json.template`     | `<WORKSPACE_ROOT>/.claude/settings.json` (if absent) |
+| `CLAUDE.md.template`         | `<WORKSPACE_ROOT>/CLAUDE.md` (if absent)             |
+
+`isolated_commit.py`, `sync-cursor-rules.py` and `settings.json.template` are byte copies of the maintainer's workspace files, which hold no personal paths.
+`hpcperfstats/tests/test_agent_workspace_templates.py` fails when a copy differs from its canonical file on the same host, and skips the check when the canonical file is absent.
+Both Python files run under the system `python3`, so ruff excludes `agent-workspace/` (pre-commit and `pyproject.toml`) and the test parses them as Python 3.9.
+The sync script finds the workspace root two directories above its own file, so it is installed as a copy; `isolated_commit.py` finds the checkout from the current directory, so a symlink works.
+
 ## Maintainer tooling
 
 These gates and scripts serve the agent workflow; the developer test commands are in [Run tests](../docs/how-to/develop/run-tests.md).

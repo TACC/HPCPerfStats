@@ -160,6 +160,9 @@ extend-exclude = [
   # Byte copy of the workspace Claude hook; must stay parseable by the
   # system python3 3.9, which py314 ruff fixes would break.
   "cursor-hooks/hpc_claude_hooks.py",
+  # Byte copies of the workspace isolated-commit helper and rule-stub sync
+  # script, also run by the system python3; same reason.
+  "cursor-hooks/agent-workspace",
 ]
 
 [tool.ruff.lint]

@@ -24,6 +24,7 @@ rabbitmq-c/
 !monitor/tests/*.sh
 !monitor/tests/**/*.sh
 !tests/**/*.sh
+!cursor-hooks/agent-workspace/*.sh
 # Compose service startup scripts under services-conf/ (tracked despite root *.sh).
 !services-conf/django_startup.sh
 !services-conf/supervisor_startup.sh

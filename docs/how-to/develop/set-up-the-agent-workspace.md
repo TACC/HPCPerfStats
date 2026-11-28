@@ -6,29 +6,14 @@ Use it when you clone the repository for development, or when an agent session e
 ## Prerequisites
 
 - Python 3.14 or later on the host, for the workspace virtualenv.
+- A system `python3` (3.9 or later) on `PATH`, for the Claude Code hooks and `git isolated-commit`.
 - Git access to the repository.
 - Cursor, Claude Code or both.
 
-## Lay out the workspace
+## Install the workspace
 
 The workspace is a directory one level above the git checkout.
-It holds the checkout, the shared virtualenv and the Cursor metadata:
-
-```text
-<WORKSPACE_ROOT>/
-  HPCPerfStats/        git checkout (pyproject.toml, docker-compose.yaml)
-  .venv/               host Python virtualenv
-  .cursor/
-    rules/             symlink -> HPCPerfStats/hpcperfstats/cursor-rules
-    hooks/             symlink -> HPCPerfStats/cursor-hooks
-    hooks.json         copy of HPCPerfStats/cursor-hooks/hooks.json
-    plans/             live *.plan.md files (outside git)
-    workspace-profile  optional; first word dual
-```
-
-`<WORKSPACE_ROOT>`: the directory you choose for the workspace.
-
-Scripts and hooks find the virtualenv as `../.venv` from the checkout, so the checkout directory must be named `HPCPerfStats` and sit next to `.venv`.
+The installer `cursor-hooks/agent-workspace/install-agent-workspace.sh` builds everything around the checkout from the templates next to it.
 
 To create the workspace, run these from `<WORKSPACE_ROOT>`:
 
@@ -44,7 +29,57 @@ To create the workspace, run these from `<WORKSPACE_ROOT>`:
    python3.14 -m venv .venv
    ```
 
-3. Link the rules and hooks, and copy the hook config:
+3. Preview the installer, then run it:
+
+   ```bash
+   S=HPCPerfStats/cursor-hooks/agent-workspace
+   bash "$S/install-agent-workspace.sh" --dry-run
+   bash "$S/install-agent-workspace.sh"
+   ```
+
+   Optional: add `--dual` to edit both the container code and `monitor/` from one workspace.
+
+`<WORKSPACE_ROOT>`: the directory you choose for the workspace.
+
+The installer takes the workspace root as an optional argument (default: the parent of the checkout) and creates:
+
+| Path under `<WORKSPACE_ROOT>`          | Source                                                     | On rerun                 |
+| -------------------------------------- | ---------------------------------------------------------- | ------------------------ |
+| `.cursor/rules`, `.cursor/hooks`       | Symlinks to `hpcperfstats/cursor-rules` and `cursor-hooks` | Kept                     |
+| `.cursor/hooks.json`                   | Copy of `cursor-hooks/hooks.json`                          | Refreshed with `--force` |
+| `.cursor/plans/`                       | Empty directory for live plans                             | Kept                     |
+| `.claude/hooks/hpc_claude_hooks.py`    | Copy of `cursor-hooks/hpc_claude_hooks.py`                 | Refreshed with `--force` |
+| `.claude/scripts/sync-cursor-rules.py` | Copy of `agent-workspace/sync-cursor-rules.py`             | Refreshed with `--force` |
+| `.claude/settings.json`, `CLAUDE.md`   | `settings.json.template`, `CLAUDE.md.template`             | Never overwritten        |
+| `.claude/skills/<NAME>`                | Symlink to each `.cursor/skills/<NAME>`                    | Kept                     |
+
+It also links `~/.local/bin/git-isolated-commit` to `agent-workspace/isolated_commit.py` when that name is free, adds the `isolated-commit.link` entries to the checkout's git config, and runs the sync script, which writes the `.claude/rules/` stubs and the `.claude/cursor-*.md` rule indexes.
+Rerunning it changes nothing that already exists, except the copies you refresh with `--force`.
+
+## Lay out the workspace by hand
+
+The installer builds this layout:
+
+```text
+<WORKSPACE_ROOT>/
+  HPCPerfStats/        git checkout (pyproject.toml, docker-compose.yaml)
+  .venv/               host Python virtualenv
+  CLAUDE.md            from CLAUDE.md.template
+  .claude/             Claude Code settings, hook, sync script, stubs
+  .cursor/
+    rules/             symlink -> HPCPerfStats/hpcperfstats/cursor-rules
+    hooks/             symlink -> HPCPerfStats/cursor-hooks
+    hooks.json         copy of HPCPerfStats/cursor-hooks/hooks.json
+    plans/             live *.plan.md files (outside git)
+    workspace-profile  optional; first word dual
+```
+
+Scripts and hooks find the virtualenv as `../.venv` from the checkout, so the checkout directory must be named `HPCPerfStats` and sit next to `.venv`.
+The sync script and the Claude Code hook find the workspace root two directories above their own file, so they are copies, not symlinks into the checkout.
+
+To set up the Cursor part without the installer, run these from `<WORKSPACE_ROOT>`:
+
+1. Link the rules and hooks, and copy the hook config:
 
    ```bash
    mkdir -p .cursor/plans
@@ -56,7 +91,7 @@ To create the workspace, run these from `<WORKSPACE_ROOT>`:
    Cursor refuses a symlinked `hooks.json`, so it is a copy.
    Copy it again after every change to `HPCPerfStats/cursor-hooks/hooks.json`.
 
-4. Optional: to edit both the container code and `monitor/` from one workspace, mark it as dual:
+2. Optional: mark the workspace as dual:
 
    ```bash
    echo dual > .cursor/workspace-profile
@@ -92,16 +127,17 @@ Cursor reads `.cursor/rules/` and runs the hooks in `.cursor/hooks.json` through
 
 ## Connect Claude Code
 
-Open Claude Code in the checkout.
-The checked-in `.claude/settings.json` runs `cursor-hooks/hpc_claude_hooks.py` on each prompt, edit and stop.
-That hook imports the same router as the Cursor hooks (`cursor-hooks/hook_task_router.py`), so both tools ask for the same rules:
+Open Claude Code in `<WORKSPACE_ROOT>`.
+`CLAUDE.md` imports the always-on rules through `.claude/cursor-always-on.md`, and `.claude/settings.json` runs the sync script at session start and `.claude/hooks/hpc_claude_hooks.py` on each prompt, edit and stop.
+A session opened in the checkout instead runs `cursor-hooks/hpc_claude_hooks.py` through the checked-in `.claude/settings.json`.
+The hook imports the same router as the Cursor hooks (`cursor-hooks/hook_task_router.py`), so both tools ask for the same rules:
 
 - Before an edit, it denies the change until every rule the path triggers was read in the current turn.
 - At the end of a turn that edited files, it requires the close sections the rules name.
 - In every final message, it rejects `bash` blocks with a heredoc or a line over 68 characters.
 
-The hook finds the rules through `<WORKSPACE_ROOT>/.cursor/rules`, so complete the workspace layout first.
-Without that directory it allows every edit.
+The hook finds the rules through `<WORKSPACE_ROOT>/.cursor/rules`; without that directory it allows every edit.
+Edit `CLAUDE.md` to suit your host: the installer never overwrites it.
 
 ## Commit from a shared checkout
 
@@ -115,28 +151,39 @@ git isolated-commit -m "<MESSAGE>" -- <PATHS>
 
 `<MESSAGE>`: the commit message; `<PATHS>`: every path you changed.
 
-The helper is a `git-isolated-commit` script on your `PATH`; it is not part of this repository.
-Ignored files that hooks need in the slot, such as `hpcperfstats.ini` and the frontend `node_modules`, are linked in with `git config --add isolated-commit.link <PATH>`.
+Git runs it as the `git-isolated-commit` symlink the installer puts in `~/.local/bin`, so that directory must be on your `PATH`.
+The slots are `<WORKSPACE_ROOT>/.HPCPerfStats-commit-<N>`, so `../.venv` resolves inside them.
+Ignored files that hooks need in the slot, such as `hpcperfstats.ini` and the frontend `node_modules`, are linked in through `isolated-commit.link` entries; add more with `git config --add isolated-commit.link <PATH>`.
 
 ## Verify the result
 
 To check the workspace:
 
-1. Run the hook unit tests from the checkout:
+1. Run the hook and template tests from the checkout:
 
    ```bash
-   ../.venv/bin/python3 -m pytest -p no:django \
-     hpcperfstats/tests/test_cursor_hooks.py -q
+   ../.venv/bin/python3 -m pytest -p no:django -q \
+     hpcperfstats/tests/test_cursor_hooks.py \
+     hpcperfstats/tests/test_agent_workspace_templates.py
    ```
 
-2. In Cursor, open **Settings -> Hooks** and check that every hook in `hooks.json` is listed.
+2. Check that the rule stubs are current; it prints nothing and exits 0:
 
-3. In Claude Code, ask for an edit to `README.md` without reading any rule; the hook denies it and names the rules to read.
+   ```bash
+   python3 ../.claude/scripts/sync-cursor-rules.py --check
+   ```
+
+3. In Cursor, open **Settings -> Hooks** and check that every hook in `hooks.json` is listed.
+
+4. In Claude Code, ask for an edit to `README.md` without reading any rule; the hook denies it and names the rules to read.
 
 ## Troubleshooting
 
+- The installer prints `skip: ... differs`: the workspace copy is older than the checkout; rerun with `--force` to refresh the copies.
+- The installer prints `skip: ~/.local/bin/git-isolated-commit exists and is not a link to ...`: another helper owns that name; remove it or keep using yours.
+- `git: 'isolated-commit' is not a git command`: `~/.local/bin` is not on `PATH`.
 - Cursor shows `Refusing to load Project hooks.json via symlink`: `.cursor/hooks.json` is a symlink; replace it with a copy of `HPCPerfStats/cursor-hooks/hooks.json`.
-- Claude Code edits files without asking for rules: `<WORKSPACE_ROOT>/.cursor/rules` is missing or the checkout is not named `HPCPerfStats`; recheck the layout.
+- Claude Code edits files without asking for rules: `<WORKSPACE_ROOT>/.cursor/rules` is missing or the checkout is not named `HPCPerfStats`; rerun the installer.
 - `install-git-hooks.sh` fails with `workspace venv missing`: create `<WORKSPACE_ROOT>/.venv` first.
 
 ## Related
