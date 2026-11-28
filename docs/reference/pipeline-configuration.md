@@ -107,7 +107,7 @@ Env `SYNC_ARCHIVE_SEAL_WORKERS` overrides the per-call seal worker count inside 
 | Key                                          | Default | Effect                                                                                        |
 | -------------------------------------------- | ------- | --------------------------------------------------------------------------------------------- |
 | `sync_day_close_max_inflight`                | `8`     | Parallel `day_close` worker threads                                                           |
-| `sync_day_close_min_age_hours`               | `32`    | Min hours after calendar day end before `day_close` may complete                              |
+| `sync_day_close_min_age_hours`               | `60`    | Min hours after calendar day end before `day_close` may complete                              |
 | `sync_day_close_raw_paths_per_batch`         | `1000`  | Incremental raw deletes per `day_close` batch                                                 |
 | `sync_ingest_hot_days`                       | `3`     | Hot-band calendar-day window for ingest ZSET scoring (min 1)                                  |
 | `archive_keep_uncompressed_tar`              | `no`    | `no` drops a prior-day `.tar` at seal when raw is gone; `yes` keeps it until tar-drop         |

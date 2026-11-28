@@ -156,7 +156,9 @@ Each flag lists when it is set, what clears it, its bounded retry and its termin
 `_SEAL_SLOTS_HELD` (`try_claim_seal_slot` / `release_seal_slot`) is a negative, memory flag.
 
 - Set: the seal stage (or the post-delete reseal) finds all `archive_seal_parallel_workers` (default 2) process-wide seal slots held by other tars; the day returns `yielded` instead of starting another disk-bound seal or holding its day_close slot.
-- Clear: a slot is released in the `finally` around `seal_dirty_daily_archives`, success or failure.
+  The `reconcile_merge` stage does the same before a DE-9 `zst_unreadable_reseal` or `missing_zst` seal: `reconcile_open_tar_with_sealed_zst` raises `DayCloseYieldError(reason=seal_slot_busy)` and the stage logs `stage_exit reconcile_merge result=yielded reason=seal_slot_busy`.
+  The day-close tar drop (`remove_verified_uncompressed_daily_tars`) never seals (`allow_auto_seal=False`); a tar with no sealed copy waits for the post-delete reseal.
+- Clear: a slot is released in the `finally` around `seal_dirty_daily_archives` or the reconcile `atomic_seal_tar_to_zst`, success or failure.
 - Bound: yield backoff 30-300 s, no attempt bump.
 - Terminal: the running seals finish (the zstd progress idle kill bounds each) and the day takes a slot.
 - Rationale: concurrent multi-TB seals on a saturated shared volume free nothing for hours.

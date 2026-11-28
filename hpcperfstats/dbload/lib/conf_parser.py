@@ -401,7 +401,7 @@ INI_OPTION_DEFAULTS = {
   "sync_pipeline_drop_page_cache": "yes",
   "archive_seal_parallel_workers": "2",
   "sync_day_close_raw_paths_per_batch": "1000",
-  "sync_day_close_min_age_hours": "32",
+  "sync_day_close_min_age_hours": "60",
   "sync_ingest_hot_days": "3",
   "sync_day_close_max_inflight": "8",
   "sync_day_close_raw_removal_max_deletes_per_pass": "0",
@@ -4489,7 +4489,7 @@ def get_sync_day_close_raw_paths_per_batch() -> Any:
 
 def get_sync_day_close_min_age_hours() -> Any:
   """
-  Hours after calendar day end before day_close seal/delete (default 32).
+  Hours after calendar day end before day_close seal/delete.
 
   Returns:
     float: Non-negative hours.

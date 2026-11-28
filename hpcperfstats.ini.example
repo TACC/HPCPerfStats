@@ -514,8 +514,8 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Max raw paths processed per day_close batch (default 1000; renamed from archive_janitor_raw_paths_per_tick).
 # sync_day_close_raw_paths_per_batch = 1000
 
-# Hours after calendar day end before day_close seal/delete (default 32).
-# sync_day_close_min_age_hours = 32
+# Hours after calendar day end before day_close seal/delete.
+# sync_day_close_min_age_hours = 60
 
 # Inclusive hot-band window for ingest job scores (days; default 3, minimum 1).
 # sync_ingest_hot_days = 3

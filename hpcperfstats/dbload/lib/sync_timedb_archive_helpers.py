@@ -8423,10 +8423,12 @@ def remove_verified_uncompressed_daily_tars(
   success_count = 0
   failed_count = 0
 
+  # The day-close seal stages seal (under a seal slot); tar drop only checks.
   for gz_path, ok, members in _iter_archive_validation_results_stream(
     validation_targets,
     log_fn=log_fn,
     validation_cache=validation_cache if workers <= 1 else None,
+    allow_auto_seal=False,
   ):
     if workers > 1:
       validation_cache["misses"] = int(validation_cache.get("misses", 0)) + 1
@@ -10688,7 +10690,7 @@ def reconcile_open_tar_with_sealed_zst(
   divergent tar after its union merge, is left unsealed (``sealed=False``)
   for the gated day-close seal stage, which waits while raw is still being
   appended; reconcile then seals only the DE-9 unreadable-zst and
-  missing-zst cases.
+  missing-zst cases. Every seal here holds a ``try_claim_seal_slot`` slot.
 
   Args:
     tar_path (str): Open daily ``.tar`` path.
@@ -10710,7 +10712,8 @@ def reconcile_open_tar_with_sealed_zst(
     ReconcileResult: Structured reconcile outcome.
 
   Raises:
-    DayCloseYieldError: When cooperative yield is required.
+    DayCloseYieldError: When cooperative yield is required, or with
+      ``reason=seal_slot_busy`` when every seal slot is held.
 
   Examples:
     >>> reconcile_open_tar_with_sealed_zst(
@@ -10809,17 +10812,30 @@ def reconcile_open_tar_with_sealed_zst(
       except Exception:
         return ReconcileResult(False, action, "drop_failed")
     return ReconcileResult(True, action, reason)
-  seal_snapshot = atomic_seal_tar_to_zst(
-    tar_path,
-    zst_path,
-    zstd_threads,
-    compress_level,
-    keep_uncompressed_tar=keep_uncompressed_tar,
-    log_fn=log_fn,
-    remaining_raw_by_gz=remaining_raw_by_gz,
-    force_remove_uncompressed_tar=force_remove_uncompressed_tar,
-    tgz_archive_dir=tgz_archive_dir,
-  )
+  # Every compress holds an archive_seal_parallel_workers slot; a full cap
+  # yields the day close (no attempt bump) like the seal stage does.
+  if not try_claim_seal_slot(tar_path):
+    from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      DayCloseYieldError,
+    )
+
+    raise DayCloseYieldError(
+      tar_path, phase="reconcile_merge", reason="seal_slot_busy"
+    )
+  try:
+    seal_snapshot = atomic_seal_tar_to_zst(
+      tar_path,
+      zst_path,
+      zstd_threads,
+      compress_level,
+      keep_uncompressed_tar=keep_uncompressed_tar,
+      log_fn=log_fn,
+      remaining_raw_by_gz=remaining_raw_by_gz,
+      force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+      tgz_archive_dir=tgz_archive_dir,
+    )
+  finally:
+    release_seal_slot(tar_path)
   if seal_snapshot is None and action in ("seal_from_tar", "merge_and_seal"):
     return ReconcileResult(False, action, "seal_failed")
   tar_removed = force_remove_uncompressed_tar and not os.path.isfile(tar_path)

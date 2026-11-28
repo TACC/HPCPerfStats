@@ -8,7 +8,8 @@ and ``.sync_timedb_state.json`` is not reconstruct source of truth. Not wired
 into ``sync_timedb.py`` until the orchestrator cutover slice.
 
 Attributes:
-  DAY_CLOSE_MIN_AGE_HOURS_DEFAULT: Post day-end age before day_close is due.
+  DAY_CLOSE_MIN_AGE_HOURS_DEFAULT: Post day-end age before day_close is due
+    (the ``sync_day_close_min_age_hours`` INI default).
   DEFAULT_INGEST_HOT_DAYS: Hot-band window when INI is not consulted yet.
   RECONSTRUCT_CHECKPOINT_BASENAME: Checkpoint sidecar name (not reconstruct
     SoT).
@@ -28,6 +29,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
+from hpcperfstats.dbload.lib.conf_parser import INI_OPTION_DEFAULTS
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
   note_day_remainder,
@@ -39,7 +41,9 @@ from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
 
 RECONSTRUCT_CHECKPOINT_BASENAME = ".sync_timedb_state.json"
 RECONSTRUCT_SOURCES = frozenset({"disk", "timescale", "marks"})
-DAY_CLOSE_MIN_AGE_HOURS_DEFAULT = 32.0
+DAY_CLOSE_MIN_AGE_HOURS_DEFAULT = float(
+  INI_OPTION_DEFAULTS["sync_day_close_min_age_hours"]
+)
 DEFAULT_INGEST_HOT_DAYS = 8
 _DISCOVER_UNREADABLE_TARS: dict[str, tuple[int, int]] = {}
 
@@ -498,7 +502,8 @@ def day_close_min_age_elapsed(
   Args:
     day (date): Calendar day being closed.
     now (datetime | None): Wall clock; default ``datetime.now()``.
-    min_age_hours (float): Hours after day end (default 32).
+    min_age_hours (float): Hours after day end.
+      Defaults to ``DAY_CLOSE_MIN_AGE_HOURS_DEFAULT``.
 
   Returns:
     bool: True when day_close age gate is satisfied.
@@ -538,7 +543,7 @@ def day_close_is_complete(
   phase_name: str | None = None,
 ) -> bool:
   """
-  True when day_close complete predicates hold (filesystem + 32h min-age).
+  True when day_close complete predicates hold (filesystem + min-age).
 
   Manifest / removal ``phase_name`` (including ghost ``phase=done``) is
   **ignored** - it is not reconstruct source of truth.
@@ -552,7 +557,8 @@ def day_close_is_complete(
       ``filesystem_complete`` is ``None``.
     min_age_elapsed (bool | None): Injected min-age result.
     now (datetime | None): Clock for min-age when not injected.
-    min_age_hours (float): Min-age hours (default 32).
+    min_age_hours (float): Min-age hours.
+      Defaults to ``DAY_CLOSE_MIN_AGE_HOURS_DEFAULT``.
     phase_name (str | None): Ignored day-raw-removal / hint phase.
 
   Returns:
@@ -911,7 +917,7 @@ def enqueue_day_close_if_needed(
   now: datetime | None = None,
 ) -> bool:
   """
-  ``RPUSH`` a day_close job when filesystem+32h predicates are incomplete.
+  ``RPUSH`` a day_close job when filesystem + min-age predicates are incomplete.
 
   Ghost ``phase=done`` does not skip enqueue. Complete identities are not
   enqueued.

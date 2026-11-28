@@ -25,7 +25,7 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 
 - **Streaming discover:** enqueue ingest jobs as paths arrive; do not wait for full-tree collect before the first `ZADD`.
 - **Brownfield reconstruct:** on empty or incomplete job-store sidecars, classify from disk+DB and enqueue incomplete identities only (skip already-complete).
-- **Day-close:** filesystem remaining-raw empty **and** `sync_day_close_min_age_hours` (default 32); not gated on a B startup snapshot flag.
+- **Day-close:** filesystem remaining-raw empty **and** `sync_day_close_min_age_hours`; not gated on a B startup snapshot flag.
 - **Ingest is not gated** on day_close completion (`TQ-09`).
 
 ## Forbidden patterns

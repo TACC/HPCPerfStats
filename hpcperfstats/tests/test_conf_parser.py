@@ -45,6 +45,24 @@ def test_get_debug_true(temp_ini, monkeypatch):
   assert cfg.get_debug() is True
 
 
+def test_day_close_min_age_defaults_to_60_hours(temp_ini, monkeypatch):
+  """Without the INI key a day waits 60 h (2.5 days) after its end before
+  day close seals it; the reconstruct default reads the same value.
+  """
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  importlib.reload(cfg)
+  with open(temp_ini) as f:
+    assert "sync_day_close_min_age_hours" not in f.read()
+  assert cfg.INI_OPTION_DEFAULTS["sync_day_close_min_age_hours"] == "60"
+  assert cfg.get_sync_day_close_min_age_hours() == 60.0
+  assert jr.DAY_CLOSE_MIN_AGE_HOURS_DEFAULT == 60.0
+
+
 def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib

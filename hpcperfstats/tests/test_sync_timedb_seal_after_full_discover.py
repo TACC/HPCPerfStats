@@ -83,11 +83,9 @@ def _seal_harness(tmp_path, monkeypatch):
     "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
     _Coord,
   )
+  # _run_day_close_job imports reconcile from the helpers module per call.
   monkeypatch.setattr(
-    qo,
-    "reconcile_open_tar_with_sealed_zst",
-    lambda *a, **k: None,
-    raising=False,
+    ah, "reconcile_open_tar_with_sealed_zst", lambda *a, **k: None
   )
   logs = []
 
@@ -349,4 +347,36 @@ def test_seal_yields_its_day_close_slot_while_the_seal_cap_is_full(
     ah.release_seal_slot(other)
   claim()
   assert calls == [False]
+  assert not ah._SEAL_SLOTS_HELD
+
+
+def test_reconcile_seal_yields_its_day_close_slot_while_the_cap_is_full(
+  tmp_path, monkeypatch
+):
+  """hpcperfstats02 2026-11-28: a reconcile seal (no zst yet) ran as a third
+  ``zstd`` beside two capped seal-stage seals. With the cap full the day
+  yields at ``reconcile_merge`` and starts no compress.
+  """
+  real_reconcile = ah.reconcile_open_tar_with_sealed_zst
+  claim, calls, logs = _seal_harness(tmp_path, monkeypatch)
+  monkeypatch.setattr(ah, "reconcile_open_tar_with_sealed_zst", real_reconcile)
+  monkeypatch.setattr(ah.cfg, "get_archive_seal_parallel_workers", lambda: 1)
+  seals = []
+  monkeypatch.setattr(
+    ah, "atomic_seal_tar_to_zst", lambda *a, **k: seals.append(a[0])
+  )
+  other = "/other/2020-01-09.tar"
+  assert ah.try_claim_seal_slot(other)
+  try:
+    assert claim() == "yielded"
+    assert seals == []
+    assert calls == []
+    assert any(
+      "stage=reconcile_merge result=yielded reason=seal_slot_busy" in m
+      for m in logs
+    )
+  finally:
+    ah.release_seal_slot(other)
+  claim()
+  assert len(seals) == 1
   assert not ah._SEAL_SLOTS_HELD

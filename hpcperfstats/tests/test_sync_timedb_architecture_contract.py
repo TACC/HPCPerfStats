@@ -1,7 +1,7 @@
 """Predicate architecture contracts for the sync_timedb queue orchestrator.
 
 B-09 (slice 4): lock rediscovered -> ingest job; remaining-raw -> ingest/append
-job; day_close = filesystem complete + 32h min-age. Do not freeze two-queue
+job; day_close = filesystem complete + min-age. Do not freeze two-queue
 threads as sacred law.
 """
 
@@ -87,7 +87,7 @@ def test_arch_predicate_remaining_raw_enqueues_ingest_or_append_job():
 
 
 def test_arch_predicate_day_close_is_filesystem_plus_min_age():
-  """day_close complete requires filesystem complete and 32h min-age."""
+  """day_close complete requires filesystem complete and the min-age."""
   assert jr.day_close_is_complete(
     "/daily/2026-08-01.tar",
     calendar_day=date(2026, 8, 1),
