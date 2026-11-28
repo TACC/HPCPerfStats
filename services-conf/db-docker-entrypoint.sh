@@ -39,8 +39,10 @@ docker_create_db_directories() {
 	local user; user="$(id -u)"
 
 	# VOLUME / bind at /var/lib/postgresql replaces the image's 1777 postgres-owned
-	# directory. Reclaim ownership when we are root (no-op on NFS root_squash —
-	# operators must chown 70:70 on the host bind; see docs/how-to/operate/migrate-to-postgresql-18.md).
+	# directory. Reclaim ownership when we are root; operators chown 70:70 on the
+	# host bind (docs/how-to/operate/migrate-to-postgresql-18.md). NFS root_squash
+	# binds are not supported: hpc_guard_data_dir refuses when it cannot create
+	# its lock file there.
 	if [ "$user" = '0' ]; then
 		chown postgres:postgres /var/lib/postgresql 2>/dev/null || :
 		chmod 1777 /var/lib/postgresql 2>/dev/null || :
@@ -383,6 +385,76 @@ hpc_timescaledb_auto_update() {
 	unset PGPASSWORD PGCTLTIMEOUT
 }
 
+# HPCPerfStats data-dir guard. Mount root of postgres_data_pg18 (tests repoint it).
+hpc_pg_root=/var/lib/postgresql
+
+hpc_guard_refuse() {
+	printf >&2 'hpcperfstats db guard: refusing to start: %s\n' "$1"
+	printf >&2 '  path: %s\n' "$2"
+	printf >&2 '  see docs/how-to/operate/migrate-to-postgresql-18.md\n'
+	exit 1
+}
+
+# Runs before anything in the bind is written (chown/chmod/mkdir, initdb):
+# 1. any PG_VERSION other than $PG_MAJOR between the mount root and $PGDATA,
+#    or at <root>/data (a PG15 bind), refuses;
+# 2. HPCPERFSTATS_DB_ROLE: primary needs the marker on an existing cluster and
+#    writes it before initdb; migrate-target refuses the marker and leaves the
+#    sentinel; pg15-legacy belongs to the Hub PG15 image and always refuses;
+# 3. flock on <root>/.hpc-server.lock, held on fd 9 through gosu, the temp
+#    servers and the final exec postgres, so no second server opens this bind.
+hpc_guard_data_dir() {
+	local root="$hpc_pg_root" d v
+	local marker="$root/hpcperfstats-primary" sentinel="$root/hpcperfstats-migrate-target"
+	local lock="$root/.hpc-server.lock"
+	local -a dirs=( "$root/data" )
+	d="$PGDATA"
+	while [ "${d#"$root"}" != "$d" ]; do
+		dirs+=( "$d" )
+		[ "$d" = "$root" ] && break
+		d="${d%/*}"
+	done
+	for d in "${dirs[@]}"; do
+		[ -e "$d/PG_VERSION" ] || continue
+		v="$(cat "$d/PG_VERSION" 2>/dev/null)" || v=unreadable
+		if [ "$v" != "$PG_MAJOR" ]; then
+			hpc_guard_refuse "PG_VERSION is '$v', this server is PostgreSQL $PG_MAJOR" "$d/PG_VERSION"
+		fi
+	done
+	case "${HPCPERFSTATS_DB_ROLE:-}" in
+		'') ;;
+		pg15-legacy)
+			hpc_guard_refuse "HPCPERFSTATS_DB_ROLE=pg15-legacy is the Hub PG15 service; this is the PG18 image (do not build db on a legacy site)" "$root" ;;
+		primary)
+			if [ ! -e "$marker" ]; then
+				if [ -e "$PGDATA/PG_VERSION" ]; then
+					hpc_guard_refuse "existing cluster without $marker (unverified copy target; write it with scripts/pg18_write_primary_marker.sh)" "$PGDATA"
+				fi
+				if [ -e "$sentinel" ]; then
+					hpc_guard_refuse "$sentinel present: this bind belongs to a legacy site (restore the docker-compose.pg15-primary.yaml include)" "$sentinel"
+				fi
+				printf 'initdb %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$marker" \
+					|| hpc_guard_refuse "cannot write $marker" "$root"
+			fi ;;
+		migrate-target)
+			if [ -e "$marker" ]; then
+				hpc_guard_refuse "$marker present: this bind is the live primary, not a copy target" "$marker"
+			fi
+			if [ ! -e "$sentinel" ]; then
+				printf 'migrate-target\n' > "$sentinel" \
+					|| hpc_guard_refuse "cannot write $sentinel" "$root"
+			fi ;;
+		*) hpc_guard_refuse "unknown HPCPERFSTATS_DB_ROLE='$HPCPERFSTATS_DB_ROLE'" "$root" ;;
+	esac
+	# The gosu re-entry inherits fd 9; reopening it would drop the lock.
+	if [ "$(readlink /proc/self/fd/9 2>/dev/null)" != "$lock" ]; then
+		if ! { exec 9>>"$lock"; } 2>/dev/null; then
+			hpc_guard_refuse "cannot create the lock file (read-only bind or NFS root_squash; NFS binds are not supported)" "$lock"
+		fi
+		flock -n 9 || hpc_guard_refuse "another server holds the lock on this data folder" "$lock"
+	fi
+}
+
 # check arguments for an option that would cause postgres to stop
 # return true if there is one
 _pg_want_help() {
@@ -408,6 +480,7 @@ _main() {
 
 	if [ "$1" = 'postgres' ] && ! _pg_want_help "$@"; then
 		docker_setup_env
+		hpc_guard_data_dir
 		# setup data directories and permissions (when run as root)
 		docker_create_db_directories
 		if [ "$(id -u)" = '0' ]; then

@@ -12,7 +12,7 @@ The stack is defined by three files:
 
 - `docker-compose.defaults.yaml` (tracked): service definitions, healthchecks and stack wiring.
 - `docker-compose.yaml` (gitignored, copied from `docker-compose.yaml.example`): `include:`s the defaults file and merges site binds on top (host ports, mem limits, TLS and SSH devices).
-- `docker-compose.pg18-primary.yaml` (optional overlay): parks the PG15 `db` under profile `pg15-retired` and makes `db_pg18` answer to hostname `db`.
+- `docker-compose.pg15-primary.yaml` (tracked, legacy sites only): included after the defaults by a site that still runs PostgreSQL 15 ([Migration services](#migration-services)).
 
 `podman-compose -p hpcperfstats` discovers `docker-compose.yaml` automatically, so commands pass no `-f`.
 Named volume `device:` paths live only in the local `docker-compose.yaml`; `docker-compose.defaults.yaml` mounts them by name and must not declare empty volume stubs, because podman-compose cannot merge null stubs with operator dicts.
@@ -24,8 +24,7 @@ The services:
 | ---------- | ---------------------------------------------------- | ------------------------------------------------ |
 | `web`      | `hpcperfstats` (target `hpcperfstats-full`)          | Django under Gunicorn                            |
 | `pipeline` | `hpcperfstats` (same image as `web`)                 | supervisord ingest, archive and metrics programs |
-| `db`       | `docker.io/timescale/timescaledb:2.28.3-pg15`        | TimescaleDB on PostgreSQL 15                     |
-| `db_pg18`  | `hpcperfstats-db` (profile `pg18-migrate`)           | Optional PostgreSQL 18 + TimescaleDB dual-run    |
+| `db`       | `hpcperfstats-db:guard1`                             | TimescaleDB on PostgreSQL 18                     |
 | `valkey`   | `docker.io/valkey/valkey:9.2.0-alpine3.24`           | Shared cache                                     |
 | `rabbitmq` | `docker.io/library/rabbitmq:4.4.1-management-alpine` | Broker for monitor -> site messages              |
 | `proxy`    | `hpcperfstats-proxy`                                 | nginx TLS front door, static files and the SPA   |
@@ -179,8 +178,9 @@ Without the flag those files stay in place.
 
 ## db
 
-`db` is TimescaleDB on PostgreSQL 15 (`docker.io/timescale/timescaledb:2.28.3-pg15`), the production database unless the site also includes `docker-compose.pg18-primary.yaml`.
-It sets `shm_size: "16gb"`; do not change `db` or `db_pg18` `shm_size: "16gb"`.
+`db` is TimescaleDB on PostgreSQL 18, built from `services-conf/db.Dockerfile` as `hpcperfstats-db:guard1` ([db image](#db-image)); network alias `db`.
+Its data lives on the bind `postgres_data_pg18` (`/data/hpcperfstats_db/pg18` in `docker-compose.yaml.example`, owned by uid and gid 70) mounted at `/var/lib/postgresql`, with PGDATA in `18/docker`.
+It sets `shm_size: "16gb"`; keep that value with `shared_buffers=64GB`.
 The pipeline daemons do not reserve a separate `shm_size`.
 
 ### Connections
@@ -207,7 +207,7 @@ A low `work_mem`, small maintenance and autovacuum work mem and `temp_buffers` c
 If legitimate bulk jobs slow down, raise `work_mem` only during batch windows or raise the `db` container `mem_limit`, rather than allowing unconstrained per-query memory.
 For memory-constrained hosts, start from the conservative values in `hpcperfstats.ini.example` and scale up after checkpoints and container RSS stay stable.
 
-Apply GUC changes with `podman-compose -p hpcperfstats up -d --force-recreate db` (and `db_pg18` when the migrate profile is up).
+Apply GUC changes with `podman-compose -p hpcperfstats up -d --force-recreate --no-build db`.
 PGDATA often sits on a different host mount than the pipeline archive data, so check `df` on both before blaming checkpointer I/O on a full archive volume.
 
 ### Compression policy
@@ -219,8 +219,8 @@ The policy restore in migration `0032` (`add_compression_policy`) re-pins the sa
 
 ## db image
 
-`db_pg18` runs the homemade `hpcperfstats-db` image built from `services-conf/db.Dockerfile` (PostgreSQL 18 + TimescaleDB, WAL compression through `/opt/lz4`).
-`./scripts/rebuild_full_site.sh` builds it with Clang ThinLTO through `services-conf/bake_clang_flags.sh`.
+`db` runs the homemade `hpcperfstats-db:guard1` image built from `services-conf/db.Dockerfile` (PostgreSQL 18 + TimescaleDB, WAL compression through `/opt/lz4`).
+`./scripts/rebuild_full_site.sh` builds it with Clang ThinLTO through `services-conf/bake_clang_flags.sh`; `pull_policy: never`, so a missing tag fails instead of pulling.
 
 | Item                     | Contract                                                                                                                                             |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -229,28 +229,39 @@ The policy restore in migration `0032` (`add_compression_policy`) re-pins the sa
 | `/opt` libraries         | Source-built jemalloc, zlib-ng, lz4 and zstd, with an rpath on `postgres` and the zstd CLI; PostgreSQL configured `--without-icu --without-liburing` |
 | Toolchain                | Clang 22 ThinLTO with `-march=native`; bake on the production CPU                                                                                    |
 | Volume                   | `/var/lib/postgresql` (PG18 layout)                                                                                                                  |
-| Runtime settings         | The `db` settings (`shared_buffers=64GB`, WAL and bgwriter, committed `hba_file`) plus `io_method=worker` and `io_workers=8`                         |
+| Runtime settings         | The `db` server settings above, plus `io_method=worker` and `io_workers=8`                                                                           |
 
 The Timescale catalog updates itself.
 On every start of an existing data directory, `services-conf/db-docker-entrypoint.sh` runs `ALTER EXTENSION timescaledb UPDATE` in each database whose catalog is older than the image, on a socket-only temporary server with the Timescale background workers off; the healthcheck stays red until it finishes.
-Bumping `ARG TIMESCALEDB_VERSION` therefore means rebuilding and recreating `db_pg18`, with no manual `ALTER EXTENSION`.
+Bumping `ARG TIMESCALEDB_VERSION` therefore means rebuilding and recreating `db`, with no manual `ALTER EXTENSION`.
 
 To read the result:
 
 ```bash
-podman-compose -p hpcperfstats logs db_pg18 2>&1 \
+podman-compose -p hpcperfstats logs db 2>&1 \
   | grep 'timescaledb auto-update'
 ```
 
 A `FAILED` line (no update path in the image) or a `newer than image` line (image rolled back) leaves the catalog alone, and Postgres still starts; fix it by hand.
 After an unclean stop, crash recovery runs inside that temporary server (`redo in progress` in the log, TCP `Connection refused`) for as long as it needs; do not restart the container meanwhile.
 
-## db_pg18
+### Data-dir guard
 
-`db_pg18` is the optional dual-run PostgreSQL 18 service: profile `pg18-migrate`, network alias `db18`.
-It shares the `db` server settings, uses the same `shm_size: "16gb"`, and adds `io_method=worker` (the PostgreSQL 18 I/O worker pool).
-`/data/hpcperfstats_db/pg18` backs `postgres_data_pg18` and must be owned by uid and gid 70.
-The logical migration runbook is [Migrate to PostgreSQL 18](../how-to/operate/migrate-to-postgresql-18.md); the cutover overlay is `docker-compose.pg18-primary.yaml`.
+Before it writes anything in the bind, the entrypoint refuses a `PG_VERSION` other than 18 at the bind root, under `18/` or at `data/`.
+With `HPCPERFSTATS_DB_ROLE=primary` it writes `hpcperfstats-primary` in the bind root before `initdb` on an empty bind, and refuses an existing cluster without that marker or an empty bind that carries `hpcperfstats-migrate-target`.
+It then holds `flock` on `.hpc-server.lock` in the bind root for the life of the server, so a second server on the same folder refuses to start.
+A refusal prints `hpcperfstats db guard: refusing to start`, the path and the reason, and exits before any `chown`, `chmod` or `mkdir`.
+The lock file must be creatable by root in the bind root; NFS `root_squash` binds are not supported.
+
+## Migration services
+
+A site that still runs PostgreSQL 15 lists `docker-compose.pg15-primary.yaml` after the defaults in its `include:`, and its `docker-compose.yaml` declares both `postgres_data` (PG15) and `postgres_data_pg18`:
+
+- `db` stays Hub `docker.io/timescale/timescaledb:2.28.3-pg15` under the same name, alias and socket, with the PostgreSQL 15 server settings, entrypoint `services-conf/db-docker-pg15-guard.sh` and `HPCPERFSTATS_DB_ROLE=pg15-legacy`.
+  The guard refuses anything but a PG15 cluster, any PG18 file and `hpcperfstats-retired`, and holds the same lock in the PG15 bind.
+- `db_pg18` is the PG18 copy target: profile `pg18-migrate`, alias `db18`, `HPCPERFSTATS_DB_ROLE=migrate-target`, the `db` server settings and no socket.
+
+[Migrate to PostgreSQL 18](../how-to/operate/migrate-to-postgresql-18.md) moves such a site to PostgreSQL 18; cutover deletes the include line.
 
 ## valkey
 
@@ -384,14 +395,14 @@ The `/machine/` and `/pub/` locations must not send a competing hash CSP header,
 
 Compose `stop_grace_period` per service:
 
-| Service         | Default                                   | Why                                                      |
-| --------------- | ----------------------------------------- | -------------------------------------------------------- |
-| `web`           | 30s (`HPCPERFSTATS_WEB_STOP_GRACE`)       | Gunicorn drain                                           |
-| `pipeline`      | 480s (`HPCPERFSTATS_PIPELINE_STOP_GRACE`) | Sequential program drains can finish                     |
-| `db`, `db_pg18` | 30m                                       | SIGINT fast shutdown plus checkpoint on a large database |
-| `rabbitmq`      | 30m                                       | Quorum and mnesia shutdown                               |
+| Service    | Default                                   | Why                                                      |
+| ---------- | ----------------------------------------- | -------------------------------------------------------- |
+| `web`      | 30s (`HPCPERFSTATS_WEB_STOP_GRACE`)       | Gunicorn drain                                           |
+| `pipeline` | 480s (`HPCPERFSTATS_PIPELINE_STOP_GRACE`) | Sequential program drains can finish                     |
+| `db`       | 30m                                       | SIGINT fast shutdown plus checkpoint on a large database |
+| `rabbitmq` | 30m                                       | Quorum and mnesia shutdown                               |
 
-`db` gets 30m before SIGKILL, and so do `db_pg18` and `rabbitmq`.
+`db` gets 30m before SIGKILL, and so do `rabbitmq` and, on a PostgreSQL 15 site, `db_pg18`.
 A shorter pipeline override SIGKILLs mid-drain.
 `scripts/rebuild_pipeline.sh` stop timeouts match: `HPCPERFSTATS_PIPELINE_STOP_TIMEOUT` defaults to 480 and `HPCPERFSTATS_WEB_STOP_TIMEOUT` stays 30.
 SIGTERM-driven exit 143 is the T0 expectation in [Verify sync_timedb after a deploy](../how-to/operate/verify-sync-timedb.md#run-t0) when the wall clock covers the drain.
@@ -416,8 +427,9 @@ Production site configuration stays in `hpcperfstats.ini` and `docker-compose.ya
 
 ## Rebuild scripts
 
-`./scripts/rebuild_full_site.sh` builds `web`, `proxy` and `db_pg18` with `podman build` (Clang ThinLTO through `services-conf/bake_clang_flags.sh` on Alpine `db` and `proxy` and Debian `python-build`), then runs `podman-compose down` and `up -d --no-build`.
-It builds the `db_pg18` image but does not start its container.
+`./scripts/rebuild_full_site.sh` builds `web`, `proxy` and `hpcperfstats-db:guard1` with `podman build` (Clang ThinLTO through `services-conf/bake_clang_flags.sh` on Alpine `db` and `proxy` and Debian `python-build`), then runs `podman-compose down` and `up -d --no-build`.
+Before it builds or stops anything, it refuses when the database binds do not match the site file (a PG18 bind without the marker on a site without the legacy include, a PG15 bind not retired, a site-file `db_pg18:` service).
+After `down` it stops every container on the host that still mounts a database bind (`podman stop -t 1800`) and requires both locks free before `up`; on a PostgreSQL 15 site it restarts `db_pg18` only when it was running.
 CPython always bakes with upstream `--enable-optimizations` (no custom Clang profile-guided rebuild flags).
 The per-service rebuild scripts are in [Upgrade the stack](../how-to/operate/upgrade-the-stack.md#choose-a-rebuild-script); never use `up --build` for a refresh.
 
@@ -436,7 +448,7 @@ Common operator commands:
 | Queues and message counts  | `podman-compose -p hpcperfstats exec rabbitmq rabbitmqctl list_queues name messages consumers` |
 | Broker status and alarms   | `podman-compose -p hpcperfstats exec rabbitmq rabbitmqctl status`                              |
 
-The `--profile pg18-migrate` flag on `down` keeps `db_pg18` in the graceful stop; without it `db_pg18` is SIGKILLed mid shutdown checkpoint.
+The `--profile pg18-migrate` flag on `down` keeps a PostgreSQL 15 site's `db_pg18` in the graceful stop; without it `db_pg18` is SIGKILLed mid shutdown checkpoint.
 Keep `-h localhost` on `psql`: without it `psql` uses the Unix socket, which asks for the password.
 
 To grep the pipeline log for one program:

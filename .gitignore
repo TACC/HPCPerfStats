@@ -34,6 +34,8 @@ rabbitmq-c/
 # Homemade PG18 image entrypoints (db.Dockerfile COPY; must ship on prod checkouts).
 !services-conf/db-docker-entrypoint.sh
 !services-conf/db-docker-ensure-initdb.sh
+# Hub PG15 entrypoint guard (docker-compose.pg15-primary.yaml bind-mount).
+!services-conf/db-docker-pg15-guard.sh
 # Valkey bind-mount entrypoint (compose unix socket prep). Missing file → Podman
 # creates a directory at this path and Valkey exits 0 immediately.
 !services-conf/valkey_entrypoint.sh

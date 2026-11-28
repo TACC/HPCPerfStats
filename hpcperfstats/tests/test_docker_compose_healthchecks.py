@@ -137,8 +137,12 @@ def test_docker_compose_registry_images_are_fully_qualified_for_podman():
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.defaults.yaml").read_text()
 
+  legacy = (repo_root / "docker-compose.pg15-primary.yaml").read_text()
+
   assert "image: docker.io/valkey/valkey:9.2.0-alpine3.24" in content
-  assert "image: docker.io/timescale/timescaledb:2.28.3-pg15" in content
+  assert "image: docker.io/timescale/timescaledb:2.28.3-pg15" in legacy
+  # Local-only images never pull (a short name would prompt for a registry).
+  assert "image: hpcperfstats-db:guard1\n    pull_policy: never" in content
   assert "image: docker.io/library/rabbitmq:4.4.1-management-alpine" in content
 
 
@@ -171,11 +175,14 @@ def test_docker_compose_json_file_logging_rotated():
     "valkey",
     "proxy",
     "db",
-    "db_pg18",
     "rabbitmq",
   ]:
     assert f"{service}:" in content
-  assert content.count("logging: *hpc-logging") == 7
+  assert content.count("logging: *hpc-logging") == 6
+  # Anchors do not cross files: the legacy copy target spells logging out.
+  legacy = (repo_root / "docker-compose.pg15-primary.yaml").read_text()
+  db_pg18 = legacy.split("  db_pg18:\n", 1)[1]
+  assert "driver: json-file" in db_pg18 and 'max-size: "100m"' in db_pg18
 
 
 def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
@@ -532,13 +539,15 @@ def _compose_service_block(content: str, service: str) -> str:
 
 
 def test_docker_compose_rabbitmq_stop_grace_period_is_30m():
-  """RabbitMQ, db and db_pg18 stop_grace_period stay 30m (orderly shutdown)."""
+  """RabbitMQ, db and legacy db_pg18 stop_grace_period stay 30m (orderly shutdown)."""
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.defaults.yaml").read_text()
+  legacy = (repo_root / "docker-compose.pg15-primary.yaml").read_text()
 
-  for service in ("rabbitmq", "db", "db_pg18"):
+  for service in ("rabbitmq", "db"):
     block = _compose_service_block(content, service)
     assert "stop_grace_period: 30m" in block, service
+  assert "stop_grace_period: 30m" in _compose_service_block(legacy, "db_pg18")
   services = (repo_root / _COMPOSE_SERVICES_DOC).read_text()
   assert "`stop_grace_period: 30m` gives the broker" in services
   assert "`db` gets 30m" in services
@@ -996,7 +1005,6 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
     "hpcperfstatsdata",
     "staticfiles_data",
     "media_data",
-    "postgres_data",
     "postgres_data_pg18",
     "rabbitmq_messages",
     "ssh_keys",
@@ -1049,36 +1057,41 @@ def test_docker_compose_staticfiles_ram_and_media_ram_tmpfs_not_null_stub():
   assert "test_media_ram:/srv/media:ro" in overlay
 
 
-def test_docker_compose_db_pg18_dual_run_beside_hub_pg15():
-  """Hub PG15 keeps alias db; homemade PG18 is profile-gated with db18 + worker I/O."""
+def test_docker_compose_db_is_pg18_and_legacy_include_keeps_hub_pg15():
+  """Defaults db is homemade PG18; the legacy include keeps Hub PG15 as db
+  and adds the profile-gated db18 copy target with worker I/O."""
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.defaults.yaml").read_text()
-  db_m = re.search(r"(?ms)^  db:\n(.*?)(?=^  [a-z].*:|\Z)", content)
-  assert db_m, "db service not found"
-  db_block = db_m.group(0)
-  assert "timescale/timescaledb:2.28.3-pg15" in db_block
-  assert "io_method" not in db_block
-  assert 'shm_size: "16gb"' in db_block
-
-  pg18_m = re.search(r"(?ms)^  db_pg18:\n(.*?)(?=^  [a-z].*:|\Z)", content)
-  assert pg18_m, "db_pg18 service not found"
-  pg18 = pg18_m.group(0)
-  assert (
-    "services-conf/db.Dockerfile" in pg18 or "dockerfile: db.Dockerfile" in pg18
-  )
-  assert "image: hpcperfstats-db" in pg18
-  assert "pg18-migrate" in pg18
-  assert "POSTGRES_DB=hpcperfstats" in pg18
-  assert "pg_isready -U hpcperfstats -d postgres" in pg18
+  legacy = (repo_root / "docker-compose.pg15-primary.yaml").read_text()
+  db = _compose_service_block(content, "db")
+  assert "dockerfile: db.Dockerfile" in db
+  assert "image: hpcperfstats-db:guard1" in db
+  assert "HPCPERFSTATS_DB_ROLE=primary" in db
+  assert "timescale/timescaledb" not in content
+  assert "  db_pg18:" not in content
+  assert "pg18-migrate" not in db
+  assert "POSTGRES_DB=hpcperfstats" in db
+  assert "pg_isready -U hpcperfstats -d postgres" in db
   # io_method=worker (PG18 default); io_uring and its host/container
   # loosening are gone (PG 18.6 io_uring read cancels, BUG #19725).
-  assert "io_method=worker" in pg18
-  for gone in ("io_uring", "seccomp=unconfined", "label=disable", "SYS_ADMIN"):
-    assert gone not in pg18, gone
-  assert 'shm_size: "16gb"' in pg18
-  assert "postgres_data_pg18:/var/lib/postgresql" in pg18
-  assert "- db18" in pg18
-  # Cutover must not steal alias db while Hub PG15 is still the live writer.
+  for block in (db, _compose_service_block(legacy, "db_pg18")):
+    assert "io_method=worker" in block
+    for gone in (
+      "io_uring",
+      "seccomp=unconfined",
+      "label=disable",
+      "SYS_ADMIN",
+    ):
+      assert gone not in block, gone
+    assert 'shm_size: "16gb"' in block
+    assert "postgres_data_pg18:/var/lib/postgresql" in block
+  pg15 = _compose_service_block(legacy, "db")
+  assert "timescale/timescaledb:2.28.3-pg15" in pg15
+  assert "io_method" not in pg15
+  pg18 = _compose_service_block(legacy, "db_pg18")
+  assert "pg18-migrate" in pg18 and "- db18" in pg18
+  assert "HPCPERFSTATS_DB_ROLE=migrate-target" in pg18
+  # The copy target must not steal alias db while Hub PG15 is the live writer.
   assert re.search(r"(?m)^\s+-\s+db\s*$", pg18) is None
 
 
@@ -1111,7 +1124,6 @@ _OPERATOR_SETTINGS_SHARED_BIND_DEVICES = (
   "device: /data/hpcperfstats_data/site_data",
   "device: /data/hpcperfstats_site/staticfiles",
   "device: /data/hpcperfstats_site/media",
-  "device: /data/hpcperfstats_db/pg15",
   "device: /data/hpcperfstats_db/pg18",
   "device: /data/hpcperfstats_data/rabbitmq",
 )
@@ -1123,7 +1135,6 @@ _OPERATOR_SETTINGS_VOLUME_NAMES = (
   "hpcperfstatsdata:",
   "staticfiles_data:",
   "media_data:",
-  "postgres_data:",
   "postgres_data_pg18:",
   "rabbitmq_messages:",
   "ssh_keys:",
@@ -1141,6 +1152,9 @@ def test_docker_compose_settings_example_operator_markers():
   assert _OPERATOR_SETTINGS_EXAMPLE_SSH_DEVICE in example_content
   assert _OPERATOR_SETTINGS_EXAMPLE_SSL_DEVICE in example_content
   assert "device: /data/hpcperfstats_db/pg18" in example_content
+  # New installs never get a PG15 bind (legacy sites keep theirs).
+  assert "/data/hpcperfstats_db/pg15" not in example_content
+  assert "  postgres_data:" not in example_content
   assert "chown -R 70:70" in example_content
   assert "HPCPERFSTATS_SSL_CERTS_REL" in example_content
   assert "ssl_certs:" not in example_content
@@ -1199,7 +1213,6 @@ def test_docker_compose_test_overlay_clears_host_binds():
       "test_media_data",
       "test_staticfiles_ram",
       "test_media_ram",
-      "test_postgres_data",
       "test_postgres_data_pg18",
       "test_rabbitmq_messages",
       "test_ssh_keys",
@@ -1214,7 +1227,6 @@ def test_docker_compose_test_overlay_clears_host_binds():
     "test_media_data",
     "test_staticfiles_ram",
     "test_media_ram",
-    "test_postgres_data",
     "test_postgres_data_pg18",
     "test_rabbitmq_messages",
     "test_ssh_keys",
@@ -1226,6 +1238,8 @@ def test_docker_compose_test_overlay_clears_host_binds():
   assert "test_staticfiles_data:/srv/static:ro" not in overlay
   assert "test_media_data:/srv/media:ro" not in overlay
   assert "test_postgres_data_pg18:/var/lib/postgresql" in overlay
+  assert "/var/lib/postgresql/data" not in overlay
+  assert "  test_postgres_data:" not in overlay
   assert "test_proxy_ssl_source:/mnt/ssl-source:ro" in overlay
   assert "device: ./tests/fixtures/proxy-ssl" in overlay
   assert "test_ssl_certs" not in overlay
@@ -1275,13 +1289,14 @@ def test_docker_compose_postgres_unix_socket_shared_with_password_auth():
   ini_example = (repo_root / "hpcperfstats.ini.example").read_text()
   hba = (repo_root / "services-conf" / "postgres_pg_hba.conf").read_text()
 
-  # db + web + pipeline share the socket dir; dual-run db_pg18 must not mount
-  # it (same port -> socket lock clash). The PG18 cutover overlay
-  # (docker-compose.pg18-primary.yaml) adds the mount once db is parked.
+  # db + web + pipeline share the socket dir. The legacy PG15 db keeps it
+  # (volumes !override lists it); the copy target db_pg18 must not mount it
+  # (same port -> socket lock clash) but enforces the same client auth.
+  legacy = (repo_root / "docker-compose.pg15-primary.yaml").read_text()
   assert content.count("postgres_runtime:/run/postgresql") == 3
-  pg18 = content.split("  db_pg18:\n", 1)[1].split("\n  rabbitmq:\n", 1)[0]
+  assert legacy.count("postgres_runtime:/run/postgresql") == 1
+  pg18 = legacy.split("  db_pg18:\n", 1)[1]
   assert "- postgres_runtime:" not in pg18
-  # PG18 enforces the same committed client auth as db before and after cutover.
   assert "      - hba_file=/etc/postgresql/pg_hba.conf\n" in pg18
   assert "postgres_pg_hba.conf:/etc/postgresql/pg_hba.conf:ro" in pg18
   assert "  postgres_runtime:\n    driver: local\n" in content

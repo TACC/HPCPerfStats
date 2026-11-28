@@ -146,7 +146,6 @@ To create them with the example defaults:
    sudo mkdir -p /data/hpcperfstats_data/rabbitmq
    sudo mkdir -p /data/hpcperfstats_site/staticfiles
    sudo mkdir -p /data/hpcperfstats_site/media
-   sudo mkdir -p /data/hpcperfstats_db/pg15
    sudo mkdir -p /data/hpcperfstats_db/pg18
    sudo chown -R 70:70 /data/hpcperfstats_db/pg18
    ```

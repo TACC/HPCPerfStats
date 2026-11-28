@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Rebuild the shared hpcperfstats image (Python/pipeline; no npm), then recreate
-# web + pipeline. Leaves db, valkey, rabbitmq alone. Does NOT rebuild the proxy
+# web + pipeline. Leaves db, db_pg18, valkey, rabbitmq alone. Does NOT rebuild the proxy
 # image — proxy is taken down, then restored via ``up -d web proxy pipeline``.
 #
 # Flow (minimize downtime — build while old containers keep running):
@@ -51,6 +51,9 @@ stays up, then cut over: down proxy / web / pipeline and
   docker compose up -d web proxy pipeline
 
 Leaves db / db_pg18 / valkey / rabbitmq running. Does not rebuild the proxy image.
+It restarts web and pipeline, which write to db: during a PostgreSQL 18 migration,
+a run after the relational copy makes scripts/pg18_write_primary_marker.sh refuse
+the cutover until the copy is redone.
 Leaves pipeline cgroup memory.high at the default (max).
 
 IMPORTANT: This does NOT ship SPA/OpenAPI/Orval fixes. After frontend changes run:

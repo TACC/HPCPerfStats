@@ -16,6 +16,7 @@ podman_runtime_require
 
 compose_ensure_settings_yaml
 compose_ensure_test_overlay_yaml
+compose_test_ensure_db_image
 compose_test up -d db valkey rabbitmq web pipeline proxy
 
 for _ in $(seq 1 60); do

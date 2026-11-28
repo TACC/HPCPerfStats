@@ -1,7 +1,7 @@
 ---
 description: Homemade Alpine PG18+Timescale image, io_method=worker, logical migrate — not pg_upgrade
 alwaysApply: false
-globs: services-conf/db.Dockerfile,docker-compose.yaml,scripts/pg18_host_data_chunk_copy.py,docs/how-to/operate/migrate-to-postgresql-18.md
+globs: services-conf/db.Dockerfile,services-conf/db-pg15-legacy.Dockerfile,services-conf/db-docker-*.sh,docker-compose.yaml,docker-compose.defaults.yaml,docker-compose.pg15-primary.yaml,scripts/pg18_host_data_chunk_copy.py,scripts/pg18_relational_copy.sh,scripts/pg18_write_primary_marker.sh,docs/how-to/operate/migrate-to-postgresql-18.md
 ---
 
 # PostgreSQL custom image and PG18 logical migrate
@@ -18,17 +18,26 @@ globs: services-conf/db.Dockerfile,docker-compose.yaml,scripts/pg18_host_data_ch
 | CFLAGS | **Clang 22** apk (`clang22`, **`compiler-rt`**, `llvm22-dev`, `lld22`); **`CC=clang`**. **`lld22`** installs **`ld.lld`** at **`/usr/bin/ld.lld`** (not under **`/usr/lib/llvm22/bin/`**). Postgres + Timescale: `-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin --ld-path=/usr/bin/ld.lld -g0` via **`services-conf/bake_clang_flags.sh`**. Supporting `/opt` libs: same ThinLTO baseline without 512-bit prefer. LZ4 bake also passes **`-DLZ4_HEAPMODE=0`**. No custom Clang profile-guided rebuild path. |
 | Runtime | `LD_PRELOAD` jemalloc on musl; fail-closed `ldd` shows `/opt/...` for jemalloc/**zlib-ng**/lz4/zstd on **`postgres`** and zlib-ng+lz4 on **`zstd` CLI**; do not apk-add `zlib` ourselves (transitive apk zlib OK). Entrypoints **`services-conf/db-docker-entrypoint.sh`** + **`db-docker-ensure-initdb.sh`** must be **git-tracked** (`!services-conf/db-docker-*.sh` under root `*.sh` ignore) — bake `COPY` fails on prod if they are ignored. Host bind for `postgres_data_pg18` must be **`chown -R 70:70`** (Alpine postgres) before first start — bind replaces image `1777`; empty `root:root` / NFS `root_squash` → `mkdir …/18/` Permission denied |
 | Build host | Bake on the **prod CPU** (`native`). Cross-arch (e.g. aarch64) images are not the ship target for x86_64 production |
-| Toolchain image | **Removed** — no **`gcc-alpine.Dockerfile`** / musl GCC pre-build. **`db-build`** and **`proxy-build`** install **`clang22`** in-image; **`rebuild_full_site.sh`** **`podman build`**s **web**, **proxy**, **`db_pg18`**, then compose **`up -d --no-build**. |
+| Toolchain image | **Removed** — no **`gcc-alpine.Dockerfile`** / musl GCC pre-build. **`db-build`** and **`proxy-build`** install **`clang22`** in-image; **`rebuild_full_site.sh`** **`podman build`**s **web**, **proxy**, **`db_pg18`**, then compose **`up -d --no-build`**. The db image tag is **`hpcperfstats-db:guard1`** (only a guarded build produces it; `:latest` is removed or retagged after the build). |
 
-## Compose dual-run
+## Compose: PG18 `db` and the legacy PG15 include
 
-- Keep Hub **`timescale/timescaledb:2.28.3-pg15`** as service **`db`** (alias **`db`**) until cutover.
-- Homemade service **`db_pg18`** (`image: hpcperfstats-db`), profile **`pg18-migrate`**, alias **`db18`**, volume **`postgres_data_pg18`**, mount **`/var/lib/postgresql`**, same `shm_size: "16gb"` GUCs **plus** `-c io_method=worker -c io_workers=8`; default container security (no `security_opt`/`cap_add`) and no host sysctl.
-- **`db_pg18` runtime GUCs match `db`** (`shared_buffers=64GB`, WAL/bgwriter, committed **`hba_file`** + `postgres_pg_hba.conf` mount): it becomes production `db` at cutover and the overlay cannot override `command:` (podman-compose ignores it). Dual-run **must not** mount `postgres_runtime` on `db_pg18` (two servers in one socket dir collide on `.s.PGSQL.5432.lock`).
-- **Cutover = tracked `docker-compose.pg18-primary.yaml` added to the site `docker-compose.yaml` `include:` list** (parks `db` under profile `pg15-retired`, `profiles: !reset []` + alias `db` + `postgres_runtime` on `db_pg18`). **Forbidden:** a `docker-compose.override.yaml` cutover — `-f docker-compose.yaml` skips it and revives PG15 as `db`. `rebuild_full_site.sh` resolves the live DB service (`compose_primary_db_service`).
-- **Forbidden:** stealing alias `db` before freeze + verification.
+- **Defaults `db` = homemade PG18** (`image: hpcperfstats-db:guard1`, `pull_policy: never`, build `services-conf/db.Dockerfile`), alias **`db`**, `postgres_data_pg18:/var/lib/postgresql`, `postgres_runtime` socket, `HPCPERFSTATS_DB_ROLE=primary`, `shm_size: "16gb"`, PG18 GUCs incl. `io_method=worker`, `io_workers=8`. New installs never run PG15. The defaults declare **no** `postgres_data*` volumes (site file only; a missing bind fails closed) and no `db_pg18`.
+- **Legacy sites keep PG15 as `db`** by listing the tracked **`docker-compose.pg15-primary.yaml`** after the defaults in the site `include:`; cutover (runbook E1) deletes that line. The overlay sets Hub `timescale/timescaledb:2.28.3-pg15`, `pull_policy: missing`, `build.dockerfile: db-pg15-legacy.Dockerfile` (only `FROM` the Hub tag), `entrypoint: [/bin/sh, /usr/local/bin/hpc-pg15-guard.sh]`, `HPCPERFSTATS_DB_ROLE=pg15-legacy`, the PG15 `command:` list and `volumes: !override` repeating **every** mount (data, socket, pg_hba, guard). It also defines **`db_pg18`**: profile `pg18-migrate`, alias `db18`, `guard1` image with `build:` + `pull_policy: never`, `HPCPERFSTATS_DB_ROLE=migrate-target`, **no** socket (two servers in one socket dir collide on `.s.PGSQL.5432.lock`).
+- **GUC parity** (test-enforced): overlay `db_pg18` `-c` list == defaults `db`; overlay PG15 `db` == defaults `db` minus `io_*`.
+- **podman-compose 1.5.0 facts:** the site file loads first, includes after it (later files win scalars, lists append, `volumes` dedupe by target); an included file's `command:` / `entrypoint:` **replace**; `!override` / `!reset` work; `build: !reset` and `environment: !override` **crash**, so override sub-keys or single env values instead; an undeclared named volume is a hard error. **Forbidden:** a `docker-compose.override.yaml` cutover (`-f docker-compose.yaml` skips it).
+- **Never `podman-compose build db` on a legacy site** expecting PG18; it only re-tags the Hub image.
+
+## Data-dir guards (no server on the wrong data)
+
+- **PG18 entrypoint `hpc_guard_data_dir`** runs right after `docker_setup_env`, before `docker_create_db_directories` (and in `db-docker-ensure-initdb.sh`): refuse a `PG_VERSION` other than `$PG_MAJOR` from the bind root down to `$PGDATA` or at `<root>/data` before writing anything; role `primary` refuses an existing cluster without `hpcperfstats-primary` or an empty bind with `hpcperfstats-migrate-target`, else writes the marker **before initdb**; `migrate-target` refuses the marker and leaves the sentinel; `pg15-legacy` always refuses; then `flock -n` on `<root>/.hpc-server.lock` on fd 9 (kept across gosu and the final exec; the re-entry checks `readlink /proc/self/fd/9`). Lock-file creation failure (NFS `root_squash`, read-only) refuses: NFS binds are not supported.
+- **PG15 wrapper `services-conf/db-docker-pg15-guard.sh`** (git-tracked via `!services-conf/db-docker-pg15-guard.sh`): refuse unless `$PGDATA/PG_VERSION` is `15`, refuse any PG18 file (`hpcperfstats-primary`, sentinel, `18/`) and `hpcperfstats-retired`, take the same lock, `exec docker-entrypoint.sh`. No `postmaster.pid` check.
+- **Marker on a migrated site:** only `scripts/pg18_write_primary_marker.sh`, after the stamps (`pg15_readonly_ok` from D2, `verify_ok.json` from D3, `relational_copy_ok` from D4, `pg15_writes_ok` from E1) prove a complete copy of a read-only PG15, with all servers stopped and both locks free. It writes the marker and the PG15 `hpcperfstats-retired`, removes the sentinel; `--rollback` (E2) only before the pipeline starts on PG18.
+- **Freeze:** D2 sets `ALTER SYSTEM SET default_transaction_read_only = on` on PG15; D3 `--verify` and `pg18_relational_copy.sh` refuse unless it is on; E1 compares PG15 write counters with the D2 stamp; E2 resets it. E1 checks PG18 (version, socket, `io_method`, counts, valid UNIQUE `host_data` index) **before** starting `pipeline`.
+- **Every DB stop** goes through `podman-compose ... stop` or `podman stop -t 1800` (podman's 10 s default SIGKILLs PostgreSQL).
+- **Rebuild preflight** (`scripts/rebuild_full_site.sh`): refuses before build and shutdown (also `--dry-run`) on a site file naming `docker-compose.pg18-primary.yaml` or defining `db_pg18:`, an unmarked PG18 bind or unretired PG15 bind without the include, a non-PG15 `postgres_data` with the include, or merged wiring that mounts the wrong bind; after `down` it stops every host container on a DB bind and requires both locks free; it restarts `db_pg18` only if it was running.
 - Migration/cutover `up` commands **name services**: after any compose-file edit a bare `podman-compose up -d` recreates every project container (stale config hash), including `rabbitmq`/`valkey`.
-- Both DB containers keep **`shm_size: "16gb"`** during dual-run (`postgres-docker-shared-memory.mdc`).
+- Every DB container keeps **`shm_size: "16gb"`** (`postgres-docker-shared-memory.mdc`).
 
 ## Logical migrate (not `pg_upgrade`)
 
@@ -40,12 +49,12 @@ globs: services-conf/db.Dockerfile,docker-compose.yaml,scripts/pg18_host_data_ch
 - **Rerunnable:** the same start command re-syncs newer days at any time (new chunks copied, unchanged ones skipped without queries, aged ones compressed).
 - **PG18 indexes dropped for the bulk copy:** `--drop-target-indexes` saves `pg_get_indexdef` of every non-constraint `host_data` index to `<state stem>.indexes.json` (never overwritten) and drops them; `--restore-target-indexes --maintenance-work-mem 2GB` (runbook C2, after the bulk copy, before D1, copy not running) recreates missing **or invalid** ones: non-unique with `timescaledb.transaction_per_chunk` (before any `WHERE`), UNIQUE plain (TimescaleDB rejects per-chunk for UNIQUE), then fails closed on any invalid `host_data` index. Rebuilding UNIQUE with compressed chunks works on 2.31 and still enforces uniqueness / `ON CONFLICT`.
 - **Forbidden:** full-table `count(*) FROM host_data` gates during the freeze window (decompresses all of PG15) — the freeze pass `verified_rows=` total is the gate.
-- Relational tables at freeze: **`scripts/pg18_relational_copy.sh`** inside `db_pg18` (same table set check, parallel `pg_dump -Fd` / `pg_restore --data-only --disable-triggers`, exact per-table counts, ANALYZE). No hand-maintained TRUNCATE list.
+- Relational tables at freeze: **`scripts/pg18_relational_copy.sh`** inside `db_pg18` (refuses unless PG15 is read-only; writes `relational_copy_ok` on success) (same table set check, parallel `pg_dump -Fd` / `pg_restore --data-only --disable-triggers`, exact per-table counts, ANALYZE). No hand-maintained TRUNCATE list.
 - Freeze order and verify steps: **`docs/how-to/operate/migrate-to-postgresql-18.md`**.
 - **Forbidden:** `pg_dump -t host_data` alone; cutover without freeze; `host_data` UPDATE/DELETE repair tools between the catch-up pass and the freeze pass.
 
 ## Overlap
 
-- **`postgres-docker-shared-memory.mdc`** — shm still 16gb on both containers
+- **`postgres-docker-shared-memory.mdc`** — shm 16gb on every database container
 - **`readme-installation-sync.mdc`** / **`compose-operator-terminal-commands.mdc`** — fresh install in README; PG18 dual-run operator steps in **`docs/how-to/operate/migrate-to-postgresql-18.md`**
 - **`compose-required-for-data-services-changes.mdc`** — validate with compose workflows when DB wiring changes

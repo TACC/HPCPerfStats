@@ -1152,13 +1152,13 @@ df -h /data/hpcperfstats_db/pg15 /data/hpcperfstats_data 2>/dev/null || df -h
 
 #### db — checkpoint census (PG15; paste output)
 
-PG17+ has **`pg_stat_checkpointer`**; on **PG15** use **`pg_stat_bgwriter`** + **`pg_stat_wal`**:
+PG17+ has **`pg_stat_checkpointer`**: on PG18 `db` (the default) replace the `pg_stat_bgwriter` query below with `SELECT num_timed, num_requested, buffers_written FROM pg_stat_checkpointer` plus `SELECT maxwritten_clean FROM pg_stat_bgwriter`. On a **PG15** site (`include:` lists `docker-compose.pg15-primary.yaml`) use **`pg_stat_bgwriter`** + **`pg_stat_wal`** as written:
 
 ```bash
 podman-compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -d hpcperfstats -c "SHOW wal_compression;" -c "SHOW max_wal_size;" -c "SHOW min_wal_size;" -c "SHOW bgwriter_lru_maxpages;" -c "SHOW bgwriter_lru_multiplier;" -c "SHOW checkpoint_timeout;" -c "SHOW maintenance_io_concurrency;" -c "SELECT checkpoints_timed, checkpoints_req, maxwritten_clean, buffers_checkpoint FROM pg_stat_bgwriter;" -c "SELECT wal_buffers_full FROM pg_stat_wal;"
 ```
 
-On **`db_pg18`** (when profile **`pg18-migrate`** is up), repeat the same block; expect **`wal_compression`** = **`lz4`**.
+On a PG15 site's copy target **`db_pg18`** (profile **`pg18-migrate`**), repeat the PG18 form with `--profile pg18-migrate exec db_pg18`; expect **`wal_compression`** = **`lz4`**.
 
 **WAL directory size (PG15):**
 

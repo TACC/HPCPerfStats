@@ -26,7 +26,9 @@ def test_docker_compose_example_keeps_stack_image_names() -> None:
     "image: hpcperfstats\n" in example or "    image: hpcperfstats\n" in example
   )
   assert "image: hpcperfstats-proxy" in example
-  assert "image: hpcperfstats-db" in example
+  # The db image comes from the defaults; a site db_pg18 stub is refused.
+  assert "hpcperfstats-db" not in example
+  assert "db_pg18:" not in example
 
 
 def test_rebuild_full_site_compose_down_before_up() -> None:
@@ -37,9 +39,17 @@ def test_rebuild_full_site_compose_down_before_up() -> None:
   assert "HPCPERFSTATS_COMPOSE_DOWN_TIMEOUT:-30" not in script
   assert "up -d --force-recreate" not in script
   assert "up -d --no-build" in script
-  # db_pg18 must stay unstarted: only the down command may name its profile.
-  assert not any(
-    "--profile" in line and " up " in line for line in script.splitlines()
+  # The only profiled up is the db_pg18 restart, gated on it having run before.
+  profiled_up = [
+    line
+    for line in script.splitlines()
+    if "--profile" in line and " up " in line
+  ]
+  assert len(profiled_up) == 1, profiled_up
+  restart = _script_fn("restart_db_pg18_if_it_was_running")
+  assert profiled_up[0] in restart
+  assert restart.index('"${PG18_WAS_RUNNING}" -eq 1') < restart.index(
+    profiled_up[0]
   )
   assert "PG18_PROFILE" not in script
   down_pos = script.index("compose_down_project")
@@ -70,12 +80,29 @@ def test_rebuild_full_site_refuses_legacy_pgo_flags() -> None:
   assert "source" not in script or ("pgo_" + "lib.sh") not in script
 
 
-def test_rebuild_full_site_builds_but_does_not_start_db_pg18() -> None:
+def test_rebuild_full_site_builds_guard1_db_and_requires_plain_db() -> None:
   script = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
-  assert "compose_build_db_pg18" in script
+  assert "DB_IMAGE=hpcperfstats-db:guard1" in script
+  assert '-t "${DB_IMAGE}"' in _script_fn("compose_build_db_image")
+  assert "compose_primary_db_service" not in script
+  assert "pg15-retired" not in script
   required = script[script.index("local -a required=") :].splitlines()[0]
-  assert "PG18_SERVICE" not in required
-  assert "db_pg18" not in required
+  assert required.strip() == (
+    "local -a required=(web pipeline valkey proxy db rabbitmq)"
+  )
+
+
+def test_rebuild_full_site_preflight_runs_before_build_and_shutdown() -> None:
+  script = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
+  main = _script_fn("main")
+  assert main.index("preflight") < main.index("compose_build_all_images")
+  pre = _script_fn("preflight")
+  assert "DRY_RUN" not in pre
+  assert "pipeline_supervisor_shutdown" not in pre
+  up = _script_fn("compose_up_project_stack")
+  assert up.index("compose_down_project") < up.index("db_bind_containers_stop")
+  assert up.index("db_bind_containers_stop") < up.index("up -d --no-build")
+  assert "podman stop -t 1800" in script
 
 
 def _script_fn(name: str) -> str:
@@ -100,9 +127,14 @@ def test_rebuild_full_site_down_stops_db_pg18_gracefully(
     "set -euo pipefail\n"
     'fake_compose() { echo "$@" >> "$FAKE_LOG"; }\n'
     "PODMAN_COMPOSE=(fake_compose -p hpcperfstats)\n"
+    "PODMAN=(false)\n"
+    "PG18_SERVICE=db_pg18\n"
+    "PG18_WAS_RUNNING=0\n"
+    "HPCPERFSTATS_COMPOSE_PROJECT=hpcperfstats\n"
     "DRY_RUN=0\n"
     "pipeline_supervisor_shutdown() { :; }\n"
     + _script_fn("run_cmd")
+    + _script_fn("compose_service_container_name")
     + _script_fn("compose_down_project")
     + "compose_down_project\n"
   )

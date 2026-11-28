@@ -160,3 +160,11 @@ None has a replacement unless the table names one.
 
 On PG18, `host_data.value`, `delta` and `arc` are `double precision`; PG15 keeps `real`, so raw counters above 2^24 lose digits there.
 A PG18 database created before this release holds `real` columns and is rebuilt from empty while PG15 is still authoritative ([Migrate to PostgreSQL 18](../how-to/operate/migrate-to-postgresql-18.md#troubleshooting)).
+
+## 2026-11-28: PostgreSQL 18 is the default `db`
+
+`db` in `docker-compose.defaults.yaml` is the homemade PostgreSQL 18 image `hpcperfstats-db:guard1`; new installs never run PostgreSQL 15.
+A site that still serves PostgreSQL 15 keeps it as `db` by listing the tracked `docker-compose.pg15-primary.yaml` in its `include:`, and `docker-compose.pg18-primary.yaml` is gone.
+Before it pulls this release, every such site runs the release step in [Migrate to PostgreSQL 18](../how-to/operate/migrate-to-postgresql-18.md#release-step-install-the-guards-on-a-pg15-site) once: stop the copy and `db_pg18`, add the include line, delete any site `db_pg18:` stanza, `git pull --ff-only`, `./scripts/rebuild_full_site.sh`, then start `db_pg18` and the copy again.
+A site that pulls without the include line has its `db` torn down by the next `up` and refused by the PG18 guard (no marker on the copy target): add the include line and run `podman-compose -p hpcperfstats up -d --no-build db`.
+The local `tests/docker-compose.test-overlay.yaml` must be refreshed from its example (`# overlay-version: 2`); test workflows refuse an older copy.

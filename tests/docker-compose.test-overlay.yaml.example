@@ -1,7 +1,9 @@
+# overlay-version: 2
 # Compose overlay for local/CI test workflows (tests/run_*_workflow.sh).
 #
 # Operators / agents: cp this file to tests/docker-compose.test-overlay.yaml
-# (gitignored). compose_test_cmd.sh copies automatically when missing.
+# (gitignored). compose_test_cmd.sh copies it when missing and refuses a local
+# copy whose overlay-version line differs from this file.
 #
 # Production bind devices live in docker-compose.yaml (from
 # docker-compose.yaml.example; settings include docker-compose.yaml).
@@ -36,14 +38,12 @@ services:
       - test_staticfiles_ram:/srv/static:ro
       - test_media_ram:/srv/media:ro
       - test_proxy_ssl_source:/mnt/ssl-source:ro
+  # PostgreSQL 18 db (role primary): same mount point as postgres_data_pg18.
   db:
     volumes:
-      - test_postgres_data:/var/lib/postgresql/data/
+      - test_postgres_data_pg18:/var/lib/postgresql
       - postgres_runtime:/run/postgresql
       - ./services-conf/postgres_pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
-  db_pg18:
-    volumes:
-      - test_postgres_data_pg18:/var/lib/postgresql
   rabbitmq:
     volumes:
       - test_rabbitmq_messages:/var/lib/rabbitmq/
@@ -54,7 +54,6 @@ volumes:
   test_media_data:
   test_staticfiles_ram:
   test_media_ram:
-  test_postgres_data:
   test_postgres_data_pg18:
   test_rabbitmq_messages:
   test_ssh_keys:

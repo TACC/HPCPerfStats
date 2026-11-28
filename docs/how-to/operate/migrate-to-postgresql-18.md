@@ -1,7 +1,11 @@
 # Migrate to PostgreSQL 18
 
-This page moves a site from the Hub `timescale/timescaledb:2.28.3-pg15` service `db` to the homemade `hpcperfstats-db` image (PostgreSQL 18 + TimescaleDB 2.32.1 on Alpine musl, service `db_pg18`) by logical copy.
+This page moves a site from the Hub `timescale/timescaledb:2.28.3-pg15` server to the homemade `hpcperfstats-db:guard1` image (PostgreSQL 18 + TimescaleDB 2.32.1 on Alpine musl) by logical copy.
 It is for site operators; use it while PG15 is still the live database.
+
+Until cutover, the site `docker-compose.yaml` includes the tracked `docker-compose.pg15-primary.yaml`.
+That include keeps PG15 as service `db` and adds the PG18 copy target `db_pg18` (profile `pg18-migrate`, alias `db18`).
+Cutover deletes the include line, and `db` becomes PG18 under the same name, alias and socket.
 
 > [!WARNING]
 > Never use `pg_upgrade`, and never restore `_timescaledb_catalog` from PG15.
@@ -13,6 +17,21 @@ It is for site operators; use it while PG15 is still the live database.
 - A root shell in the checkout that holds `docker-compose.yaml`.
   Every block runs there, with `podman-compose -p hpcperfstats` and no `-f`.
 - A `web` image built from code whose `0001_initial` and model declare `host_data.value`, `delta` and `arc` as `double precision`: Phase B migrates from that image.
+- A clean checkout that fast-forwards (`git pull --ff-only`).
+
+## How the guards keep each server on its own data
+
+Each database server checks its data folder before it writes anything there:
+
+- PG18 refuses a folder that holds a `PG_VERSION` other than 18 at the bind root, under `18/`, or at `data/`.
+- PG18 as `db` (role `primary`) writes `hpcperfstats-primary` in the bind root before `initdb` on an empty bind and refuses an existing cluster without it.
+  It also refuses an empty bind that carries `hpcperfstats-migrate-target`, so a reset copy target never becomes an empty live database.
+- PG18 as `db_pg18` (role `migrate-target`) refuses a bind with `hpcperfstats-primary` and leaves `hpcperfstats-migrate-target` there.
+- PG15 `db` (`services-conf/db-docker-pg15-guard.sh`) refuses anything but a PG15 cluster, any PG18 file, and `hpcperfstats-retired`.
+- Both hold `flock` on `.hpc-server.lock` in their bind root for the life of the server, so a second server on the same folder (any project, any container) refuses to start.
+
+Only `scripts/pg18_write_primary_marker.sh` writes the marker on a migrated site, and only after the freeze stamps prove a complete, verified copy of a read-only PG15.
+The stamps are `pg15_readonly_ok` (D2), `verify_ok.json` (D3), `relational_copy_ok` (D4) and `pg15_writes_ok` (E1).
 
 ## Timeline and downtime
 
@@ -20,13 +39,65 @@ The phases run in order; only D2 to E stop anything.
 
 | Phase                                       | Stack state                                   | Cost                                               |
 | ------------------------------------------- | --------------------------------------------- | -------------------------------------------------- |
+| Release step (once per PG15 site)           | Stack restarts once (rebuild)                 | Image bake + container restarts                    |
 | 0 preflight, A build and start, B schema    | Live on PG15                                  | Minutes (A: image bake)                            |
 | C bulk copy (`host_data`, PG18 indexes off) | Live on PG15                                  | Hours to days; rerun until clean                   |
 | C2 restore PG18 indexes                     | Live on PG15                                  | Minutes to hours (recent uncompressed chunks only) |
 | D1 catch-up pass                            | Live on PG15                                  | Minutes                                            |
-| D2 and D3 pipeline stopped, freeze pass     | Ingest paused (RabbitMQ buffers monitor data) | Changed slices only                                |
+| D2 and D3 pipeline stopped, PG15 read-only  | Ingest paused (RabbitMQ buffers monitor data) | Changed slices only                                |
 | D4 web and proxy stopped, relational copy   | Site down                                     | Parallel dump and restore of the relational tables |
-| E cutover                                   | Site down until E1 completes                  | Container restarts                                 |
+| E cutover                                   | Site down until E1 step 3 starts `web`        | Container restarts                                 |
+
+## Release step: install the guards on a PG15 site
+
+Run this once on every site that still serves PG15 before it pulls code where `db` is PG18.
+The include line goes in before the pull, so no compose command can start PG18 as `db` on the copy target: until the pull lands, every compose command fails because the included file does not exist yet, and running containers keep running.
+
+1. Stop the copy (if it runs) and `db_pg18`, then add the include line and look for a `db_pg18:` stanza in the site file:
+
+   ```bash
+   P="podman-compose -p hpcperfstats"
+   F=docker-compose.yaml
+   L='  - docker-compose.pg15-primary.yaml'
+   C=hpcperfstats_pg18_copy
+   if podman container exists $C; then
+     podman stop -t 30 $C; fi
+   $P --profile pg18-migrate stop db_pg18
+   grep -qx "$L" $F \
+     || sed -i "/^  - docker-compose.defaults.yaml\$/a\\$L" $F
+   grep -n -A3 '^include:' $F
+   grep -n -A3 '^  db_pg18:' $F
+   ```
+
+   Fail closed unless the `include:` list shows `docker-compose.pg15-primary.yaml` right after `docker-compose.defaults.yaml`.
+
+2. If the last `grep` printed a `db_pg18:` stanza, delete that stanza from `docker-compose.yaml` in an editor.
+   Leave any `db:` stanza (for example `ports:`) in place: list keys there apply to whichever server is `db`.
+
+3. Pull and rebuild (the whole stack restarts once; PG15 stops with its 30-minute grace):
+
+   ```bash
+   git pull --ff-only && ./scripts/rebuild_full_site.sh
+   ```
+
+   `rebuild_full_site.sh` refuses before it builds or stops anything when the site file still names a `db_pg18:` service or the PG15 and PG18 binds do not match the include.
+   After `down` it stops every container on the host that still mounts either bind and checks both locks are free before `up`.
+
+4. Start `db_pg18` again and wait for it:
+
+   ```bash
+   P="podman-compose -p hpcperfstats --profile pg18-migrate"
+   $P up -d --no-build db_pg18
+   for i in $(seq 1 360); do
+     $P exec -T db_pg18 pg_isready -h 127.0.0.1 -U hpcperfstats \
+       -d postgres -q && break; sleep 5; done
+   $P exec -T db_pg18 psql -h localhost -U hpcperfstats \
+     -d hpcperfstats -XtAc 'SHOW io_method'
+   ```
+
+5. Restart the copy with the Phase C start block; it resumes from `state.json`.
+
+Every database stop on this page goes through `podman-compose ... stop` or `podman stop -t 1800`: a plain `podman stop` or `podman rm -f` kills PostgreSQL after 10 seconds.
 
 ## How the copy keeps the window short
 
@@ -48,6 +119,7 @@ The phases run in order; only D2 to E stop anything.
   C2 rebuilds them before the freeze; on compressed chunks the heap is empty, so only the recent uncompressed chunks cost build time.
 - `--verify` (freeze only): Recounts each copied chunk on both sides and exits non-zero on a mismatch; its `verified_rows=` total replaces a full `count(*)` of `host_data`.
 - Per-chunk failures: A failed chunk is logged and dropped from the state file; the run continues and exits 1, and the same command retries it.
+- Stamps: every run that writes PG18 first deletes `/hpcperfstats/pg18_migrate/verify_ok.json`; only a `--verify` run that exits 0 writes it again.
 
 Between D1 and D3, run no `host_data` UPDATE or DELETE tool on PG15 (`repair_jstamp_deltas`, `scripts/retired/backfill_host_data_null_dev.sh`, `scripts/retired/collapse_percore_parallel.sh`).
 The chunks they touch fall back to whole-chunk copies: correct, but slower.
@@ -61,6 +133,7 @@ Both servers set `shared_buffers=64GB`; bulk `COPY`, counts and compression use 
 hostname; git log -1 --oneline; free -g | head -2
 grep -n -A5 -E '^  postgres_data(_pg18)?:' docker-compose.yaml \
   | grep -E 'postgres_data|device'
+grep -n -A3 '^include:' docker-compose.yaml
 df -h /data/hpcperfstats_db 2>&1 | tail -1
 S1='SELECT pg_size_pretty(pg_database_size(current_database()))
   AS pg15_db_size'
@@ -83,20 +156,20 @@ podman-compose -p hpcperfstats exec -T db psql -h localhost \
   -c 'SET statement_timeout = 0' -c "$S1" -c "$S2" -c "$S3" -c "$S4"
 ```
 
-Fail closed unless free space on the `pg18` filesystem is at least 1.2 x the PG15 `db_size` + 80 GB and `docker-compose.yaml` has a device for `postgres_data_pg18`.
+Fail closed unless free space on the `pg18` filesystem is at least 1.2 x the PG15 `db_size` + 80 GB, `docker-compose.yaml` has a device for `postgres_data_pg18`, and the `include:` list shows `docker-compose.pg15-primary.yaml` (Release step).
 
 ## Phase A: build and start PG18 beside PG15
 
 `db` stays the live writer.
-PG18 runs as profile `pg18-migrate`, alias `db18`, on the bind `postgres_data_pg18`.
+PG18 runs as `db_pg18` from the legacy include: profile `pg18-migrate`, alias `db18`, on the bind `postgres_data_pg18`.
 The bind replaces the image ownership, so it must belong to the Alpine postgres uid and gid 70; `root:root` fails with `mkdir ... /18/: Permission denied`.
 Bake on the production CPU (`-march=native`).
 
 ```bash
 D=/data/hpcperfstats_db/pg18
 mkdir -p $D && chown -R 70:70 $D && ls -ld $D
-podman build -f services-conf/db.Dockerfile -t hpcperfstats-db \
-  services-conf
+podman build -f services-conf/db.Dockerfile \
+  -t hpcperfstats-db:guard1 services-conf
 podman-compose -p hpcperfstats --profile pg18-migrate \
   up -d --no-build db_pg18
 X="podman-compose -p hpcperfstats --profile pg18-migrate exec -T"
@@ -251,8 +324,11 @@ A rerun creates only the indexes still missing.
 ## Phase D: freeze (downtime) and copy the relational tables
 
 Schedule D1 through E back to back.
+D2 makes PG15 read-only, so `web` keeps serving reads but every write (logins included) fails until cutover or E2.
+After D4, any start of `web`, `proxy` or `pipeline` (including `scripts/rebuild_pipeline.sh`) means running D4 again; any PG15 restart after D2 means running D2 to D4 again.
+The marker script in E1 checks both.
 
-### D1 and D2: catch up while live, then stop the pipeline (paste the output)
+### D1: catch up while live (paste the output)
 
 ```bash
 podman rm -f hpcperfstats_pg18_copy 2>/dev/null
@@ -265,17 +341,36 @@ podman-compose -p hpcperfstats --profile pg18-migrate \
   --changed-only \
   --state-file /hpcperfstats/pg18_migrate/state.json \
   --workers 4 2>&1 | grep -E 'ERROR|INFO done'
-podman-compose -p hpcperfstats stop pipeline
-podman-compose -p hpcperfstats ps pipeline
+```
+
+Fail closed unless the catch-up shows `failed=0`.
+
+### D2: stop the pipeline and make PG15 read-only (paste the output)
+
+`ALTER SYSTEM` persists `default_transaction_read_only = on` in PG15's `postgresql.auto.conf`, so it also holds after a PG15 restart.
+The `sleep 15` lets PG15 flush the last per-backend statistics first.
+`--stamp-readonly` checks the setting, records the PG15 write counters (`tup_inserted + tup_updated + tup_deleted` over `pg_stat_database`) and both servers' system identifiers, and writes the `pg15_readonly_ok` stamp into the PG18 bind.
+
+```bash
+P="podman-compose -p hpcperfstats"
+$P stop pipeline
+$P ps pipeline
+R="ALTER SYSTEM SET default_transaction_read_only = on"
+$P exec -T db psql -h localhost -U hpcperfstats -d hpcperfstats \
+  -X -v ON_ERROR_STOP=1 -c "$R" -c 'SELECT pg_reload_conf()' \
+  -c 'SHOW default_transaction_read_only'
 Q="SELECT pid, application_name, client_addr, state,
   left(query, 80) AS query FROM pg_stat_activity
   WHERE datname = current_database() AND pid <> pg_backend_pid()
   AND (query ILIKE '%host_data%' OR state <> 'idle') ORDER BY pid"
-podman-compose -p hpcperfstats exec -T db psql -h localhost \
+$P exec -T db psql -h localhost \
   -U hpcperfstats -d hpcperfstats -X -c "$Q"
+sleep 15
+./scripts/pg18_write_primary_marker.sh --stamp-readonly
+echo "stamp_exit=$?"
 ```
 
-Fail closed unless the catch-up shows `failed=0`, `pipeline` is stopped, and no `INSERT` or `COPY` into `host_data` remains in `pg_stat_activity` (web read queries are fine).
+Fail closed unless `pipeline` is stopped, `default_transaction_read_only` shows `on`, no `INSERT` or `COPY` into `host_data` remains in `pg_stat_activity` (web read queries are fine), and `stamp_exit=0`.
 
 ### D3: run the freeze pass with verification (paste the output)
 
@@ -293,23 +388,24 @@ podman-compose -p hpcperfstats --profile pg18-migrate \
 echo "freeze_exit=${PIPESTATUS[0]}"
 ```
 
-`--verify` refuses to start (exit 2, `refusing --verify: target host_data indexes not restored`) unless every index saved in Phase B is back and valid and `host_data` has a valid UNIQUE index.
+`--verify` refuses to start (exit 2, `refusing --verify: ...`) unless PG15 shows `default_transaction_read_only` on, every index saved in Phase B is back and valid, and `host_data` has a valid UNIQUE index.
 Ingest writes `ON CONFLICT (time, host, type, event, dev) DO NOTHING`, which fails without that index.
-On a refusal, run C2, then D3 again.
+On an index refusal, run C2, then D3 again; on a read-only refusal, run D2 again.
 
 Fail closed unless the output shows `freeze_exit=0` and `failed=0`.
+The run writes `/hpcperfstats/pg18_migrate/verify_ok.json` only on exit 0.
 Record `verified_rows=` for the change log.
 On a failure, rerun D3; it examines only the failed chunks.
 
 ### D4: stop web and proxy, copy the relational tables (paste the output)
 
 `scripts/pg18_relational_copy.sh` runs inside `db_pg18` and fails closed.
-It checks that both sides have the same table set, then:
+It refuses unless PG15 is read-only, checks that both sides have the same table set, then:
 
 1. Runs a parallel `pg_dump -Fd` from `db`.
 2. Runs `TRUNCATE ... RESTART IDENTITY CASCADE` on PG18.
 3. Runs a parallel `pg_restore --data-only --disable-triggers`.
-4. Compares exact per-table row counts, which must match, then runs `ANALYZE`.
+4. Compares exact per-table row counts, which must match, then runs `ANALYZE` and writes the `relational_copy_ok` stamp.
 
 It excludes `host_data` and `django_migrations`.
 
@@ -324,85 +420,140 @@ echo "relational_exit=$?"
 Fail closed unless the output ends with `RELATIONAL_COPY_OK` and `relational_exit=0`.
 On `RELATIONAL_COPY_FAILED`, fix the cause and rerun D4; it truncates and restores again.
 
-## Phase E: cut over (site down until E1 completes)
+## Phase E: cut over (site down until E1 step 3)
 
-The tracked `docker-compose.pg18-primary.yaml` parks PG15 `db` under profile `pg15-retired`, starts `db_pg18` with the normal stack under hostname `db`, and mounts the shared `/run/postgresql` socket that `web` and `pipeline` use.
-Adding it to the `include:` list of the site `docker-compose.yaml` activates it.
+Cutover deletes the `docker-compose.pg15-primary.yaml` line from the `include:` list of the site `docker-compose.yaml`.
+`db` then resolves to the PG18 service of `docker-compose.defaults.yaml` (role `primary`), which starts on the PG18 bind only after the marker script wrote `hpcperfstats-primary`.
 The site file always loads, so the cutover also holds for any command that names `-f docker-compose.yaml`.
-Never use a `docker-compose.override.yaml` for the cutover: `-f` skips it and brings PG15 back as `db`.
+E1 checks PG18 before any ingest: until step 4 starts `pipeline`, E2 can still return to PG15 with nothing to reconcile.
 
-### E1: switch, start and verify (paste the output)
+### E1: switch, start and verify (paste the output of each step)
+
+1. Stop the writers, confirm PG15 took no writes since D2, stop both servers, and write the marker:
+
+   ```bash
+   P="podman-compose -p hpcperfstats"
+   M=./scripts/pg18_write_primary_marker.sh
+   $P stop web proxy pipeline \
+     && $M --check-writes \
+     && $P --profile pg18-migrate stop db_pg18 \
+     && $P stop db \
+     && $M --dry-run && $M
+   echo "marker_exit=$?"
+   ```
+
+   `--check-writes` compares PG15's write counters with the D2 stamp and writes `pg15_writes_ok` only when they did not move (a client that used `BEGIN READ WRITE` moves them).
+   It first removes any earlier `pg15_writes_ok`, so a refusal leaves none behind.
+   The marker script then refuses unless `web`, `proxy` and `pipeline` stopped after D4, PG15 last started before D2, both servers are stopped and both locks are free, and all four stamps carry the current PG15 and PG18 system identifiers in order.
+   It writes `hpcperfstats-primary` in the PG18 bind and `hpcperfstats-retired` in the PG15 bind, and removes `hpcperfstats-migrate-target`.
+   Fail closed unless `marker_exit=0`; on a refusal, nothing changed: fix the cause it names (often D4 or D2 again).
+
+2. Delete the include line, remove the old `db_pg18` container and start PG18 as `db`:
+
+   ```bash
+   F=docker-compose.yaml
+   sed -i '/^  - docker-compose.pg15-primary.yaml$/d' $F
+   grep -n -A3 '^include:' $F
+   podman rm hpcperfstats_db_pg18_1
+   P="podman-compose -p hpcperfstats"
+   $P up -d --no-build db
+   for i in $(seq 1 360); do
+     $P exec -T db pg_isready -h 127.0.0.1 -U hpcperfstats \
+       -d hpcperfstats -q && break; sleep 5; done
+   $P ps db
+   ```
+
+   Fail closed unless the `include:` list shows only `docker-compose.defaults.yaml` and `db` is up.
+
+3. Start `web` only and run the checks:
+
+   ```bash
+   P="podman-compose -p hpcperfstats"
+   $P up -d --no-build web
+   X="$P exec -T db psql -h localhost -U hpcperfstats"
+   X="$X -d hpcperfstats -XtAc"
+   W="FROM pg_index WHERE indrelid = 'public.host_data'::regclass"
+   uniq=$($X "SELECT count(*) $W AND indisunique AND indisvalid")
+   bad=$($X "SELECT count(*) $W AND NOT indisvalid")
+   echo "pg18_host_data_unique_indexes=$uniq invalid_indexes=$bad"
+   $P exec -T web /usr/local/bin/python3 -c '
+   from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
+   ensure_django()
+   from django.db import connection
+   with connection.cursor() as cur:
+       cur.execute("SELECT version(), inet_server_addr()")
+       print("django_db", cur.fetchone())
+       cur.execute("SHOW io_method")
+       print("io_method", cur.fetchone()[0])
+       cur.execute("SELECT count(*) FROM job_data")
+       print("job_data_n", cur.fetchone()[0])
+   '
+   ```
+
+   Fail closed unless `django_db` shows PostgreSQL 18 and `None` (Unix socket), `io_method` is `worker`, `job_data_n` matches the D4 `pg18:` count, `pg18_host_data_unique_indexes` is at least 1 and `invalid_indexes=0`.
+   On any failure, run E2: no ingest has reached PG18 yet.
+
+4. Only after step 3 passed, add the compression policy and start ingest:
+
+   ```bash
+   P="podman-compose -p hpcperfstats"
+   X="$P exec -T db psql -h localhost -U hpcperfstats"
+   X="$X -d hpcperfstats -XtAc"
+   W="FROM pg_index WHERE indrelid = 'public.host_data'::regclass"
+   uniq=$($X "SELECT count(*) $W AND indisunique AND indisvalid")
+   bad=$($X "SELECT count(*) $W AND NOT indisvalid")
+   if [ "${uniq:-0}" -ge 1 ] && [ "$bad" = "0" ]; then
+   R="SELECT add_compression_policy('host_data',
+     compress_after => INTERVAL '8d', if_not_exists => true)"
+   $X "$R"
+   $P up -d --no-build pipeline proxy
+   $P ps
+   else echo "CUTOVER_BLOCKED: PG18 host_data has no valid UNIQUE"
+   echo "index or has invalid indexes; run E2."; fi
+   ```
+
+   Ingest's `ON CONFLICT` needs the UNIQUE index, so the block refuses to start `pipeline` without it.
+   Fail closed unless `ps` shows `db`, `web`, `pipeline`, `proxy`, `valkey` and `rabbitmq` up.
+
+If `db` logs `lock file "/run/postgresql/.s.PGSQL.5432.lock" already exists`, PG15 did not shut down cleanly: run `podman-compose -p hpcperfstats up -d --force-recreate --no-build db`.
+
+### E2: roll back (only before E1 step 4 starts the pipeline)
+
+`--rollback` refuses once `pipeline` has started on PG18; from then on, fix forward on PG18.
+It removes the marker, the retired file and the stamps, and restores `hpcperfstats-migrate-target`.
 
 ```bash
 P="podman-compose -p hpcperfstats"
-X="$P --profile pg18-migrate exec -T db_pg18 psql -h localhost"
-X="$X -U hpcperfstats -d hpcperfstats -XtAc"
-W="FROM pg_index WHERE indrelid = 'public.host_data'::regclass"
-uniq=$($X "SELECT count(*) $W AND indisunique AND indisvalid")
-bad=$($X "SELECT count(*) $W AND NOT indisvalid")
-echo "pg18_host_data_unique_indexes=$uniq invalid_indexes=$bad"
-if [ "${uniq:-0}" -ge 1 ] && [ "$bad" = "0" ]; then
-podman-compose -p hpcperfstats stop db
 F=docker-compose.yaml
-L='  - docker-compose.pg18-primary.yaml'
-grep -qx "$L" $F \
-  || sed -i "/^  - docker-compose.defaults.yaml\$/a\\$L" $F
-grep -n -A3 '^include:' $F
-$P config --services | tr '\n' ' '; echo
-podman-compose -p hpcperfstats up -d --force-recreate db_pg18
-for i in $(seq 1 60); do
-  $P exec -T db_pg18 pg_isready -h 127.0.0.1 -U hpcperfstats \
+L='  - docker-compose.pg15-primary.yaml'
+$P stop web db \
+  && ./scripts/pg18_write_primary_marker.sh --rollback \
+  && { grep -qx "$L" $F \
+    || sed -i "/^  - docker-compose.defaults.yaml\$/a\\$L" $F; } \
+  && grep -n -A3 '^include:' $F \
+  && $P up -d --no-build db
+for i in $(seq 1 360); do
+  $P exec -T db pg_isready -h 127.0.0.1 -U hpcperfstats \
     -d hpcperfstats -q && break; sleep 5; done
-R="SELECT add_compression_policy('host_data',
-  compress_after => INTERVAL '8d', if_not_exists => true)"
-$P exec -T db_pg18 psql -h localhost -U hpcperfstats \
-  -d hpcperfstats -X -c "$R"
-podman-compose -p hpcperfstats up -d web pipeline proxy
+U="ALTER SYSTEM RESET default_transaction_read_only"
+$P exec -T db psql -h localhost -U hpcperfstats -d hpcperfstats \
+  -X -v ON_ERROR_STOP=1 -c "$U" -c 'SELECT pg_reload_conf()' \
+  -c 'SHOW default_transaction_read_only' -c 'SELECT version()'
+$P up -d --no-build web pipeline proxy
 $P ps
-$P exec -T web /usr/local/bin/python3 -c '
-from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
-ensure_django()
-from django.db import connection
-with connection.cursor() as cur:
-    cur.execute("SELECT version(), inet_server_addr()")
-    print("django_db", cur.fetchone())
-    cur.execute("SHOW io_method")
-    print("io_method", cur.fetchone()[0])
-    cur.execute("SELECT count(*) FROM job_data")
-    print("job_data_n", cur.fetchone()[0])
-'
-else echo "CUTOVER_BLOCKED: PG18 host_data has no valid UNIQUE"
-echo "index or has invalid indexes; run C2. PG15 is untouched."; fi
 ```
 
-The gate comes first: nothing stops or switches unless `pg18_host_data_unique_indexes` is at least 1 and `invalid_indexes=0`, because ingest's `ON CONFLICT` needs the UNIQUE index.
-
-Fail closed unless:
-
-- The `include:` list shows `docker-compose.pg18-primary.yaml` right after `docker-compose.defaults.yaml`.
-- `config --services` lists `db_pg18` and not `db`.
-- `ps` shows `db_pg18`, `web`, `pipeline`, `proxy`, `valkey` and `rabbitmq` up.
-- `django_db` shows PostgreSQL 18 and `None` (Unix socket), `io_method` is `worker`, and `job_data_n` matches the D4 `pg18:` count.
-
-If `db_pg18` logs `lock file "/run/postgresql/.s.PGSQL.5432.lock" already exists`, PG15 did not shut down cleanly: run `podman-compose -p hpcperfstats up -d --force-recreate db_pg18 web pipeline`.
-
-### E2: roll back (only if E1 fails; PG18 writes after cutover are lost)
-
-```bash
-podman-compose -p hpcperfstats stop web pipeline proxy db_pg18
-sed -i '/^  - docker-compose.pg18-primary.yaml$/d' \
-  docker-compose.yaml
-podman-compose -p hpcperfstats up -d db web pipeline proxy
-podman-compose -p hpcperfstats ps
-```
+Fail closed unless `version()` shows PostgreSQL 15, `default_transaction_read_only` shows `off`, and `ps` shows the stack up.
+To try again, start the copy target (`podman-compose -p hpcperfstats --profile pg18-migrate up -d --no-build db_pg18`; E1 step 2 removed its container), then run D1 to E1 again.
 
 Name the services on every `up` during migration and cutover.
 After any compose-file change, a bare `podman-compose up -d` recreates every project container (stale config hash), including `db`, `db_pg18`, `rabbitmq` (30-minute stop grace each) and `valkey`.
 
 ### After the soak
 
-Keep `/data/hpcperfstats_db/pg15` and the parked `db` container until the soak completes; deleting them is manual, never automatic.
-`./scripts/rebuild_full_site.sh` keeps working after cutover: once the overlay is included it requires `db_pg18` instead of `db`.
+Keep `/data/hpcperfstats_db/pg15` and the Hub `timescale/timescaledb:2.28.3-pg15` image until the soak completes; deleting them is manual, never automatic.
+No container serves the PG15 bind after E1, and its `hpcperfstats-retired` file makes PG15 refuse it.
+`./scripts/rebuild_full_site.sh` keeps working after cutover: without the include it builds and starts PG18 `db`.
 You can delete the state file `/hpcperfstats/pg18_migrate/state.json` after cutover.
 
 ## Troubleshooting
@@ -410,10 +561,13 @@ You can delete the state file `/hpcperfstats/pg18_migrate/state.json` after cuto
 - `copies_in_flight` stays at `1` while `--workers` is higher: check PG18 for `Lock:relation` waits on `host_data`.
   That is the chunk-creation lock the script avoids, so an older script without chunk pre-creation is running.
 
+- `hpcperfstats db guard: refusing to start` or `hpcperfstats pg15 guard: refusing to start` in a database log: the server found the wrong data, a missing or present marker, or a held lock, and changed nothing.
+  The message names the path and the reason; do not delete marker, sentinel or lock files by hand to get past it.
+
 - Phase B prints `value_types=` with `real` columns: that PG18 database predates the `double precision` schema and must be rebuilt from an empty database.
   This works only while PG15 is authoritative (before cutover).
   No migration retypes the columns: PG15 applied `0001` long ago and keeps `real`, and redeploying `web` does not change its schema.
-  Stop the copy and any index restore, drop and recreate the PG18 database, and move the old state files aside; PG15, `web`, `pipeline` and the other containers stay untouched:
+  Stop the copy and any index restore, drop and recreate the PG18 database, delete the freeze stamps, and move the old state files aside; PG15, `web`, `pipeline` and the other containers stay untouched:
 
   ```bash
   K="hpcperfstats_pg18_copy hpcperfstats_pg18_indexes"
@@ -424,7 +578,11 @@ You can delete the state file `/hpcperfstats/pg18_migrate/state.json` after cuto
   C="CREATE DATABASE hpcperfstats OWNER hpcperfstats"
   $P exec -T db_pg18 psql -h localhost -U hpcperfstats -d postgres \
     -XtA -v ON_ERROR_STOP=1 -c "$D" -c "$C"
-  M='cd /hpcperfstats/pg18_migrate && for f in state*.json; do
+  S=/var/lib/postgresql
+  $P exec -T db_pg18 rm -f $S/pg15_readonly_ok \
+    $S/relational_copy_ok $S/pg15_writes_ok
+  M='cd /hpcperfstats/pg18_migrate && rm -f verify_ok.json
+    for f in state*.json; do
     [ -e "$f" ] && mv "$f" "$f.pre-double"; done; ls'
   $P run --rm --no-deps -T --entrypoint sh web -c "$M"
   ```
@@ -436,5 +594,5 @@ You can delete the state file `/hpcperfstats/pg18_migrate/state.json` after cuto
 
 - [Compose services: db image](../../reference/compose-services.md#db-image)
 - [Upgrade the stack](upgrade-the-stack.md#upgrade-the-timescale-catalog-on-postgresql-15)
-- `docker-compose.pg18-primary.yaml`, `scripts/pg18_host_data_chunk_copy.py`, `scripts/pg18_relational_copy.sh`
+- `docker-compose.pg15-primary.yaml`, `scripts/pg18_host_data_chunk_copy.py`, `scripts/pg18_relational_copy.sh`, `scripts/pg18_write_primary_marker.sh`, `scripts/rebuild_full_site.sh`
 - `hpcperfstats/cursor-rules/postgres-custom-image-and-migrate-contract.mdc`

@@ -1,7 +1,7 @@
 ---
 description: Keep docs/explanation/architecture.md and docs/reference/compose-services.md aligned with the system architecture (compose services, image pins, pipeline processes, data design, Valkey roles, web/API layers, monitor contract)
 alwaysApply: false
-globs: docker-compose.defaults.yaml,docker-compose.yaml.example,docker-compose.pg18-primary.yaml,services-conf/*.Dockerfile,services-conf/supervisord.conf,pyproject.toml,hpcperfstats/site/frontend/package.json
+globs: docker-compose.defaults.yaml,docker-compose.yaml.example,docker-compose.pg15-primary.yaml,services-conf/*.Dockerfile,services-conf/supervisord.conf,pyproject.toml,hpcperfstats/site/frontend/package.json
 ---
 
 # Design document sync
@@ -14,7 +14,7 @@ globs: docker-compose.defaults.yaml,docker-compose.yaml.example,docker-compose.p
 
 | Change | Section to check |
 |--------|-----------------------------|
-| Service added, removed or renamed in `docker-compose.defaults.yaml` / `docker-compose.yaml.example` / `docker-compose.pg18-primary.yaml`; image, network or volume role changed | architecture: Data flow, Deployment; compose-services: the service's section |
+| Service added, removed or renamed in `docker-compose.defaults.yaml` / `docker-compose.yaml.example` / `docker-compose.pg15-primary.yaml`; image, network or volume role changed | architecture: Data flow, Deployment; compose-services: the service's section |
 | Version pin changed in `services-conf/*.Dockerfile`, `pyproject.toml`, `hpcperfstats/site/frontend/package.json` (PostgreSQL, TimescaleDB, Python, Django, React/Next, nginx, Valkey, RabbitMQ, Codon, zstd) when the doc names that version | Wherever the version is cited (compose-services image sections, architecture Runtime image) |
 | Pipeline program added/removed/renamed in `services-conf/supervisord.conf`, or a long-running process's role changes (`listend`, `sync_timedb`, `update_metrics`, rsync, syslog) | architecture: Runtime processes; compose-services: Supervisord programs |
 | Top-level package moved/added under `hpcperfstats/`, or `hpcperfstats-tools/` scope changes | architecture: Python packages |

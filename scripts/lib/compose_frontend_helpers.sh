@@ -440,6 +440,8 @@ compose_service_container_exists() {
 }
 
 # Tag locally built images to the names podman-compose expects for this project.
+# Retags every alias after each build: an alias left on the previous build would
+# keep starting the old image.
 compose_ensure_local_stack_image_tags() {
   local project canonical alias
   project="${HPCPERFSTATS_COMPOSE_PROJECT:-hpcperfstats}"
@@ -449,14 +451,14 @@ compose_ensure_local_stack_image_tags() {
       echo "compose_ensure_local_stack_image_tags: stack image missing before compose up: ${canonical} (build images first)" >&2
       return 1
     fi
-    if [[ "${canonical}" != "${alias}" ]] && ! podman image exists "${alias}"; then
-      podman tag "${canonical}" "${alias}"
+    if [[ "${canonical}" != "${alias}" ]]; then
+      podman tag "${canonical}" "${alias}" || return 1
     fi
   done <<EOF
 hpcperfstats:latest ${project}_web:latest
 hpcperfstats:latest ${project}_pipeline:latest
 hpcperfstats-proxy:latest ${project}_proxy:latest
-hpcperfstats-db:latest ${project}_db_pg18:latest
+hpcperfstats-db:guard1 ${project}_db_pg18:latest
 EOF
 }
 

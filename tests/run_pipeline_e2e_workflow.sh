@@ -89,6 +89,7 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
 fi
 
 echo "Starting db, valkey, rabbitmq..."
+compose_test_ensure_db_image
 compose_test up -d db valkey rabbitmq
 
 echo "Waiting for healthy db, valkey, rabbitmq..."

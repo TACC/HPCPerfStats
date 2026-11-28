@@ -166,8 +166,21 @@ services:
         aliases:
           - proxy
 
+  # Homemade PostgreSQL 18 + TimescaleDB (services-conf/db.Dockerfile). The
+  # guard1 tag exists only from a build with the data-dir guard in the
+  # entrypoint (scripts/rebuild_full_site.sh); pull_policy never, so a missing
+  # tag fails instead of pulling. Role primary: the server writes
+  # /var/lib/postgresql/hpcperfstats-primary before initdb on an empty bind and
+  # refuses an existing cluster without it (an unverified PG18 copy). Sites
+  # that still run PG15 include docker-compose.pg15-primary.yaml, which turns
+  # this service back into Hub PG15 under the same name
+  # (docs/how-to/operate/migrate-to-postgresql-18.md).
   db:
-    image: docker.io/timescale/timescaledb:2.28.3-pg15
+    build:
+      context: ./services-conf
+      dockerfile: db.Dockerfile
+    image: hpcperfstats-db:guard1
+    pull_policy: never
     logging: *hpc-logging
     # Default container /dev/shm is 64MiB; Postgres dynamic shared memory exhausts it easily
     # under parallel workers. Keep shm_size generous for max_connections=500 + modest parallelism.
@@ -175,13 +188,15 @@ services:
     # Memory / connection budget (operator): max_connections=500 is headroom for many Django
     # workers + threads + pipeline pools, not permission to run 500 heavy queries at once.
     # Spike control: lower work_mem caps per-query RAM; parallel gather defaults are raised for
-    # bulk scans (see max_parallel_* below). shared_buffers=64GB (was 12GB) on the 377 GiB
-    # ingest host: the profile showed ~4-5% of Postgres CPU in kernel read/copy from the OS
-    # page cache; db has no mem_limit (see README Postgres section).
+    # bulk scans (see max_parallel_* below). shared_buffers=64GB on the 377 GiB ingest host:
+    # the profile showed ~4-5% of Postgres CPU in kernel read/copy from the OS page cache at
+    # 12GB; db has no mem_limit (see docs/reference/compose-services.md).
     #
     # statement_timeout / idle_in_transaction_session_timeout: align with Django OPTIONS in settings
     # (defaults 120s / 300s in ms). Shed runaway queries; tune bulk jobs if needed.
     # max_wal_size / bgwriter / wal_compression: reduce WAL-requested checkpoint churn under ingest.
+    # docker-compose.pg15-primary.yaml repeats this list for PG15 (minus io_*)
+    # and for db_pg18; test_pg18_cutover_compose.py keeps the three in parity.
     shm_size: "16gb"
     command:
       - -c
@@ -213,8 +228,8 @@ services:
       - max_wal_size=64GB
       - -c
       - wal_buffers=128MB
-      # PG15 Hub image is built with lz4 (verified on hpcperfstats04, 2026-10): pglz
-      # made 48 backends queue on LWLock WALInsert at ~127 MB/s of WAL.
+      # /opt/lz4 WAL compression: pglz made 48 backends queue on LWLock
+      # WALInsert at ~127 MB/s of WAL (hpcperfstats04, 2026-10).
       - -c
       - wal_compression=lz4
       - -c
@@ -235,6 +250,12 @@ services:
       # exceed TimescaleDB's default 100k tuple decompress cap per transaction.
       - -c
       - timescaledb.max_tuples_decompressed_per_dml_transaction=1000000
+      # PG18 asynchronous I/O through a pool of I/O worker processes (the PG18
+      # default); why no other method: postgres-custom-image-and-migrate-contract.mdc.
+      - -c
+      - io_method=worker
+      - -c
+      - io_workers=8
       # Committed client auth (services-conf/postgres_pg_hba.conf): the Unix socket
       # web/pipeline use requires scram-sha-256, like the network; image default
       # for local is trust. Overrides $PGDATA/pg_hba.conf on existing data dirs.
@@ -250,8 +271,10 @@ services:
       retries: 10
     stop_signal: SIGINT  # Preferred for faster, yet still graceful, shutdowns
     stop_grace_period: 30m
+    # PG18 keeps PGDATA in 18/docker under one mount at /var/lib/postgresql.
+    # postgres_data_pg18 is declared in the site docker-compose.yaml only.
     volumes:
-      - postgres_data:/var/lib/postgresql/data/
+      - postgres_data_pg18:/var/lib/postgresql
       # unix_socket_directories default; web/pipeline mount the same tmpfs at
       # /run/postgresql and connect with [DEFAULT] host = /run/postgresql.
       - postgres_runtime:/run/postgresql
@@ -260,112 +283,12 @@ services:
       - POSTGRES_USER=hpcperfstats
       - POSTGRES_PASSWORD=hpcperfstats
       - POSTGRES_DB=hpcperfstats
+      - TIMESCALEDB_TELEMETRY=off
+      - HPCPERFSTATS_DB_ROLE=primary
     networks:
       hpcperfstats_net:
         aliases:
           - db
-
-  # Homegrown PG18 + Timescale (jemalloc/zlib-ng/lz4/zstd). Dual-run only
-  # during logical migrate — see docs/how-to/operate/migrate-to-postgresql-18.md. Hostname `db`
-  # stays on Hub PG15 until cutover. Start with:
-  #   docker compose --profile pg18-migrate up -d db_pg18
-  db_pg18:
-    profiles:
-      - pg18-migrate
-    build:
-      context: ./services-conf
-      dockerfile: db.Dockerfile
-      args:
-    image: hpcperfstats-db
-    pull_policy: never
-    logging: *hpc-logging
-    shm_size: "16gb"
-    command:
-      - -c
-      - max_connections=500
-      - -c
-      - statement_timeout=120000
-      - -c
-      - idle_in_transaction_session_timeout=300000
-      # Same as db: this service becomes the production db at cutover
-      # (docker-compose.pg18-primary.yaml), and that file cannot override command:.
-      - -c
-      - shared_buffers=64GB
-      - -c
-      - work_mem=8MB
-      - -c
-      - maintenance_work_mem=256MB
-      - -c
-      - autovacuum_work_mem=256MB
-      - -c
-      - temp_buffers=4MB
-      - -c
-      - checkpoint_timeout=30min
-      - -c
-      - checkpoint_completion_target=0.9
-      - -c
-      - min_wal_size=4GB
-      # 2026-10: hpcperfstats04 under ingest hit max_wal_size every ~65 s (375 of 390
-      # checkpoints WAL-requested, 92% of WAL writes forced by a full wal_buffers, 49 backends
-      # queued on LWLock WALInsert). Larger spacing also cuts full-page-image WAL.
-      - -c
-      - max_wal_size=64GB
-      - -c
-      - wal_buffers=128MB
-      # PG18 homemade image: /opt/lz4 WAL compression (AVX-friendly native build).
-      - -c
-      - wal_compression=lz4
-      - -c
-      - bgwriter_lru_maxpages=800
-      - -c
-      - bgwriter_lru_multiplier=5
-      - -c
-      - maintenance_io_concurrency=64
-      - -c
-      - max_worker_processes=32
-      - -c
-      - max_parallel_workers=24
-      - -c
-      - max_parallel_workers_per_gather=4
-      - -c
-      - max_parallel_maintenance_workers=2
-      - -c
-      - timescaledb.max_tuples_decompressed_per_dml_transaction=1000000
-      # PG18 asynchronous I/O through a pool of I/O worker processes (the PG18
-      # default); why no other method: postgres-custom-image-and-migrate-contract.mdc.
-      - -c
-      - io_method=worker
-      - -c
-      - io_workers=8
-      # Same committed client auth as db (socket = scram-sha-256). The shared
-      # postgres_runtime socket dir is mounted only at cutover by
-      # docker-compose.pg18-primary.yaml: two servers in one dir collide on
-      # .s.PGSQL.5432.lock during dual-run.
-      - -c
-      - hba_file=/etc/postgresql/pg_hba.conf
-    restart: always
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - pg_isready -U hpcperfstats -d postgres -h 127.0.0.1 -p 5432
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    stop_signal: SIGINT
-    stop_grace_period: 30m
-    # PG18 docker-library prefers VOLUME /var/lib/postgresql (not .../data only).
-    volumes:
-      - postgres_data_pg18:/var/lib/postgresql
-      - ./services-conf/postgres_pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
-    environment:
-      - POSTGRES_USER=hpcperfstats
-      - POSTGRES_PASSWORD=hpcperfstats
-      - POSTGRES_DB=hpcperfstats
-      - TIMESCALEDB_TELEMETRY=off
-    networks:
-      hpcperfstats_net:
-        aliases:
-          - db18
 
   rabbitmq:
     # Management plugin (HTTP API on 15672) for Admin Monitor stats.
@@ -425,7 +348,7 @@ volumes:
       type: tmpfs
       device: tmpfs
       o: size=4m
-  # Ephemeral PostgreSQL Unix socket dir shared by db (PG15), web, and pipeline.
+  # Ephemeral PostgreSQL Unix socket dir shared by db, web, and pipeline.
   # TCP 5432 stays up on hpcperfstats_net; same-host containers use the socket.
   # Not a host bind — Docker/Podman named volume only (like valkey_runtime).
   postgres_runtime:

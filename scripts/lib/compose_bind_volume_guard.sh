@@ -16,21 +16,42 @@
 #                                     destination; offending containers and the
 #                                     pipeline are stopped.
 #
+# compose_host_fs CMD...              run CMD against host bind paths; rootless
+#                                     podman runs it inside `podman unshare`, where
+#                                     the container uids that own the data map to
+#                                     readable ids.
+#
 # Requires PODMAN, PODMAN_COMPOSE and HPCPERFSTATS_COMPOSE_PROJECT (podman_runtime.sh).
+
+# Print the first python3 that imports PyYAML.
+compose_yaml_python() {
+  local py
+  for py in python3 /usr/bin/python3; do
+    if "${py}" -c 'import yaml' >/dev/null 2>&1; then
+      echo "${py}"
+      return 0
+    fi
+  done
+  echo "bind volume guard: no python3 with PyYAML found (podman-compose needs it too)" >&2
+  return 1
+}
+
+compose_host_fs() {
+  if [[ -z "${COMPOSE_HOST_ROOTLESS:-}" ]]; then
+    COMPOSE_HOST_ROOTLESS="$("${PODMAN[@]}" info --format '{{.Host.Security.Rootless}}')" \
+      || return 1
+  fi
+  if [[ "${COMPOSE_HOST_ROOTLESS}" == true ]]; then
+    "${PODMAN[@]}" unshare "$@"
+  else
+    "$@"
+  fi
+}
 
 # Print "volume_name<TAB>device" for each compose volume with o=bind.
 compose_bind_volume_specs() {
   local py config
-  for py in python3 /usr/bin/python3; do
-    if "${py}" -c 'import yaml' >/dev/null 2>&1; then
-      break
-    fi
-    py=
-  done
-  if [[ -z "${py}" ]]; then
-    echo "bind volume guard: no python3 with PyYAML found (podman-compose needs it too)" >&2
-    return 1
-  fi
+  py="$(compose_yaml_python)" || return 1
   config="$("${PODMAN_COMPOSE[@]}" config 2>/dev/null)" || {
     echo "bind volume guard: podman-compose config failed" >&2
     return 1
@@ -89,7 +110,7 @@ compose_bind_volumes_preflight() {
 compose_bind_volumes_verify_mounted() {
   local specs name device ctr dest want got
   local -A device_for=()
-  local -a offenders=()
+  local -a offenders=() db_offenders=() other_offenders=()
   specs="$(compose_bind_volume_specs)" || return 1
   while IFS=$'\t' read -r name device; do
     [[ -n "${name}" ]] && device_for["${name}"]="${device}"
@@ -119,6 +140,19 @@ compose_bind_volumes_verify_mounted() {
   offenders+=("${HPCPERFSTATS_COMPOSE_PROJECT}_pipeline_1")
   mapfile -t offenders < <(printf '%s\n' "${offenders[@]}" | sort -u)
   echo "bind volume guard: stopping ${offenders[*]}" >&2
-  "${PODMAN[@]}" stop "${offenders[@]}" >/dev/null 2>&1 || true
+  # PostgreSQL needs its stop_grace_period to checkpoint; podman's default
+  # stop timeout would SIGKILL it mid-shutdown.
+  for ctr in "${offenders[@]}"; do
+    case "${ctr}" in
+      *_db_1 | *_db_pg18_1) db_offenders+=("${ctr}") ;;
+      *) other_offenders+=("${ctr}") ;;
+    esac
+  done
+  if [[ "${#other_offenders[@]}" -gt 0 ]]; then
+    "${PODMAN[@]}" stop "${other_offenders[@]}" >/dev/null 2>&1 || true
+  fi
+  if [[ "${#db_offenders[@]}" -gt 0 ]]; then
+    "${PODMAN[@]}" stop -t 1800 "${db_offenders[@]}" >/dev/null 2>&1 || true
+  fi
   return 1
 }

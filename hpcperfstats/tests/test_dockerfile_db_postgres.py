@@ -593,3 +593,19 @@ def test_db_entrypoint_runs_timescaledb_auto_update_on_existing_db() -> None:
   ]
   assert 'hpc_timescaledb_auto_update "$@"' in branch
   assert text.count('hpc_timescaledb_auto_update "$@"') == 1
+
+
+def test_db_image_ships_data_dir_guard_under_guard1_tag() -> None:
+  """The guard lives in the baked entrypoint; only a guarded build is guard1."""
+  entry = (
+    _repo_root() / "services-conf" / "db-docker-entrypoint.sh"
+  ).read_text()
+  assert "hpc_guard_data_dir() {" in entry
+  assert "COPY db-docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh" in (
+    _dockerfile()
+  )
+  defaults = (_repo_root() / "docker-compose.defaults.yaml").read_text()
+  assert "image: hpcperfstats-db:guard1" in defaults
+  rebuild = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
+  assert "DB_IMAGE=hpcperfstats-db:guard1" in rebuild
+  assert '-t "${DB_IMAGE}"' in rebuild

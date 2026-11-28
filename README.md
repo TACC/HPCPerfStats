@@ -31,7 +31,7 @@ The `hpcperfstats` stack runs 6 services by default: `proxy` (nginx, TLS and the
 ## Install
 
 Follow [Install HPCPerfStats](docs/tutorials/install-hpcperfstats.md) for a fresh install of the central stack, the node monitor and the accounting connector.
-For an existing stack (rebuilds, Valkey, INI, volume and RabbitMQ changes, PostgreSQL 18 dual-run), use [Upgrade the stack](docs/how-to/operate/upgrade-the-stack.md) instead.
+For an existing stack (rebuilds, Valkey, INI, volume and RabbitMQ changes, the move from PostgreSQL 15 to 18), use [Upgrade the stack](docs/how-to/operate/upgrade-the-stack.md) instead.
 [Common commands](docs/reference/compose-services.md#common-commands) has the everyday operator commands.
 
 ## Documentation

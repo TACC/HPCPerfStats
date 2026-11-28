@@ -54,7 +54,7 @@ When live ingest is on, archive-backed catch-up stays the completeness repair fo
 
 ## Archive zstd on a shared host
 
-Daily monitor archives are sealed inside `pipeline`, and `web`, `db` and `pipeline` share one CPU scheduler and often one physical disk (`postgres_data` vs `/data/hpcperfstats_data/site_data`).
+Daily monitor archives are sealed inside `pipeline`, and `web`, `db` and `pipeline` share one CPU scheduler and often one physical disk (`postgres_data_pg18` vs `/data/hpcperfstats_data/site_data`).
 Archive zstd runs at normal CPU and I/O priority (no `nice`/`ionice` wrapper), and space comes back only when a seal finishes.
 
 Compression speed scales with `archive_zstd_threads`, so pick `archive_zstd_level` at the seal's thread count.

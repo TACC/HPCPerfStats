@@ -61,6 +61,16 @@ compose_ensure_test_overlay_yaml() {
     cp "$example" "$overlay"
     echo "compose_ensure_test_overlay_yaml: created ${overlay} from example" >&2
   fi
+  # A stale copy keeps old db mounts (PG15 /var/lib/postgresql/data) that the
+  # current defaults reject; never overwrite it, it may hold local edits.
+  local want have
+  want="$(grep -m1 '^# overlay-version:' "$example" || true)"
+  have="$(grep -m1 '^# overlay-version:' "$overlay" || true)"
+  if [[ "$have" != "$want" ]]; then
+    echo "compose_ensure_test_overlay_yaml: ${overlay} is '${have:-unversioned}', example is '${want}'" >&2
+    echo "compose_ensure_test_overlay_yaml: merge your local edits into a fresh copy of tests/docker-compose.test-overlay.yaml.example" >&2
+    return 1
+  fi
 }
 
 # Keep optional bind-mount work copies on the shared /data storage contract.
@@ -225,6 +235,18 @@ compose_test() {
   repo_root="$(compose_repo_root)"
   local project_dir="${COMPOSE_BIND_MOUNT_DIR:-$repo_root}"
   (cd "$project_dir" && "${COMPOSE_TEST[@]}" "$@")
+}
+
+# db is the homemade PG18 image (hpcperfstats-db:guard1, pull_policy never):
+# bake it when missing before any `compose_test up -d db`. The first native
+# bake takes tens of minutes; later runs reuse the tag.
+compose_test_ensure_db_image() {
+  podman_runtime_require
+  if "${PODMAN[@]}" image exists hpcperfstats-db:guard1; then
+    return 0
+  fi
+  echo "compose_test_ensure_db_image: building hpcperfstats-db:guard1 (first bake: tens of minutes)" >&2
+  compose_test build db
 }
 
 compose_service_container_id() {

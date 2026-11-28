@@ -36,6 +36,14 @@ Attributes:
   _TARGET_INDEXES_SQL: List droppable ``host_data`` indexes on the target.
   _VALID_TARGET_INDEX_NAMES_SQL: Names of valid ``host_data`` target indexes.
   _VALID_UNIQUE_COUNT_SQL: Count of valid UNIQUE ``host_data`` indexes.
+  VERIFY_STAMP: File name of the ``--verify`` success stamp, written next to
+    ``--state-file`` and checked by ``scripts/pg18_write_primary_marker.sh``.
+  DEFAULT_STATE_FILE: Runbook ``--state-file``; a run without one still
+    retires the ``verify_ok.json`` beside it.
+  _READ_ONLY_SQL: PG15 setting that must be ``on`` before ``--verify``.
+  _SYSTEM_IDENTIFIER_SQL: Cluster ``system_identifier`` (same bigint as the
+    first 8 bytes of ``global/pg_control``).
+  _DATABASE_OID_SQL: OID of the copied database on PG18.
   _ZSTD_DUMP_ARGS: ``zstd`` argv for optional ``--dump-dir`` audit files.
   WIDENING: The one ``(source, target)`` type pair binary COPY may bridge.
   WIDENED_COLUMNS: ``host_data`` columns that may take ``WIDENING``.
@@ -103,6 +111,11 @@ _VALID_UNIQUE_COUNT_SQL = (
   "SELECT count(*) FROM pg_index WHERE indrelid = 'public.host_data'::regclass "
   "AND indisunique AND indisvalid"
 )
+VERIFY_STAMP = "verify_ok.json"
+DEFAULT_STATE_FILE = "/hpcperfstats/pg18_migrate/state.json"
+_READ_ONLY_SQL = "SHOW default_transaction_read_only"
+_SYSTEM_IDENTIFIER_SQL = "SELECT system_identifier FROM pg_control_system()"
+_DATABASE_OID_SQL = "SELECT oid FROM pg_database WHERE datname = %s"
 
 
 @dataclass(frozen=True)
@@ -1061,6 +1074,129 @@ def save_state(path: str, chunks: dict[str, dict[str, object]]) -> None:
   with open(tmp, "w", encoding="utf-8") as fh:
     json.dump({"version": _STATE_VERSION, "chunks": chunks}, fh)
   os.replace(tmp, path)
+
+
+def verify_stamp_path(state_path: str) -> str:
+  """
+  Return where ``--verify`` records success: ``verify_ok.json`` beside state.
+
+  Args:
+    state_path (str): ``--state-file`` path.
+
+  Returns:
+    str: ``<dirname(state_path)>/verify_ok.json``.
+
+  Examples:
+    >>> verify_stamp_path("/hpcperfstats/pg18_migrate/state.json")
+    '/hpcperfstats/pg18_migrate/verify_ok.json'
+  """
+  return os.path.join(os.path.dirname(state_path), VERIFY_STAMP)
+
+
+def pg15_read_only(conn: Connection) -> bool:
+  """
+  Report whether the source runs new transactions read-only by default.
+
+  The freeze pass only proves PG15 and PG18 match when nothing can write PG15
+  any more, so ``--verify`` refuses unless this holds.
+
+  Args:
+    conn (Connection): Open source (PG15) connection.
+
+  Returns:
+    bool: True when ``default_transaction_read_only`` is ``on``.
+
+  Examples:
+    >>> pg15_read_only(src)  # doctest: +SKIP
+    True
+  """
+  with conn.cursor() as cur:
+    cur.execute(_READ_ONLY_SQL)
+    row = cur.fetchone()
+  return bool(row) and str(row[0]) == "on"
+
+
+def fetch_stamp_identity(
+  src: Connection, tgt: Connection, database: str
+) -> dict[str, object]:
+  """
+  Read the cluster identity every migration stamp carries.
+
+  Args:
+    src (Connection): Open source (PG15) connection.
+    tgt (Connection): Open target (PG18) connection.
+    database (str): Copied database name, whose PG18 OID is recorded.
+
+  Returns:
+    dict[str, object]: ``pg18_system_identifier`` and
+      ``pg15_system_identifier`` as decimal strings of the signed bigint,
+      ``pg18_database_oid`` as int.
+
+  Raises:
+    RuntimeError: Raised when a query returns no row (database missing).
+
+  Examples:
+    >>> fetch_stamp_identity(src, tgt, "hpcperfstats")  # doctest: +SKIP
+    {'pg18_system_identifier': '74...', 'pg18_database_oid': 16384, ...}
+  """
+  with src.cursor() as cur:
+    cur.execute(_SYSTEM_IDENTIFIER_SQL)
+    pg15 = cur.fetchone()
+  with tgt.cursor() as cur:
+    cur.execute(_SYSTEM_IDENTIFIER_SQL)
+    pg18 = cur.fetchone()
+    cur.execute(_DATABASE_OID_SQL, (database,))
+    oid = cur.fetchone()
+  if not (pg15 and pg18 and oid):
+    raise RuntimeError(f"cannot read cluster identity for {database}")
+  return {
+    "pg18_system_identifier": str(int(pg18[0])),
+    "pg18_database_oid": int(oid[0]),
+    "pg15_system_identifier": str(int(pg15[0])),
+  }
+
+
+def write_verify_stamp(
+  path: str,
+  identity: dict[str, object],
+  verified_rows: int,
+  now: datetime | None = None,
+) -> None:
+  """
+  Atomically write the ``--verify`` success stamp (temp file + rename).
+
+  A failure leaves neither the stamp nor the temp file behind.
+
+  Args:
+    path (str): Stamp path from :func:`verify_stamp_path`.
+    identity (dict[str, object]): Keys from :func:`fetch_stamp_identity`.
+    verified_rows (int): ``host_data`` rows verified on both sides.
+    now (datetime | None): Stamp time; ``None`` uses the current UTC time.
+
+  Returns:
+    None
+
+  Examples:
+    >>> write_verify_stamp("/tmp/verify_ok.json", {}, 0)  # doctest: +SKIP
+  """
+  when = (now or datetime.now(UTC)).replace(microsecond=0)
+  doc = {
+    "stamp": VERIFY_STAMP,
+    "written_at": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "written_at_epoch": int(when.timestamp()),
+    **identity,
+    "verified_rows": int(verified_rows),
+  }
+  tmp = f"{path}.tmp.{os.getpid()}"
+  try:
+    with open(tmp, "w", encoding="utf-8") as fh:
+      json.dump(doc, fh)
+      fh.write("\n")
+      fh.flush()
+      os.fsync(fh.fileno())
+    os.replace(tmp, path)
+  finally:
+    Path(tmp).unlink(missing_ok=True)
 
 
 def _is_retryable_count_error(exc: BaseException) -> bool:
@@ -2254,13 +2390,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     level=logging.DEBUG if args.verbose else logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
   )
-  needs_state = (
-    args.changed_only or args.drop_target_indexes or args.restore_target_indexes
-  )
-  if needs_state and not args.state_file:
-    LOG.error("--changed-only / --*-target-indexes require --state-file")
+  index_mode = args.drop_target_indexes or args.restore_target_indexes
+  if (args.changed_only or args.verify or index_mode) and not args.state_file:
+    LOG.error(
+      "--changed-only / --verify / --*-target-indexes require --state-file"
+    )
     return 2
-  if args.drop_target_indexes or args.restore_target_indexes:
+  if args.verify and not args.list_only:
+    with connect_pg(
+      host=args.source_host,
+      port=args.port,
+      user=args.user,
+      database=args.database,
+    ) as src:
+      if not pg15_read_only(src):
+        LOG.error(
+          "refusing --verify: PG15 default_transaction_read_only is not on "
+          "(set it with ALTER SYSTEM and reload first)"
+        )
+        return 2
+  # verify_ok.json is valid only for the PG18 contents it verified; any run
+  # that can write PG18 retires it before its first write.
+  if index_mode or not args.list_only:
+    Path(verify_stamp_path(args.state_file or DEFAULT_STATE_FILE)).unlink(
+      missing_ok=True
+    )
+  if index_mode:
     index_file = index_file_for(args.state_file)
     with connect_pg(
       host=args.target_host,
@@ -2314,6 +2469,9 @@ def main(argv: Sequence[str] | None = None) -> int:
       fetch_column_layout(src), fetch_column_layout(tgt)
     )
     sigs = fetch_chunk_signatures(src) if args.changed_only else {}
+    identity = (
+      fetch_stamp_identity(src, tgt, args.database) if args.verify else {}
+    )
     missing = (
       missing_target_indexes(tgt, index_file_for(args.state_file))
       if args.verify and args.state_file
@@ -2395,7 +2553,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.verify,
     args.workers,
   )
-  return 1 if summary.failed else 0
+  if summary.failed:
+    return 1
+  if args.verify:
+    write_verify_stamp(
+      verify_stamp_path(args.state_file),
+      identity,
+      summary.rows_total + unchanged_rows,
+    )
+  return 0
 
 
 if __name__ == "__main__":

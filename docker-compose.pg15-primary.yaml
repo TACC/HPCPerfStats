@@ -1,0 +1,175 @@
+# Legacy PG15 site overlay (docs/how-to/operate/migrate-to-postgresql-18.md).
+#
+# A site that still runs Hub PG15 lists this file in the include: of its
+# docker-compose.yaml, right after docker-compose.defaults.yaml. Cutover (runbook E1)
+# deletes that line; until then:
+#
+# - `db` stays Hub PG15 under the same name, alias and socket. Its entrypoint
+#   is services-conf/db-docker-pg15-guard.sh: it refuses a bind that is not
+#   PG15, that is a PG18 bind, or that was retired at cutover, and holds a lock
+#   so no second server opens the folder. The build: dockerfile only re-tags
+#   the Hub image, so `podman-compose build db` cannot bake PG18 under the
+#   PG15 tag; role pg15-legacy makes the PG18 entrypoint refuse anyway.
+# - `db_pg18` is the PG18 copy target (profile pg18-migrate, alias db18, no
+#   socket): role migrate-target refuses a bind that carries the primary
+#   marker. Its command repeats defaults `db` (it becomes `db` at cutover).
+#
+# The site docker-compose.yaml declares both postgres_data (PG15 bind) and
+# postgres_data_pg18 (PG18 bind).
+
+services:
+  db:
+    image: docker.io/timescale/timescaledb:2.28.3-pg15
+    pull_policy: missing
+    build:
+      dockerfile: db-pg15-legacy.Dockerfile
+    entrypoint:
+      - /bin/sh
+      - /usr/local/bin/hpc-pg15-guard.sh
+    command:
+      - -c
+      - max_connections=500
+      - -c
+      - statement_timeout=120000
+      - -c
+      - idle_in_transaction_session_timeout=300000
+      - -c
+      - shared_buffers=64GB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - autovacuum_work_mem=256MB
+      - -c
+      - temp_buffers=4MB
+      - -c
+      - checkpoint_timeout=30min
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - min_wal_size=4GB
+      - -c
+      - max_wal_size=64GB
+      - -c
+      - wal_buffers=128MB
+      # The Hub PG15 image is built with lz4 (verified on hpcperfstats04).
+      - -c
+      - wal_compression=lz4
+      - -c
+      - bgwriter_lru_maxpages=800
+      - -c
+      - bgwriter_lru_multiplier=5
+      - -c
+      - maintenance_io_concurrency=64
+      - -c
+      - max_worker_processes=32
+      - -c
+      - max_parallel_workers=24
+      - -c
+      - max_parallel_workers_per_gather=4
+      - -c
+      - max_parallel_maintenance_workers=2
+      - -c
+      - timescaledb.max_tuples_decompressed_per_dml_transaction=1000000
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+    environment:
+      - HPCPERFSTATS_DB_ROLE=pg15-legacy
+    # !override replaces the defaults list, so every mount is listed here.
+    volumes: !override
+      - postgres_data:/var/lib/postgresql/data/
+      - postgres_runtime:/run/postgresql
+      - ./services-conf/postgres_pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./services-conf/db-docker-pg15-guard.sh:/usr/local/bin/hpc-pg15-guard.sh:ro
+
+  db_pg18:
+    profiles:
+      - pg18-migrate
+    build:
+      context: ./services-conf
+      dockerfile: db.Dockerfile
+    image: hpcperfstats-db:guard1
+    pull_policy: never
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+    shm_size: "16gb"
+    command:
+      - -c
+      - max_connections=500
+      - -c
+      - statement_timeout=120000
+      - -c
+      - idle_in_transaction_session_timeout=300000
+      - -c
+      - shared_buffers=64GB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - autovacuum_work_mem=256MB
+      - -c
+      - temp_buffers=4MB
+      - -c
+      - checkpoint_timeout=30min
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - min_wal_size=4GB
+      - -c
+      - max_wal_size=64GB
+      - -c
+      - wal_buffers=128MB
+      - -c
+      - wal_compression=lz4
+      - -c
+      - bgwriter_lru_maxpages=800
+      - -c
+      - bgwriter_lru_multiplier=5
+      - -c
+      - maintenance_io_concurrency=64
+      - -c
+      - max_worker_processes=32
+      - -c
+      - max_parallel_workers=24
+      - -c
+      - max_parallel_workers_per_gather=4
+      - -c
+      - max_parallel_maintenance_workers=2
+      - -c
+      - timescaledb.max_tuples_decompressed_per_dml_transaction=1000000
+      - -c
+      - io_method=worker
+      - -c
+      - io_workers=8
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+    restart: always
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U hpcperfstats -d postgres -h 127.0.0.1 -p 5432
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    stop_signal: SIGINT
+    stop_grace_period: 30m
+    # No postgres_runtime: two servers in one socket dir collide on
+    # .s.PGSQL.5432.lock while PG15 `db` owns it.
+    volumes:
+      - postgres_data_pg18:/var/lib/postgresql
+      - ./services-conf/postgres_pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    environment:
+      - POSTGRES_USER=hpcperfstats
+      - POSTGRES_PASSWORD=hpcperfstats
+      - POSTGRES_DB=hpcperfstats
+      - TIMESCALEDB_TELEMETRY=off
+      - HPCPERFSTATS_DB_ROLE=migrate-target
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - db18

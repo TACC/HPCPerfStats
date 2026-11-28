@@ -24,6 +24,7 @@ fi
 # see also "_main" in "docker-entrypoint.sh"
 
 docker_setup_env
+hpc_guard_data_dir
 # setup data directories and permissions (when run as root)
 docker_create_db_directories
 if [ "$(id -u)" = '0' ]; then

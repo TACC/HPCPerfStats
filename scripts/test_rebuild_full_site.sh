@@ -61,6 +61,23 @@ if ! grep -q 'compose_bind_volumes_preflight' "${FULL_SITE_SCRIPT}" \
   exit 1
 fi
 
+# PostgreSQL offenders must get their shutdown checkpoint, not podman's default-timeout SIGKILL.
+# shellcheck disable=SC2016  # literal $ text matched in script source
+if ! grep -q 'stop -t 1800 "${db_offenders\[@\]}"' "${BIND_GUARD}"; then
+  echo "compose_bind_volumes_verify_mounted must stop db offenders with -t 1800" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016  # literal $ text matched in script source
+if ! grep -q 'stop -t 1800 "${ctr}"' "${FULL_SITE_SCRIPT}" \
+  || ! grep -q "ps -a --format '{{.Names}}')" "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must stop every host container on a db bind with -t 1800" >&2
+  exit 1
+fi
+if grep -q 'hpcperfstats-db:latest .*_db_pg18' "${HELPERS}"; then
+  echo "compose_ensure_local_stack_image_tags must alias hpcperfstats-db:guard1" >&2
+  exit 1
+fi
+
 if ! grep -q '^verify_postgres_socket_shared() {' "${FULL_SITE_SCRIPT}" \
   || ! grep -q 'verify_postgres_socket_shared || rc=1' "${FULL_SITE_SCRIPT}" \
   || ! grep -q '/run/postgresql/.s.PGSQL.5432' "${FULL_SITE_SCRIPT}"; then

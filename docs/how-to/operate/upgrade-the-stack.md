@@ -20,14 +20,16 @@ Use a rebuild script; never `podman-compose ... up --build`.
 
 | Task                                                                                         | Command                              |
 | -------------------------------------------------------------------------------------------- | ------------------------------------ |
-| Full stack: build `web`, `proxy` and `db_pg18`, then `down` and `up -d --no-build`           | `./scripts/rebuild_full_site.sh`     |
+| Full stack: build `web`, `proxy` and the `db` image, then `down` and `up -d --no-build`      | `./scripts/rebuild_full_site.sh`     |
 | Rebuild the `hpcperfstats` image and restart `web`, `proxy` and `pipeline`                   | `./scripts/rebuild_pipeline.sh`      |
 | Rebuild only the SPA in the running stack; no pipeline restart                               | `./scripts/rebuild_frontend.sh`      |
 | Recreate `web` and `pipeline` detached; no image build                                       | `./scripts/recreate_web_pipeline.sh` |
 | Rebuild only the proxy image (nginx or OpenSSL pins) and recreate only `proxy` (`--no-deps`) | `./scripts/rebuild_proxy.sh`         |
 
 `./scripts/rebuild_full_site.sh` is the primary path.
-It builds the `db_pg18` image but does not start it (profile `pg18-migrate`).
+It builds the PostgreSQL 18 image `hpcperfstats-db:guard1` and refuses, before it builds or stops anything, when the database binds do not match the site file.
+On a site that still runs PostgreSQL 15 (its `include:` lists `docker-compose.pg15-primary.yaml`), `db` stays PG15 and the PG18 copy target `db_pg18` (profile `pg18-migrate`) is restarted only if it was running.
+Such a site takes the release step in [Migrate to PostgreSQL 18](migrate-to-postgresql-18.md#release-step-install-the-guards-on-a-pg15-site) once, before it pulls code where `db` is PG18.
 
 `./scripts/rebuild_pipeline.sh` preserves the live SPA, takes `proxy` down (same image), then starts `web`, `proxy` and `pipeline` through the shared Podman adapter.
 It leaves `db`, `valkey` and `rabbitmq` running.
@@ -213,10 +215,11 @@ To move to a new minor image:
 
 ## Upgrade the Timescale catalog on PostgreSQL 15
 
+This section applies to a site whose `include:` lists `docker-compose.pg15-primary.yaml`, so `db` is still Hub PostgreSQL 15.
 Pulling or recreating `db` updates the container libraries, but the catalog `extversion` on an existing `postgres_data` volume does not follow.
-Compose pins `timescale/timescaledb:2.28.3-pg15`.
+`docker-compose.pg15-primary.yaml` pins `timescale/timescaledb:2.28.3-pg15`; never run `podman-compose build db` there (it only re-tags that image).
 Stay on the 2.28.x line while on PostgreSQL 15 (Timescale 2.29 and later drop PG15); move to a newer Timescale only through [Migrate to PostgreSQL 18](migrate-to-postgresql-18.md).
-On `db_pg18` the catalog updates itself at start ([Compose services](../../reference/compose-services.md#db-image)).
+On PostgreSQL 18 the catalog updates itself at start ([Compose services](../../reference/compose-services.md#db-image)).
 
 Avoid recreating `db` while a `decompress_chunk` batch is running.
 
@@ -285,7 +288,7 @@ Skip `timescaledb_toolkit` unless the database has that extension.
 
 ## Troubleshooting
 
-- `rebuild_full_site.sh` output stops at `Successfully tagged localhost/hpcperfstats:latest` after the Dockerfile `collectstatic`, with no `starting podman-compose down + up` banner: the build phase failed, usually `proxy` or `db_pg18` after `web` was tagged.
+- `rebuild_full_site.sh` output stops at `Successfully tagged localhost/hpcperfstats:latest` after the Dockerfile `collectstatic`, with no `starting podman-compose down + up` banner: the build phase failed, usually `proxy` or the `db` image after `web` was tagged.
   Scroll above the trap line for `Error` or `BUILD FAILED`, or rerun `podman build -f services-conf/proxy.Dockerfile -t hpcperfstats-proxy .` from the checkout and read the failure.
   A wrong command, `--build-only`, or an outdated script on the host end the same way.
 

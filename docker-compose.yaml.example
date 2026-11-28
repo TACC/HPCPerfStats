@@ -4,8 +4,10 @@
 # Any operator-facing change must update this .example in the same task —
 # see hpcperfstats/cursor-rules/docker-compose-settings-example-sync.mdc.
 #
-# Entry point: include docker-compose.defaults.yaml, then merge site binds and
-# service overrides here (this file wins over defaults for overlapping keys).
+# Entry point: include docker-compose.defaults.yaml. podman-compose loads this
+# file first and the included files after it: list keys here (ports, volumes)
+# append to the defaults, while scalar keys here lose to the defaults and any
+# included overlay.
 # podman-compose / docker compose discover docker-compose.yaml by default.
 # TLS PEMs: proxy_ssl_source volume (flat PEM dir default); entrypoint copies
 # real files into /etc/ssl/hpcperfstats before nginx starts.
@@ -39,18 +41,10 @@ volumes:
       type: none
       device: /data/hpcperfstats_site/media
       o: bind
-  postgres_data:
-    driver: local
-    driver_opts:
-      type: none
-      device: /data/hpcperfstats_db/pg15
-      o: bind
-  # Homegrown PG18 dual-run volume (profile pg18-migrate). Create + chown before
-  # starting db_pg18 (Alpine postgres is uid/gid 70):
-  #   mkdir -p /data/hpcperfstats_db/pg18 && chown -R 70:70 /data/hpcperfstats_db/pg18
-  # Bind replaces image ownership; empty root:root → Permission denied on mkdir 18/.
-  # See docs/how-to/operate/migrate-to-postgresql-18.md. After cutover, operators may re-point
-  # the primary bind and retire pg15.
+  # PostgreSQL 18 data (db). Create and chown before the first start (Alpine
+  # postgres is uid/gid 70; the bind replaces the image's ownership):
+  #   mkdir -p /data/hpcperfstats_db/pg18
+  #   chown -R 70:70 /data/hpcperfstats_db/pg18
   postgres_data_pg18:
     driver: local
     driver_opts:
@@ -107,14 +101,10 @@ services:
     # environment:
     #   - HPCPERFSTATS_SSL_CERTS_REL=live/your.hostname.example
 
-  db_pg18:
-    image: hpcperfstats-db
-
-  # db (defaults): dev/debug host port — add under db: (keep or drop `{}`):
+  # db (defaults): dev/debug host port:
   # db:
   #   ports:
   #     - "5432:5432"
-  db: {}
 
   # rabbitmq (defaults): dev/debug management UI:
   # rabbitmq:

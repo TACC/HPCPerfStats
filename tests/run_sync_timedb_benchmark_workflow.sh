@@ -190,6 +190,7 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
 fi
 
 echo "Starting db/valkey for sync_timedb benchmark workflow..."
+compose_test_ensure_db_image
 compose_test up -d db valkey
 echo "Waiting for PostgreSQL readiness..."
 ready=0

@@ -1410,6 +1410,8 @@ def test_verify_refuses_before_copy_when_indexes_missing(
 
   monkeypatch.setattr(mod, "fetch_source_chunks", lambda **_k: [_chunk(mod, 1)])
   monkeypatch.setattr(mod, "_connect", lambda *_a: _Ctx())
+  monkeypatch.setattr(mod, "connect_pg", lambda **_k: _ScalarConn({"": "on"}))
+  monkeypatch.setattr(mod, "fetch_stamp_identity", lambda *_a: dict(_IDENTITY))
   monkeypatch.setattr(mod, "fetch_column_layout", lambda _c: [("time", "t")])
   monkeypatch.setattr(mod, "fetch_chunk_signatures", lambda _c: {})
   monkeypatch.setattr(
@@ -1468,6 +1470,8 @@ def test_main_compresses_aged_chunks_only_outside_freeze(
   calls: list = []
   monkeypatch.setattr(mod, "fetch_source_chunks", lambda **_k: [_chunk(mod, 1)])
   monkeypatch.setattr(mod, "_connect", lambda *_a: _Ctx())
+  monkeypatch.setattr(mod, "connect_pg", lambda **_k: _ScalarConn({"": "on"}))
+  monkeypatch.setattr(mod, "fetch_stamp_identity", lambda *_a: dict(_IDENTITY))
   monkeypatch.setattr(mod, "fetch_column_layout", lambda _c: [("time", "t")])
   monkeypatch.setattr(mod, "fetch_chunk_signatures", lambda _c: {})
   monkeypatch.setattr(mod, "missing_target_indexes", lambda *_a: [])
@@ -1626,3 +1630,295 @@ def test_read_errors_are_not_retried_as_cancels() -> None:
   )
   assert mod._is_retryable_count_error(read_err) is False
   assert mod._is_retryable_count_error(pg_errors.QueryCanceled("timeout"))
+
+
+# verify_ok.json: the marker script trusts it only when it was written by a
+# --verify that finished cleanly against a read-only PG15.
+
+_IDENTITY = {
+  "pg18_system_identifier": "7412345678901234567",
+  "pg18_database_oid": 16384,
+  "pg15_system_identifier": "-7212345678901234567",
+}
+
+
+class _ScalarCursor:
+  def __init__(self, conn: _ScalarConn) -> None:
+    self.conn, self.row = conn, None
+
+  def __enter__(self) -> _ScalarCursor:
+    return self
+
+  def __exit__(self, *_a: object) -> None:
+    return None
+
+  def execute(self, sql: str, params: object = None) -> None:
+    self.conn.log.append((sql, params))
+    self.row = next(v for k, v in self.conn.answers.items() if k in sql)
+
+  def fetchone(self) -> tuple:
+    return (self.row,)
+
+
+class _ScalarConn:
+  """Connection answering each statement by the first matching substring."""
+
+  def __init__(self, answers: dict[str, object]) -> None:
+    self.answers, self.log = answers, []
+
+  def __enter__(self) -> _ScalarConn:
+    return self
+
+  def __exit__(self, *_a: object) -> None:
+    return None
+
+  def cursor(self) -> _ScalarCursor:
+    return _ScalarCursor(self)
+
+
+class _NullCtx:
+  def __enter__(self) -> _NullCtx:
+    return self
+
+  def __exit__(self, *_a: object) -> None:
+    return None
+
+
+def _patch_stamp_main(
+  mod: object,
+  monkeypatch: pytest.MonkeyPatch,
+  stamp: Path,
+  *,
+  read_only: str = "on",
+  failed: int = 0,
+) -> list:
+  """Stub every DB touch of main(); record whether the stamp exists at each
+  PG18 write."""
+  events: list = []
+
+  def _write(name: str, result: object) -> object:
+    def _call(*_a: object, **_k: object) -> object:
+      events.append((name, stamp.exists()))
+      return result
+
+    return _call
+
+  monkeypatch.setattr(
+    mod,
+    "connect_pg",
+    lambda **_k: _ScalarConn({"default_transaction_read_only": read_only}),
+  )
+  monkeypatch.setattr(mod, "fetch_source_chunks", lambda **_k: [_chunk(mod, 1)])
+  monkeypatch.setattr(mod, "_connect", lambda *_a: _NullCtx())
+  monkeypatch.setattr(mod, "fetch_column_layout", lambda _c: [("time", "t")])
+  monkeypatch.setattr(mod, "fetch_chunk_signatures", lambda _c: {})
+  monkeypatch.setattr(mod, "missing_target_indexes", lambda *_a: [])
+  monkeypatch.setattr(
+    mod, "fetch_stamp_identity", lambda *_a, **_k: dict(_IDENTITY)
+  )
+  monkeypatch.setattr(mod, "compress_aged_target_chunks", lambda *_a: 0)
+  monkeypatch.setattr(
+    mod, "precreate_all_target_chunks", _write("precreate", 0)
+  )
+  monkeypatch.setattr(
+    mod, "run_chunk_copies", _write("copy", mod.RunSummary(0, 0, 1, failed, 41))
+  )
+  monkeypatch.setattr(mod, "drop_target_indexes", _write("drop", 3))
+  monkeypatch.setattr(mod, "restore_target_indexes", _write("restore", 3))
+  return events
+
+
+def _stamp_argv(state: Path, *extra: str) -> list[str]:
+  return [
+    "--watermark-days",
+    "-7",
+    "--progress-seconds",
+    "0",
+    "--state-file",
+    str(state),
+    *extra,
+  ]
+
+
+@pytest.mark.parametrize(
+  ("extra", "first_write"),
+  [
+    ((), "precreate"),
+    (("--changed-only",), "precreate"),
+    (("--changed-only", "--verify"), "precreate"),
+    (("--drop-target-indexes",), "drop"),
+    (("--restore-target-indexes",), "restore"),
+  ],
+  ids=["bulk", "catch-up", "verify", "drop-indexes", "restore-indexes"],
+)
+def test_every_pg18_writing_mode_deletes_verify_stamp_first(
+  monkeypatch: pytest.MonkeyPatch,
+  tmp_path: Path,
+  extra: tuple[str, ...],
+  first_write: str,
+) -> None:
+  mod = _load_mod()
+  stamp = tmp_path / "verify_ok.json"
+  stamp.write_text('{"stamp": "verify_ok.json"}', encoding="utf-8")
+  events = _patch_stamp_main(mod, monkeypatch, stamp)
+  assert mod.main(_stamp_argv(tmp_path / "state.json", *extra)) == 0
+  assert events and events[0][0] == first_write
+  assert all(existed is False for _name, existed in events)
+  assert stamp.exists() is ("--verify" in extra)
+
+
+def test_list_only_keeps_verify_stamp(
+  monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+  mod = _load_mod()
+  stamp = tmp_path / "verify_ok.json"
+  stamp.write_text("old", encoding="utf-8")
+  _patch_stamp_main(mod, monkeypatch, stamp)
+  assert mod.main(_stamp_argv(tmp_path / "state.json", "--list-only")) == 0
+  assert stamp.read_text(encoding="utf-8") == "old"
+
+
+def test_verify_success_writes_stamp_with_interface_keys(
+  monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+  mod = _load_mod()
+  stamp = tmp_path / "verify_ok.json"
+  _patch_stamp_main(mod, monkeypatch, stamp)
+  argv = _stamp_argv(tmp_path / "state.json", "--changed-only", "--verify")
+  assert mod.main(argv) == 0
+  doc = json.loads(stamp.read_text(encoding="utf-8"))
+  assert doc["stamp"] == "verify_ok.json"
+  assert doc["verified_rows"] == 41
+  assert {k: doc[k] for k in _IDENTITY} == _IDENTITY
+  assert isinstance(doc["written_at_epoch"], int)
+  written = datetime.strptime(doc["written_at"], "%Y-%m-%dT%H:%M:%SZ")
+  assert int(written.replace(tzinfo=UTC).timestamp()) == doc["written_at_epoch"]
+  assert sorted(p.name for p in tmp_path.iterdir()) == ["verify_ok.json"]
+
+
+def test_verify_with_failed_chunk_leaves_no_stamp(
+  monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+  mod = _load_mod()
+  stamp = tmp_path / "verify_ok.json"
+  stamp.write_text("stale", encoding="utf-8")
+  _patch_stamp_main(mod, monkeypatch, stamp, failed=1)
+  argv = _stamp_argv(tmp_path / "state.json", "--changed-only", "--verify")
+  assert mod.main(argv) == 1
+  assert not stamp.exists()
+
+
+def test_verify_refuses_unless_pg15_read_only(
+  monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+  mod = _load_mod()
+  stamp = tmp_path / "verify_ok.json"
+  stamp.write_text("previous", encoding="utf-8")
+  events = _patch_stamp_main(mod, monkeypatch, stamp, read_only="off")
+  argv = _stamp_argv(tmp_path / "state.json", "--changed-only", "--verify")
+  assert mod.main(argv) == 2
+  assert events == []  # refused before any PG18 write
+  assert stamp.read_text(encoding="utf-8") == "previous"
+
+
+def test_verify_requires_state_file() -> None:
+  mod = _load_mod()
+  assert mod.main(["--verify"]) == 2
+
+
+def test_pg15_read_only_runs_show() -> None:
+  mod = _load_mod()
+  on = _ScalarConn({"SHOW default_transaction_read_only": "on"})
+  assert mod.pg15_read_only(on) is True
+  assert on.log == [("SHOW default_transaction_read_only", None)]
+  assert mod.pg15_read_only(_ScalarConn({"SHOW": "off"})) is False
+
+
+def test_fetch_stamp_identity_reads_pg_control_and_oid() -> None:
+  mod = _load_mod()
+  src = _ScalarConn({"pg_control_system": -7212345678901234567})
+  tgt = _ScalarConn(
+    {"pg_control_system": 7412345678901234567, "pg_database": 16384}
+  )
+  got = mod.fetch_stamp_identity(src, tgt, "hpcperfstats")
+  assert got == _IDENTITY
+  assert ("hpcperfstats",) in [p for _s, p in tgt.log]
+
+
+def test_write_verify_stamp_is_atomic_on_failure(tmp_path: Path) -> None:
+  mod = _load_mod()
+  stamp = tmp_path / "verify_ok.json"
+  with pytest.raises(TypeError):
+    mod.write_verify_stamp(str(stamp), {"bad": object()}, 1)
+  assert list(tmp_path.iterdir()) == []
+
+
+_SIGKILL_DRIVER = """
+import importlib.util, pathlib, sys, time
+path, state, started = sys.argv[1:4]
+spec = importlib.util.spec_from_file_location("pg18_host_data_chunk_copy", path)
+mod = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = mod
+spec.loader.exec_module(mod)
+from datetime import UTC, datetime
+
+class Cur:
+  def __enter__(self): return self
+  def __exit__(self, *a): return None
+  def execute(self, sql, params=None): pass
+  def fetchone(self): return ("on",)
+
+class Conn:
+  def __enter__(self): return self
+  def __exit__(self, *a): return None
+  def cursor(self): return Cur()
+
+def copies(*a, **k):
+  pathlib.Path(started).write_text("x")
+  time.sleep(120)
+
+chunk = mod.ChunkRow("s", "c", datetime(2026, 8, 1, tzinfo=UTC),
+                     datetime(2026, 8, 2, tzinfo=UTC), False)
+mod.connect_pg = lambda **k: Conn()
+mod._connect = lambda *a: Conn()
+mod.fetch_source_chunks = lambda **k: [chunk]
+mod.fetch_column_layout = lambda c: [("time", "t")]
+mod.fetch_chunk_signatures = lambda c: {}
+mod.missing_target_indexes = lambda *a: []
+mod.fetch_stamp_identity = lambda *a, **k: {}
+mod.precreate_all_target_chunks = lambda *a: 0
+mod.run_chunk_copies = copies
+sys.exit(mod.main(["--watermark-days", "-7", "--progress-seconds", "0",
+                   "--changed-only", "--verify", "--state-file", state]))
+"""
+
+
+def test_sigkill_mid_verify_leaves_no_stamp(tmp_path: Path) -> None:
+  import signal
+  import subprocess
+  import sys
+  import time
+
+  mod = _load_mod()
+  driver = tmp_path / "driver.py"
+  driver.write_text(_SIGKILL_DRIVER, encoding="utf-8")
+  migrate = tmp_path / "pg18_migrate"
+  migrate.mkdir()
+  stamp = migrate / "verify_ok.json"
+  stamp.write_text("from an earlier run", encoding="utf-8")
+  started = tmp_path / "started"
+  argv = [sys.executable, str(driver), mod.__file__]
+  proc = subprocess.Popen([*argv, str(migrate / "s.json"), str(started)])
+  try:
+    deadline = time.monotonic() + 60
+    while not started.exists():
+      assert proc.poll() is None, "driver exited before the copy started"
+      assert time.monotonic() < deadline, "copy never started"
+      time.sleep(0.05)
+    proc.send_signal(signal.SIGKILL)
+    proc.wait(timeout=30)
+  finally:
+    if proc.poll() is None:
+      proc.kill()
+  assert proc.returncode == -signal.SIGKILL
+  assert list(migrate.iterdir()) == []

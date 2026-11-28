@@ -26,7 +26,7 @@ Non-goals:
 - Modifying application source code on user jobs; XALT itself is upstream.
 - Guaranteeing sub-second real-time dashboards for every metric: the pipeline is near-line, and latency depends on ingest intervals and worker scheduling.
 
-The repo's operational health signals (not a complete SLO spec) are the Compose healthchecks for `db`, `db_pg18`, `valkey`, `rabbitmq` and `proxy` (`docker-compose.defaults.yaml`), automated tests for `listend` message handling, `sync_timedb` archive edge cases, metrics updates and web and API behaviour ([Test layout](../reference/test-layout.md)), and idempotent metrics recomputation.
+The repo's operational health signals (not a complete SLO spec) are the Compose healthchecks for `db`, `valkey`, `rabbitmq` and `proxy` (`docker-compose.defaults.yaml`), automated tests for `listend` message handling, `sync_timedb` archive edge cases, metrics updates and web and API behaviour ([Test layout](../reference/test-layout.md)), and idempotent metrics recomputation.
 
 ## Data flow
 
@@ -76,7 +76,7 @@ Data always lands on disk in the archive before the database, so the archive can
 ## Deployment
 
 On nodes, the C monitor (`monitor/`) is installed from the RPM package `hpcperfstatsd` (`monitor/hpcperfstats.spec`) and run by the systemd unit `hpcperfstats.service`.
-The central stack is Docker Compose: the site `docker-compose.yaml` includes `docker-compose.defaults.yaml` and runs `web`, `pipeline`, `db`, `valkey`, `rabbitmq` and `proxy`, plus the optional `db_pg18` (profile `pg18-migrate`).
+The central stack is Docker Compose: the site `docker-compose.yaml` includes `docker-compose.defaults.yaml` and runs `web`, `pipeline`, `db`, `valkey`, `rabbitmq` and `proxy`.
 [Compose services](../reference/compose-services.md) describes each service's image, limits and mounts.
 
 ```mermaid
@@ -88,8 +88,7 @@ flowchart TB
     PXY[proxy - Nginx TLS / static]
     WEB[web - Django / Gunicorn]
     PIPE[pipeline - supervisord ingest]
-    DB[(db - TimescaleDB / PostgreSQL 15)]
-    DB18[(db_pg18 - optional PostgreSQL 18 + TimescaleDB)]
+    DB[(db - TimescaleDB / PostgreSQL 18)]
     VALKEY[valkey - Valkey 9.2 Alpine]
     RMQ[rabbitmq - broker]
   end
