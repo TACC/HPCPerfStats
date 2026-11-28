@@ -1,4 +1,4 @@
-/* RabbitMQ daemon core: ring buffer, dumpfiles, timers, jobid transitions, config reload. */
+/* hpcperfstatsd daemon core: ring buffer, dumpfiles, timers, jobid transitions, config reload. */
 #include <dirent.h>
 #include <errno.h>
 #include <stdio.h>

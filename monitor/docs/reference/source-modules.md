@@ -279,7 +279,7 @@ GPU nodes on the DCGM path need a compatible `libdcgm.so` (override with `HPCPER
 
 `lshw` stub
 : `libdcgm` may run `lshw -json` for serial discovery through absolute `/usr/bin/lshw`, then `/usr/sbin/lshw`, with a minimal child environment, so `PATH` cannot intercept it.
-On nodes with empty-module Ethernet mlx ports (Horizon) that spams `mlx5_query_module_id` / `query_mcia_reg failed: status: 0x3`.
+On nodes with empty-module Ethernet mlx ports (for example Horizon) that spams `mlx5_query_module_id` / `query_mcia_reg failed: status: 0x3`.
 The RPM installs a no-op stub at `/usr/libexec/hpcperfstats/stubs/lshw`, and `hpcperfstats.service` bind-mounts it over both absolute paths in the unit namespace (`BindReadOnlyPaths=`); the unit also prepends the stub directory on `PATH` for bare `lshw`.
 For a manual foreground run use `systemd-run` with the same binds (PATH alone still hits the real `lshw`):
 

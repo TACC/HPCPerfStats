@@ -8,7 +8,7 @@ globs: README.md,docs/**/*.md,**/README.md
 
 **Activation:** `alwaysApply: false` - when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-The standards themselves (prose P1-P14, visual V1-V18, positioning S1-S10, character allowlist, lint toolchain) live in `docs/reference/documentation-style.md`. This rule says where a page goes and what a change to the docs tree must touch; it does not restate the style guide.
+The standards themselves (prose P1-P14, visual V1-V18, positioning S1-S12, character allowlist, lint toolchain) live in `docs/reference/documentation-style.md`. This rule says where a page goes and what a change to the docs tree must touch; it does not restate the style guide.
 
 ## Placement
 
@@ -58,6 +58,12 @@ No YAML front matter and no table of contents (S3, S7).
 - `bash`/`sh` fence lines 68 characters or fewer, no heredocs, no `$` prompts; every fence has a language tag.
 - Placeholders are `<UPPER_SNAKE>` inside a code span or fence (bare `<name>` is dropped as HTML).
 - One sentence per source line; no bold for emphasis; ASCII plus the degree sign, the micro sign and accented proper names.
+
+## Order, site examples and daemon wording
+
+- Simplest working path first (S11): install docs and every how-to open with the shortest path that works on a fresh site, then caveats and extra configuration, and anything debug- or developer-only last (before Verify, Troubleshooting and Related). A landing README puts its install section right after the overview.
+- Site names are examples, never canonical (S12): any cluster or host name (Horizon, Stampede3, Lonestar6, Vista, `hpcperfstats04`, ...) appears only as a labelled example or as measurement evidence. State the general rule first, then use the sites to compare and contrast the underlying issue.
+- `hpcperfstatsd` is the node daemon that collects metrics and sends text payloads to a broker over RabbitMQ; never call it "a RabbitMQ daemon".
 
 ## Generated docs
 

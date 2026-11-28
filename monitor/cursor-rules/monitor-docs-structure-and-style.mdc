@@ -12,7 +12,7 @@ alwaysApply: false
 
 **Activation:** `alwaysApply: false` - when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-The standards (prose P1-P14, visual V1-V18, positioning S1-S10, character allowlist, lint toolchain) live in `HPCPerfStats/docs/reference/documentation-style.md`. This rule says where a monitor page goes and what a change to the monitor docs tree must touch; it does not restate the style guide.
+The standards (prose P1-P14, visual V1-V18, positioning S1-S12, character allowlist, lint toolchain) live in `HPCPerfStats/docs/reference/documentation-style.md`. This rule says where a monitor page goes and what a change to the monitor docs tree must touch; it does not restate the style guide.
 
 ## Placement
 
@@ -23,7 +23,7 @@ The standards (prose P1-P14, visual V1-V18, positioning S1-S10, character allowl
 | Looking up modules, formats, keys | `monitor/docs/reference/` | noun (`source-modules.md`, `legacy-formats.md`) |
 | Reading a measurement record | `monitor/measurement/`, `HPCPerfStats/docs/measurements/` | records (`monitor-measurement-records.mdc`) |
 
-- `monitor/README.md` is the landing page: what the package is, the one build command, and links into `monitor/docs/`.
+- `monitor/README.md` is the landing page: what the package is, then **Install the RPM** as the first section (what most readers need), then the developer build and test, and links into `monitor/docs/` (`monitor-readme-maintenance.mdc` has the section order).
 - `monitor/docs/RAW_DATA_FORMAT.md`, `monitor/docs/METRICS_REFERENCE.md` and `monitor/docs/C_REFACTOR_CHECKLIST.md` stay at their paths (tarball, `make check`, sibling links, rule links).
 - Fixture READMEs under `monitor/tests/fixtures/` stay next to their fixtures.
 - Names are lowercase kebab-case. No `README.md` under `monitor/docs/`.
@@ -41,6 +41,12 @@ Decoding older archive formats is current behaviour: it belongs in `monitor/docs
 Start from the quadrant template in `HPCPerfStats/docs/reference/documentation-style.md` (section "Page templates"): how-to (`# <VERB> <OBJECT>`, Prerequisites, "To X:" numbered steps, Verify, Troubleshooting, Related), reference (`# <THING>`, sections that mirror the code), explanation (`# <NOUN PHRASE>`, summary, aspects, Alternatives and trade-offs, Related). No YAML front matter, no table of contents.
 
 Writing rules agents miss most: `bash`/`sh` fence lines 68 characters or fewer with no heredocs and no `$` prompts; a language tag on every fence; `<UPPER_SNAKE>` placeholders inside a code span or fence; one sentence per source line; no bold for emphasis; ASCII plus the degree sign, the micro sign and accented proper names.
+
+## Order, site examples and daemon wording
+
+- Simplest working path first (S11): an install or build page opens with the default path that works for a reader on their own cluster (install the RPM; `prepare_rpmbuild_dirs.sh` + `rpmbuild`), then the spec and site-conf details, then extra configuration and fleet scripts, and debug or developer-only material (debug RPM, metric profiler, validators) last, before Verify, Troubleshooting and Related.
+- Site names are examples (S12): Horizon, Stampede3, Lonestar6, Vista and any other cluster appear only as worked examples or measurement evidence, never as the canonical way to build or deploy. Readers build for their own clusters; use the example fleets to compare and contrast the underlying build questions (CPU family, GPU stack such as DCGM/NVML or XPUM, interconnect MAD, shared nodes, static deps, `-march`, where the RPM lands). Write "on a shared-node cluster (such as the Horizon example)", not "on Horizon" for a general rule.
+- `hpcperfstatsd` is the node daemon that collects metrics and sends text payloads to a broker over RabbitMQ. Never call it "a RabbitMQ daemon" (it is not part of RabbitMQ) in docs, rules, comments or help text.
 
 ## Generated docs
 

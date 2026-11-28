@@ -1,4 +1,4 @@
-/* RabbitMQ daemon CLI: shared literals, argv parsing, and heap cleanup. */
+/* hpcperfstatsd CLI: shared literals, argv parsing, and heap cleanup. */
 #include <stdlib.h>
 #include <string.h>
 

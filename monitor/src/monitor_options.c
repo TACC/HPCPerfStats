@@ -1,4 +1,4 @@
-/* RabbitMQ daemon getopt_long parsing and hpcperfstats.conf key dispatch. */
+/* hpcperfstatsd getopt_long parsing and hpcperfstats.conf key dispatch. */
 #include <errno.h>
 #include <getopt.h>
 #include <math.h>

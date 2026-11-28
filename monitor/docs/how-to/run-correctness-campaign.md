@@ -41,7 +41,8 @@ The debug RPM installs `sample_freq 30` and `sample_freq_slow 60` in `/etc/hpcpe
 
 ### Run it on a campaign node
 
-`scripts/campaign_verify_node.sh ls6|gb200` (root, any cwd) is the per-node operator command, so nobody pastes a multi-KB block: pastes over 4 KB lose lines on cluster nodes.
+`scripts/campaign_verify_node.sh <PROFILE>` (root, any cwd) wraps the campaign for the two node profiles it defines, `ls6` (Lonestar6 x86 nodes) and `gb200` (Horizon GB200 nodes), so nobody pastes a multi-KB block: pastes over 4 KB lose lines on cluster nodes.
+On another cluster, run `rpm_debug_shm_verify.sh` directly or add a profile to the script.
 
 It does these steps:
 

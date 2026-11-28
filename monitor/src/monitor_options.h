@@ -1,5 +1,5 @@
 /*
- * RabbitMQ daemon command-line and configuration key handling.
+ * hpcperfstatsd command-line and configuration key handling.
  */
 #ifndef MONITOR_OPTIONS_H
 #define MONITOR_OPTIONS_H
@@ -8,7 +8,7 @@
 
 void monitor_options_print_daemon_usage(FILE *stream);
 
-/*! Parses RabbitMQ daemon argv (CLI flags consumed via getopt_long). */
+/*! Parses hpcperfstatsd argv (CLI flags consumed via getopt_long). */
 void monitor_options_parse_daemon_argv(int argc, char *argv[], int *daemonmode_out);
 
 /*! Dispatch one trimmed daemon configuration assignment (`value_line` is the RHS). */

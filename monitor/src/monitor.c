@@ -1,4 +1,4 @@
-/* RabbitMQ daemon entry: libev timers, schema rotation, jobid watcher bootstrap. */
+/* hpcperfstatsd entry: libev timers, schema rotation, jobid watcher bootstrap. */
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>

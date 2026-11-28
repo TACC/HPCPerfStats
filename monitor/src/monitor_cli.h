@@ -1,5 +1,5 @@
 /*
- * RabbitMQ daemon CLI: shared literals, argv parsing, and heap cleanup.
+ * hpcperfstatsd CLI: shared literals, argv parsing, and heap cleanup.
  * Linked into hpcperfstatsd (RABBITMQ) and unit tests.
  */
 #ifndef MONITOR_CLI_H

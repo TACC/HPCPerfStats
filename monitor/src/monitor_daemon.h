@@ -1,5 +1,5 @@
 /*
- * Internal to the RabbitMQ daemon: shared between monitor.c (main, ev setup)
+ * Internal to the hpcperfstatsd daemon: shared between monitor.c (main, ev setup)
  * and monitor_daemon.c. Not an installable/public API.
  */
 #ifndef MONITOR_DAEMON_H

@@ -2,7 +2,7 @@
  *
  * The daemon reads DCGM values once per sample (dcgmGetLatestValues), so DCGM refreshing
  * fields faster than sample_freq, or keeping an hour of history, is pure overhead. Pure C,
- * no DCGM headers: linked into every build, set by the RabbitMQ daemon on conf load/SIGHUP.
+ * no DCGM headers: linked into every build, set by the daemon on conf load/SIGHUP.
  */
 #ifndef DCGM_WATCH_POLICY_H
 #define DCGM_WATCH_POLICY_H
